@@ -1,0 +1,6 @@
+{
+  "name": "CryptoTrader",
+  "description": "Ứng dụng tự động giao dịch crypto Binance Futures với chỉ báo MA20, SuperTrend(20,4), quản lý lệnh và thống kê PnL",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

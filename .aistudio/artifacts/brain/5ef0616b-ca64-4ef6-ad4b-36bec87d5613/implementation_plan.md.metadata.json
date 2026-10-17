@@ -1,0 +1,6 @@
+{
+  "summary": "Kế hoạch triển khai nâng cấp: Gửi lệnh trực tiếp lên Binance Demo Futures qua API với cơ chế tự động sửa lỗi (tick size/bước giá, min notional, timestamp lệch giờ), kiểm tra đối soát lệnh tức thì trên sàn, và phân chia rõ ràng 2 tab vị thế chính: Paper Trading (Mô phỏng) và Binance Thực Tế (API Demo/Live).",
+  "updatedAt": "2026-10-16T11:46:02.702531393Z",
+  "requestFeedback": true,
+  "userFacing": true
+}
