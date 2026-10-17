@@ -66,7 +66,9 @@ data class BinanceLivePosition(
     val markPrice: Double = 0.0,
     val positionAmt: Double = 0.0, // > 0: LONG, < 0: SHORT
     val liquidationPrice: Double = 0.0,
-    val updateTime: Long = 0L
+    val updateTime: Long = 0L,
+    val takeProfitPrice: Double? = null,
+    val stopLossPrice: Double? = null
 ) {
     val isLong: Boolean get() = positionAmt > 0
     val isShort: Boolean get() = positionAmt < 0
@@ -75,6 +77,14 @@ data class BinanceLivePosition(
     val roiPercent: Double
         get() = if (initialMargin > 0) (unrealizedProfit / initialMargin) * 100.0 else 0.0
 }
+
+data class BinanceTpSlResult(
+    val tpSuccess: Boolean = false,
+    val slSuccess: Boolean = false,
+    val tpOrderId: Long? = null,
+    val slOrderId: Long? = null,
+    val errorMessage: String? = null
+)
 
 data class BinanceOpenOrderItem(
     val orderId: Long,
@@ -155,7 +165,8 @@ data class TradeSettings(
     val stopLossPercent: Double? = null,      // Yêu cầu: Không thiết lập cắt lỗ (mặc định null)
     val useSuperTrendFilter: Boolean = true,  // Bộ lọc tín hiệu: có hoặc không SuperTrend(20,4)
     val timeframe: String = "4h",
-    val simulatedBalanceUsdt: Double = 10000.0
+    val simulatedBalanceUsdt: Double = 10000.0,
+    val leverage: Int = 10
 ) {
     /**
      * Volume mỗi vị thế = % số dư mô phỏng HOẶC Volume cố định (USDT/lệnh)

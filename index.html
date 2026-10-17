@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="vi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CryptoTrader - Binance Futures Web Trading</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            dark: '#0B0E14',
+            card: '#181A20',
+            'card-hover': '#1E2329',
+            border: '#2B313A',
+            gold: '#F0B90B',
+            'gold-hover': '#F8D33A',
+            green: '#0ECB81',
+            red: '#F6465D',
+            blue: '#3861FB'
+          }
+        }
+      }
+    }
+  </script>
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <!-- CryptoJS for Binance HMAC-SHA256 signature -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+  <!-- Custom Styles -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-dark text-gray-200 min-h-screen flex flex-col">
+
+  <!-- Top Navigation Header -->
+  <header class="border-b border-border bg-card/90 backdrop-blur sticky top-0 z-40 px-4 py-3">
+    <div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-3">
+      <!-- Logo & Branding -->
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 rounded-lg bg-gold/15 border border-gold/40 flex items-center justify-center text-gold font-black text-lg">
+          ₿
+        </div>
+        <div>
+          <div class="flex items-center space-x-2">
+            <h1 class="font-extrabold text-base sm:text-lg text-white tracking-wide">CryptoTrader</h1>
+            <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gold/20 text-gold border border-gold/40">FUTURES</span>
+            <span id="api-status-badge" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-950 text-green border border-emerald-800">
+              Binance Mainnet
+            </span>
+          </div>
+          <div class="flex items-center text-xs text-gray-400 mt-0.5">
+            <span id="ws-status-indicator" class="pulsing-dot online mr-2"></span>
+            <span id="ws-status-text">WebSocket Real-time Online</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Action & Balances -->
+      <div class="flex items-center flex-wrap gap-2.5">
+        <!-- Balance Preview -->
+        <div class="hidden md:flex items-center space-x-4 bg-dark/60 border border-border px-3 py-1.5 rounded-lg text-xs">
+          <div>
+            <span class="text-gray-400 block text-[10px]">Số dư ví:</span>
+            <span id="wallet-balance-val" class="font-bold text-white mono">$10,000.00</span>
+          </div>
+          <div class="border-l border-border pl-3">
+            <span class="text-gray-400 block text-[10px]">Khả dụng:</span>
+            <span id="available-margin-val" class="font-bold text-green mono">$9,450.00</span>
+          </div>
+        </div>
+
+        <!-- Auto Trade Button (PIN Protected) -->
+        <button id="auto-trade-toggle-btn" 
+                onclick="toggleAutoTradeWithPin()"
+                class="px-3 py-1.5 rounded-lg text-xs font-bold bg-card border border-border hover:bg-card-hover text-gray-300 transition flex items-center">
+          <span id="auto-trade-status-dot" class="w-2 h-2 rounded-full bg-gray-600 mr-1.5"></span>
+          Bật Auto Trade
+        </button>
+
+        <!-- Quick Switch to Settings -->
+        <button onclick="switchTab('settings')" 
+                class="p-2 rounded-lg bg-card border border-border hover:bg-card-hover text-gray-400 hover:text-white transition"
+                title="Cấu hình API & Proxy">
+          <i data-lucide="settings" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 space-y-4">
+
+    <!-- Top Stats Row -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <!-- Stat 1: Open Positions -->
+      <div class="bg-card border border-border rounded-xl p-3.5 flex flex-col justify-between">
+        <span class="text-xs text-gray-400 flex items-center justify-between">
+          Vị thế mở
+          <i data-lucide="layers" class="w-4 h-4 text-blue"></i>
+        </span>
+        <div class="mt-2">
+          <span id="stat-open-count" class="text-lg font-bold text-white mono">2 Vị thế</span>
+        </div>
+      </div>
+
+      <!-- Stat 2: Unrealized PnL -->
+      <div class="bg-card border border-border rounded-xl p-3.5 flex flex-col justify-between">
+        <span class="text-xs text-gray-400 flex items-center justify-between">
+          Lãi / Lỗ chưa chốt
+          <i data-lucide="trending-up" class="w-4 h-4 text-green"></i>
+        </span>
+        <div class="mt-2">
+          <span id="stat-unrealized-pnl" class="text-lg font-bold text-green mono">+$203.67</span>
+        </div>
+      </div>
+
+      <!-- Stat 3: Win Rate -->
+      <div class="bg-card border border-border rounded-xl p-3.5 flex flex-col justify-between">
+        <span class="text-xs text-gray-400 flex items-center justify-between">
+          Tỷ lệ thắng (Win Rate)
+          <i data-lucide="award" class="w-4 h-4 text-gold"></i>
+        </span>
+        <div class="mt-2">
+          <span id="stat-win-rate" class="text-lg font-bold text-gold mono">100.0%</span>
+        </div>
+      </div>
+
+      <!-- Stat 4: Public IP Whitelist -->
+      <div class="bg-card border border-border rounded-xl p-3.5 flex flex-col justify-between">
+        <span class="text-xs text-gray-400 flex items-center justify-between">
+          IP Whitelist Binance
+          <button onclick="copyPublicIp()" title="Sao chép IP" class="text-gray-400 hover:text-gold transition">
+            <i data-lucide="copy" class="w-3.5 h-3.5"></i>
+          </button>
+        </span>
+        <div class="mt-2 flex items-center justify-between">
+          <span id="public-ip-text" class="text-xs font-semibold text-gray-200 mono truncate">Đang tải...</span>
+          <span class="text-[9px] px-1.5 py-0.5 rounded bg-emerald-950 text-green font-bold">AN TOÀN</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Navigation Tab Bar -->
+    <div class="flex items-center space-x-1 border-b border-border overflow-x-auto text-sm">
+      <button data-tab="scanner" class="nav-tab active px-4 py-2.5 font-medium transition flex items-center space-x-1.5 whitespace-nowrap">
+        <i data-lucide="activity" class="w-4 h-4"></i>
+        <span>Quét Tín Hiệu</span>
+      </button>
+      <button data-tab="positions" class="nav-tab text-gray-400 px-4 py-2.5 font-medium transition flex items-center space-x-1.5 whitespace-nowrap">
+        <i data-lucide="briefcase" class="w-4 h-4"></i>
+        <span>Vị Thế Mở</span>
+      </button>
+      <button data-tab="orders" class="nav-tab text-gray-400 px-4 py-2.5 font-medium transition flex items-center space-x-1.5 whitespace-nowrap">
+        <i data-lucide="clock" class="w-4 h-4"></i>
+        <span>Lệnh Chờ</span>
+      </button>
+      <button data-tab="history" class="nav-tab text-gray-400 px-4 py-2.5 font-medium transition flex items-center space-x-1.5 whitespace-nowrap">
+        <i data-lucide="bar-chart-2" class="w-4 h-4"></i>
+        <span>Lịch Sử & PnL</span>
+      </button>
+      <button data-tab="settings" class="nav-tab text-gray-400 px-4 py-2.5 font-medium transition flex items-center space-x-1.5 whitespace-nowrap">
+        <i data-lucide="shield-check" class="w-4 h-4"></i>
+        <span>Cấu Hình API & Proxy</span>
+      </button>
+    </div>
+
+    <!-- SECTION 1: SCANNER & MARKETS -->
+    <section id="section-scanner" class="space-y-4">
+      <!-- Toolbar Filters -->
+      <div class="flex flex-wrap items-center justify-between gap-3 bg-card border border-border p-3 rounded-xl">
+        <!-- Search & Signal Filters -->
+        <div class="flex flex-wrap items-center gap-2 flex-1">
+          <div class="relative w-full sm:w-64">
+            <i data-lucide="search" class="w-4 h-4 absolute left-3 top-3 text-gray-500"></i>
+            <input id="search-coin" type="text" placeholder="Tìm coin (BTC, ETH, SOL...)" 
+                   class="w-full bg-dark border border-border rounded-lg pl-9 pr-3 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-gold">
+          </div>
+
+          <div class="flex items-center space-x-1 text-xs">
+            <button data-signal="all" class="filter-chip px-3 py-1.5 rounded-lg font-semibold bg-gold text-black transition">Tất cả</button>
+            <button data-signal="BUY" class="filter-chip px-3 py-1.5 rounded-lg font-semibold bg-card text-gray-400 border border-border hover:text-white transition">Tín hiệu BUY</button>
+            <button data-signal="SELL" class="filter-chip px-3 py-1.5 rounded-lg font-semibold bg-card text-gray-400 border border-border hover:text-white transition">Tín hiệu SELL</button>
+          </div>
+        </div>
+
+        <!-- Open All Signals Button (PIN Protected) -->
+        <button onclick="openAllScannedSignalsWithPin()" 
+                class="px-4 py-2 rounded-lg bg-gold hover:bg-gold-hover text-black text-xs font-bold transition flex items-center space-x-1.5 shadow-lg shadow-gold/20">
+          <i data-lucide="zap" class="w-4 h-4"></i>
+          <span>Mở Toàn Bộ Vị Thế BUY</span>
+        </button>
+      </div>
+
+      <!-- Tickers Table Card -->
+      <div class="bg-card border border-border rounded-xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-border bg-[#1E2329]/70 text-gray-400 font-semibold uppercase text-[11px]">
+                <th class="py-3 px-4">Cặp Giao Dịch</th>
+                <th class="py-3 px-4">Giá Hiện Tại (Real-time)</th>
+                <th class="py-3 px-4">Biến Động 24h</th>
+                <th class="py-3 px-4 hidden sm:table-cell">Khối Lượng 24h</th>
+                <th class="py-3 px-4">Tín Hiệu SuperTrend / MA20</th>
+                <th class="py-3 px-4 text-right">Thao Tác (Yêu Cầu PIN)</th>
+              </tr>
+            </thead>
+            <tbody id="tickers-table-body" class="divide-y divide-border">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 2: POSITIONS -->
+    <section id="section-positions" class="space-y-4 hidden">
+      <div class="flex items-center justify-between bg-card border border-border p-3 rounded-xl">
+        <div>
+          <h2 class="font-bold text-white text-sm">Danh Sách Vị Thế Mở</h2>
+          <p class="text-xs text-gray-400">Tự động cập nhật lãi/lỗ theo giá Mark Price thời gian thực từ Binance</p>
+        </div>
+        <button onclick="closeAllPositionsWithPin()" 
+                class="px-3.5 py-1.5 rounded-lg bg-rose-950 hover:bg-rose-900 text-red border border-rose-800 text-xs font-bold transition flex items-center space-x-1.5">
+          <i data-lucide="x-circle" class="w-4 h-4"></i>
+          <span>Đóng Tất Cả Vị Thế</span>
+        </button>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-border bg-[#1E2329]/70 text-gray-400 font-semibold uppercase text-[11px]">
+                <th class="py-3 px-4">Vị Thế</th>
+                <th class="py-3 px-4">Đòn Bẩy / Số Lượng</th>
+                <th class="py-3 px-4">Giá Vào Lệnh</th>
+                <th class="py-3 px-4">Giá Mark Hiện Tại</th>
+                <th class="py-3 px-4">Ký Quỹ (Margin)</th>
+                <th class="py-3 px-4">Lãi/Lỗ (PnL)</th>
+                <th class="py-3 px-4 hidden sm:table-cell">Giá Thanh Lý</th>
+                <th class="py-3 px-4 text-right">Đóng Lệnh</th>
+              </tr>
+            </thead>
+            <tbody id="positions-table-body" class="divide-y divide-border">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 3: ORDERS -->
+    <section id="section-orders" class="space-y-4 hidden">
+      <div class="bg-card border border-border p-4 rounded-xl">
+        <h2 class="font-bold text-white text-sm">Lệnh Chờ Khớp Trên Binance</h2>
+        <p class="text-xs text-gray-400">Các lệnh Limit, Stop-Market đang chờ khớp trên sàn</p>
+      </div>
+      <div class="bg-card border border-border rounded-xl p-8 text-center text-gray-500 text-xs">
+        Hiện tại không có lệnh chờ nào trên sàn.
+      </div>
+    </section>
+
+    <!-- SECTION 4: HISTORY & PNL -->
+    <section id="section-history" class="space-y-4 hidden">
+      <div class="bg-card border border-border p-4 rounded-xl flex items-center justify-between">
+        <div>
+          <h2 class="font-bold text-white text-sm">Lịch Sử Khớp Lệnh & Thống Kê PnL</h2>
+          <p class="text-xs text-gray-400">Lịch sử các vị thế đã đóng cùng báo cáo lợi nhuận thực tế</p>
+        </div>
+        <span class="text-xs text-green font-bold px-2 py-1 rounded bg-emerald-950 border border-emerald-800">
+          Tỷ Lệ Thắng Cao
+        </span>
+      </div>
+
+      <div class="bg-card border border-border rounded-xl overflow-hidden shadow-xl">
+        <div class="overflow-x-auto">
+          <table class="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr class="border-b border-border bg-[#1E2329]/70 text-gray-400 font-semibold uppercase text-[11px]">
+                <th class="py-3 px-4">Cặp Giao Dịch</th>
+                <th class="py-3 px-4">Chiều</th>
+                <th class="py-3 px-4">Giá Vào</th>
+                <th class="py-3 px-4">Giá Đóng</th>
+                <th class="py-3 px-4">Lợi Nhuận (PnL)</th>
+                <th class="py-3 px-4">Thời Gian Đóng</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body" class="divide-y divide-border">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECTION 5: SETTINGS & PROXY -->
+    <section id="section-settings" class="space-y-4 hidden">
+      <!-- Network Selection & Preset Keys -->
+      <div class="bg-card border border-border p-4 sm:p-5 rounded-xl space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <i data-lucide="key" class="w-5 h-5 text-gold"></i>
+            <h2 class="font-bold text-white text-sm">Cấu Hình Khóa API Binance</h2>
+          </div>
+          <div class="flex items-center space-x-3 text-xs">
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="radio" name="network" id="net-mainnet" value="mainnet" class="accent-gold">
+              <span class="font-semibold text-white">Binance Mainnet</span>
+            </label>
+            <label class="flex items-center space-x-1.5 cursor-pointer">
+              <input type="radio" name="network" id="net-testnet" value="testnet" class="accent-gold">
+              <span class="text-gray-400">Binance Testnet</span>
+            </label>
+          </div>
+        </div>
+
+        <!-- Quick Load Presets -->
+        <div class="flex flex-wrap items-center gap-2 p-3 bg-dark/60 border border-border rounded-lg text-xs">
+          <span class="text-gray-400">Nạp nhanh:</span>
+          <button id="btn-load-mainnet-keys" class="px-3 py-1 rounded bg-gold/15 text-gold border border-gold/30 hover:bg-gold/25 font-semibold transition">
+            Nạp Khóa Binance Mainnet Của Tôi
+          </button>
+          <button id="btn-load-testnet-keys" class="px-3 py-1 rounded bg-gray-800 text-gray-300 border border-gray-700 hover:bg-gray-700 font-semibold transition">
+            Nạp Khóa Testnet Demo
+          </button>
+        </div>
+
+        <!-- API Inputs -->
+        <div class="grid grid-cols-1 gap-3 text-xs">
+          <div>
+            <label class="block text-gray-400 font-medium mb-1">API Key Binance</label>
+            <input id="input-api-key" type="password" placeholder="Nhập API Key..." 
+                   class="w-full bg-dark border border-border rounded-lg px-3 py-2 text-white mono focus:outline-none focus:border-gold">
+          </div>
+          <div>
+            <label class="block text-gray-400 font-medium mb-1">Secret Key Binance</label>
+            <input id="input-api-secret" type="password" placeholder="Nhập Secret Key..." 
+                   class="w-full bg-dark border border-border rounded-lg px-3 py-2 text-white mono focus:outline-none focus:border-gold">
+          </div>
+          <div>
+            <label class="block text-gray-400 font-medium mb-1">Mã PIN Bảo Mật (4 chữ số)</label>
+            <input id="input-pin-code" type="password" maxlength="4" placeholder="Mặc định: 1234" 
+                   class="w-full sm:w-48 bg-dark border border-border rounded-lg px-3 py-2 text-white mono focus:outline-none focus:border-gold">
+            <span class="text-[11px] text-gray-500 mt-1 block">Bắt buộc phải nhập đúng mã PIN này trước khi Auto Trade hoặc gửi lệnh thực tế</span>
+          </div>
+        </div>
+
+        <button id="btn-save-settings" class="px-5 py-2 rounded-lg bg-gold hover:bg-gold-hover text-black font-bold text-xs transition">
+          Lưu Cấu Hình API & PIN
+        </button>
+      </div>
+
+      <!-- Custom Proxy Configuration Card -->
+      <div class="bg-card border border-border p-4 sm:p-5 rounded-xl space-y-4">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <i data-lucide="globe" class="w-5 h-5 text-gold"></i>
+            <div>
+              <h2 class="font-bold text-white text-sm">Cấu Hình Custom Proxy (Socks5/HTTP Proxy)</h2>
+              <p class="text-xs text-gray-400">Định tuyến API Binance qua VPS sạch IP để vượt hạn chế vùng địa lý</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Guidance Message -->
+        <div class="p-3 bg-dark/70 border border-gold/30 rounded-lg text-xs text-gold flex items-start space-x-2">
+          <i data-lucide="info" class="w-4 h-4 flex-shrink-0 mt-0.5"></i>
+          <span>Cấu hình Proxy trung gian giúp định tuyến API Mainnet qua VPS sạch IP khi gặp lỗi restricted location.</span>
+        </div>
+
+        <!-- Proxy Inputs -->
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div class="sm:col-span-1">
+            <label class="block text-gray-400 font-medium mb-1">Giao Thức Proxy</label>
+            <select id="select-proxy-type" class="w-full bg-dark border border-border rounded-lg px-3 py-2 text-white focus:outline-none focus:border-gold">
+              <option value="HTTP">HTTP Proxy</option>
+              <option value="SOCKS">SOCKS5 Proxy</option>
+            </select>
+          </div>
+          <div class="sm:col-span-1">
+            <label class="block text-gray-400 font-medium mb-1">Proxy Host</label>
+            <input id="input-proxy-host" type="text" placeholder="123.45.67.89 hoặc vps.domain.com" 
+                   class="w-full bg-dark border border-border rounded-lg px-3 py-2 text-white mono focus:outline-none focus:border-gold">
+          </div>
+          <div class="sm:col-span-1">
+            <label class="block text-gray-400 font-medium mb-1">Proxy Port</label>
+            <input id="input-proxy-port" type="number" placeholder="1080 hoặc 8080" 
+                   class="w-full bg-dark border border-border rounded-lg px-3 py-2 text-white mono focus:outline-none focus:border-gold">
+          </div>
+        </div>
+
+        <div class="flex items-center space-x-2">
+          <button id="btn-save-proxy" class="px-5 py-2 rounded-lg bg-gold hover:bg-gold-hover text-black font-bold text-xs transition">
+            Lưu Cấu Hình Proxy
+          </button>
+          <button id="btn-clear-proxy" class="px-4 py-2 rounded-lg bg-dark border border-border hover:bg-card-hover text-red font-medium text-xs transition">
+            Tắt Proxy
+          </button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MANDATORY PIN MODAL (Strict Security) -->
+  <div id="pin-modal" class="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 hidden">
+    <div class="bg-card border border-border rounded-2xl w-full max-w-sm p-6 text-center shadow-2xl relative">
+      <!-- Shield Icon -->
+      <div class="w-12 h-12 rounded-full bg-gold/15 border border-gold/40 flex items-center justify-center text-gold mx-auto mb-3">
+        <i data-lucide="lock" class="w-6 h-6"></i>
+      </div>
+
+      <h3 class="text-base font-bold text-white mb-1">Xác Thực Mã PIN Bảo Mật</h3>
+      <p id="pin-modal-title" class="text-xs text-gray-400 mb-4">Vui lòng nhập mã PIN bảo mật để tiếp tục</p>
+
+      <!-- PIN Dots -->
+      <div class="flex items-center justify-center space-x-4 mb-5">
+        <div id="pin-dot-0" class="pin-dot"></div>
+        <div id="pin-dot-1" class="pin-dot"></div>
+        <div id="pin-dot-2" class="pin-dot"></div>
+        <div id="pin-dot-3" class="pin-dot"></div>
+      </div>
+
+      <!-- Error Message -->
+      <div id="pin-modal-error" class="text-xs text-red font-semibold mb-3 hidden">
+        Mã PIN không chính xác!
+      </div>
+
+      <!-- Keypad -->
+      <div class="grid grid-cols-3 gap-2.5 max-w-[220px] mx-auto mb-4">
+        <button onclick="handlePinDigit('1')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">1</button>
+        <button onclick="handlePinDigit('2')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">2</button>
+        <button onclick="handlePinDigit('3')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">3</button>
+        <button onclick="handlePinDigit('4')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">4</button>
+        <button onclick="handlePinDigit('5')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">5</button>
+        <button onclick="handlePinDigit('6')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">6</button>
+        <button onclick="handlePinDigit('7')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">7</button>
+        <button onclick="handlePinDigit('8')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">8</button>
+        <button onclick="handlePinDigit('9')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">9</button>
+        <button onclick="closePinModal()" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border text-gray-400 text-xs font-semibold transition">Hủy</button>
+        <button onclick="handlePinDigit('0')" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border font-bold text-white text-base transition">0</button>
+        <button onclick="handlePinDelete()" class="py-2.5 rounded-xl bg-dark hover:bg-card-hover border border-border text-gray-400 hover:text-white transition flex items-center justify-center">
+          <i data-lucide="delete" class="w-4 h-4"></i>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast Notification Container -->
+  <div id="toast-container" class="fixed bottom-5 right-5 z-50 flex flex-col space-y-2 max-w-sm pointer-events-none">
+  </div>
+
+  <!-- Main JavaScript Logic -->
+  <script src="script.js"></script>
+</body>
+</html>

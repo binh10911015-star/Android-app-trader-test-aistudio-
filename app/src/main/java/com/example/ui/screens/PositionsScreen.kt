@@ -34,7 +34,12 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.TrendingDown
 import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Verified
+import androidx.compose.material.icons.filled.Warning
+import com.example.ui.components.PinVerificationDialog
+import com.example.ui.components.TpSlDialog
+
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -88,6 +93,17 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
+data class TpSlTarget(
+    val symbol: String,
+    val isLong: Boolean,
+    val entryPrice: Double,
+    val markPrice: Double,
+    val leverage: Int,
+    val tpPrice: Double? = null,
+    val slPrice: Double? = null,
+    val positionId: Long? = null
+)
+
 @Composable
 fun PositionsScreen(
     viewModel: MainViewModel,
@@ -129,10 +145,75 @@ fun PositionsScreen(
         closedPositions.filter { it.isLiveBinanceOrder }
     }
 
+    val livePositionsTpSl by viewModel.livePositionsTpSl.collectAsState()
+
+    // Sắp xếp tự động danh sách vị thế Binance Live giảm dần theo % ROI
+    val liveSortedPositions = remember(binancePortfolio.positions, sortOrder) {
+        when (sortOrder) {
+            RoiSortOrder.ASCENDING -> binancePortfolio.positions.sortedBy { it.roiPercent }
+            else -> binancePortfolio.positions.sortedByDescending { it.roiPercent }
+        }
+    }
+
+    var showPinDialog by remember { mutableStateOf(false) }
+    var pinActionTitle by remember { mutableStateOf("Xác nhận thao tác") }
+    var pendingAction by remember { mutableStateOf<(() -> Unit)?>(null) }
+
+    val performWithPinCheck: (String, () -> Unit) -> Unit = { title, action ->
+        pinActionTitle = title
+        pendingAction = action
+        showPinDialog = true
+    }
+
+    var editingTpSlTarget by remember { mutableStateOf<TpSlTarget?>(null) }
+
     // 2 Tab chính phân biệt rõ ràng: 0 = Paper Trading, 1 = Binance Thực Tế
     var primaryTab by remember { mutableStateOf(if (apiConfig.isConnected) 1 else 0) }
     var paperSubTab by remember { mutableStateOf(0) }
     var binanceSubTab by remember { mutableStateOf(0) }
+
+    // Modal PIN 4 số bảo mật
+    if (showPinDialog) {
+        PinVerificationDialog(
+            actionTitle = pinActionTitle,
+            onVerify = { pin -> viewModel.authorizePin(pin) },
+            onSuccess = {
+                pendingAction?.invoke()
+                pendingAction = null
+            },
+            onDismiss = {
+                showPinDialog = false
+                pendingAction = null
+            }
+        )
+    }
+
+    // Modal Cài Đặt TP/SL
+    if (editingTpSlTarget != null) {
+        val target = editingTpSlTarget!!
+        TpSlDialog(
+            symbol = target.symbol,
+            isLong = target.isLong,
+            entryPrice = target.entryPrice,
+            markPrice = target.markPrice,
+            leverage = target.leverage,
+            initialTpPrice = target.tpPrice,
+            initialSlPrice = target.slPrice,
+            onDismiss = { editingTpSlTarget = null },
+            onConfirm = { tp, sl ->
+                editingTpSlTarget = null
+                performWithPinCheck("Cài đặt TP/SL cho ${target.symbol}") {
+                    viewModel.setPositionTpSl(
+                        symbol = target.symbol,
+                        isLong = target.isLong,
+                        tpPrice = tp,
+                        slPrice = sl,
+                        positionId = target.positionId
+                    )
+                }
+            }
+        )
+    }
 
     // Order Verification Dialog
     if (isVerifyingOrder || orderVerificationDetail != null) {
@@ -315,16 +396,20 @@ fun PositionsScreen(
             // ==================== TAB CHÍNH 2: BINANCE THỰC TẾ ====================
             BinanceRealTradingTabView(
                 viewModel = viewModel,
+                uiState = uiState,
                 apiConfig = apiConfig,
                 binancePortfolio = binancePortfolio,
                 binanceExecutedOpenPositions = binanceExecutedOpenPositions,
                 binanceClosedPositions = binanceClosedPositions,
+                livePositionsTpSl = livePositionsTpSl,
                 sortOrder = sortOrder,
                 selectedSubTab = binanceSubTab,
                 onSubTabChange = { binanceSubTab = it },
                 onSelectCoin = onSelectCoin,
                 isOpeningPositions = uiState.isOpeningPositions,
-                openingPositionsProgress = uiState.openingPositionsProgress
+                openingPositionsProgress = uiState.openingPositionsProgress,
+                onPerformWithPinCheck = performWithPinCheck,
+                onEditTpSlTarget = { editingTpSlTarget = it }
             )
         }
     }
@@ -658,17 +743,29 @@ fun PaperTradingTabView(
 @Composable
 fun BinanceRealTradingTabView(
     viewModel: MainViewModel,
+    uiState: com.example.ui.UiState,
     apiConfig: com.example.model.BinanceApiConfig,
     binancePortfolio: com.example.model.BinancePortfolio,
     binanceExecutedOpenPositions: List<TradePosition>,
     binanceClosedPositions: List<TradePosition>,
+    livePositionsTpSl: Map<String, Pair<Double?, Double?>>,
     sortOrder: RoiSortOrder,
     selectedSubTab: Int,
     onSubTabChange: (Int) -> Unit,
     onSelectCoin: (String) -> Unit,
     isOpeningPositions: Boolean,
-    openingPositionsProgress: String
+    openingPositionsProgress: String,
+    onPerformWithPinCheck: (String, () -> Unit) -> Unit,
+    onEditTpSlTarget: (TpSlTarget) -> Unit
 ) {
+    // Sắp xếp danh sách vị thế Binance Live giảm dần theo % ROI
+    val liveSortedPositions = remember(binancePortfolio.positions, sortOrder) {
+        when (sortOrder) {
+            RoiSortOrder.ASCENDING -> binancePortfolio.positions.sortedBy { it.roiPercent }
+            else -> binancePortfolio.positions.sortedByDescending { it.roiPercent }
+        }
+    }
+
     Column(modifier = Modifier.fillMaxSize()) {
         if (!apiConfig.isConnected) {
             // Khi chưa kết nối API
@@ -922,24 +1019,66 @@ fun BinanceRealTradingTabView(
                             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            // 1. Live Contract Positions direct from Binance
-                            if (binancePortfolio.positions.isNotEmpty()) {
+                            // 1. Live Contract Positions direct from Binance (Sắp xếp giảm dần theo % ROI)
+                            if (liveSortedPositions.isNotEmpty()) {
                                 item {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Icon(Icons.Default.Verified, contentDescription = null, tint = CryptoGreen, modifier = Modifier.size(14.dp))
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "HỢP ĐỒNG ĐANG CHẠY TRÊN SÀN BINANCE (${binancePortfolio.positions.size})",
-                                            color = CryptoGreen,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(Icons.Default.Verified, contentDescription = null, tint = CryptoGreen, modifier = Modifier.size(14.dp))
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "HỢP ĐỒNG LIVE BINANCE (${liveSortedPositions.size})",
+                                                color = CryptoGreen,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                         Button(
+                                            onClick = {
+                                                onPerformWithPinCheck("Đóng TOÀN BỘ ${liveSortedPositions.size} vị thế trên sàn Binance") {
+                                                    viewModel.closeAllLiveBinancePositions()
+                                                }
+                                            },
+                                            colors = ButtonDefaults.buttonColors(containerColor = CryptoRed, contentColor = Color.White),
+                                            shape = RoundedCornerShape(6.dp),
+                                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                            modifier = Modifier.height(28.dp).testTag("close_all_live_positions_button")
+                                        ) {
+                                            Icon(Icons.Default.DeleteSweep, contentDescription = null, modifier = Modifier.size(12.dp))
+                                            Spacer(modifier = Modifier.width(4.dp))
+                                            Text("Đóng Tất Cả", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        }
                                     }
                                 }
-                                items(binancePortfolio.positions, key = { "binance_${it.symbol}" }) { livePos ->
+                                items(liveSortedPositions, key = { "binance_${it.symbol}" }) { livePos ->
                                     BinanceLivePositionCard(
                                         position = livePos,
-                                        onSelectCoin = { onSelectCoin(livePos.symbol) }
+                                        configuredTp = livePositionsTpSl[livePos.symbol]?.first,
+                                        configuredSl = livePositionsTpSl[livePos.symbol]?.second,
+                                        onSelectCoin = { onSelectCoin(livePos.symbol) },
+                                        onEditTpSl = {
+                                            onEditTpSlTarget(
+                                                TpSlTarget(
+                                                    symbol = livePos.symbol,
+                                                    isLong = livePos.isLong,
+                                                    entryPrice = livePos.entryPrice,
+                                                    markPrice = if (livePos.markPrice > 0) livePos.markPrice else livePos.entryPrice,
+                                                    leverage = livePos.leverage,
+                                                    tpPrice = livePositionsTpSl[livePos.symbol]?.first,
+                                                    slPrice = livePositionsTpSl[livePos.symbol]?.second
+                                                )
+                                            )
+                                        },
+                                        onClose = {
+                                            onPerformWithPinCheck("Đóng vị thế ${livePos.symbol} trên sàn Binance") {
+                                                viewModel.closeLiveBinancePosition(livePos)
+                                            }
+                                        }
                                     )
                                 }
                             }
@@ -962,7 +1101,26 @@ fun BinanceRealTradingTabView(
                                 items(binanceExecutedOpenPositions, key = { it.id }) { pos ->
                                     OpenPositionCard(
                                         position = pos,
-                                        onClose = { viewModel.manualClosePosition(pos.id) },
+                                        onClose = {
+                                            onPerformWithPinCheck("Đóng vị thế ${pos.symbol}") {
+                                                viewModel.manualClosePosition(pos.id)
+                                            }
+                                        },
+                                        onEditTpSl = {
+                                            val currentPrice = uiState.tickers.find { it.symbol == pos.symbol }?.lastPrice ?: pos.currentPrice
+                                            onEditTpSlTarget(
+                                                TpSlTarget(
+                                                    symbol = pos.symbol,
+                                                    isLong = true,
+                                                    entryPrice = pos.entryPrice,
+                                                    markPrice = currentPrice,
+                                                    leverage = uiState.settings.leverage,
+                                                    tpPrice = pos.takeProfitPrice,
+                                                    slPrice = pos.stopLossPrice,
+                                                    positionId = pos.id
+                                                )
+                                            )
+                                        },
                                         onVerify = if (pos.binanceOrderId != null) {
                                             { viewModel.verifyOrderOnBinance(pos.symbol, pos.binanceOrderId) }
                                         } else null,
@@ -1056,11 +1214,17 @@ fun BinanceRealTradingTabView(
 
 /**
  * Card hiển thị vị thế hợp đồng Binance thực tế (GET /fapi/v2/account & positionRisk).
+ * Hiển thị đầy đủ: Symbol, Chiều (LONG/SHORT), Đòn bẩy, Ký quỹ (Margin USDT), Entry Price, Mark Price, Liq Price,
+ * Unrealized PnL (USDT & % ROI có màu sắc trực quan), nút [Sửa TP/SL] và nút [Đóng Vị Thế].
  */
 @Composable
 fun BinanceLivePositionCard(
     position: BinanceLivePosition,
-    onSelectCoin: () -> Unit
+    configuredTp: Double? = null,
+    configuredSl: Double? = null,
+    onSelectCoin: () -> Unit,
+    onEditTpSl: () -> Unit = {},
+    onClose: () -> Unit = {}
 ) {
     val isProfit = position.unrealizedProfit >= 0
     val sign = if (isProfit) "+" else ""
@@ -1110,7 +1274,7 @@ fun BinanceLivePositionCard(
                 Surface(
                     color = CryptoGreen.copy(alpha = 0.15f),
                     shape = RoundedCornerShape(6.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.4f))
+                    border = BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.4f))
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -1163,7 +1327,7 @@ fun BinanceLivePositionCard(
                     Text(
                         text = "ROI: $sign${String.format(Locale.US, "%.2f", position.roiPercent)}%",
                         color = if (isProfit) CryptoGreen else CryptoRed,
-                        fontSize = 11.sp,
+                        fontSize = 12.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -1172,7 +1336,7 @@ fun BinanceLivePositionCard(
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Giá vào & Chế độ ký quỹ
+            // Giá vào, Giá Mark & Giá thanh lý (Liq Price)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1181,8 +1345,8 @@ fun BinanceLivePositionCard(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Giá vào lệnh: ", color = TextSecondary, fontSize = 10.sp)
+                Column {
+                    Text("Giá vào (Entry):", color = TextSecondary, fontSize = 9.sp)
                     Text(
                         text = "$${CryptoRepository.formatPrice(position.entryPrice)}",
                         color = TextPrimary,
@@ -1192,11 +1356,130 @@ fun BinanceLivePositionCard(
                     )
                 }
 
-                Text(
-                    text = if (position.isolated) "Cô lập (Isolated)" else "Chéo (Cross Margin)",
-                    color = CryptoGold,
-                    fontSize = 10.sp
-                )
+                Column {
+                    Text("Giá Mark:", color = TextSecondary, fontSize = 9.sp)
+                    Text(
+                        text = "$${CryptoRepository.formatPrice(position.markPrice)}",
+                        color = CryptoGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Giá thanh lý (Liq):", color = TextSecondary, fontSize = 9.sp)
+                    Text(
+                        text = if (position.liquidationPrice > 0.0) "$${CryptoRepository.formatPrice(position.liquidationPrice)}" else "--",
+                        color = if (position.liquidationPrice > 0.0) CryptoRed else TextMuted,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+
+            // Hiển thị mốc TP/SL đã cài đặt nếu có
+            if (configuredTp != null || configuredSl != null) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(DarkSurfaceElevated, RoundedCornerShape(6.dp))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(11.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = "TP/SL Đã Cài:",
+                            color = TextSecondary,
+                            fontSize = 10.sp
+                        )
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (configuredTp != null) {
+                            Text(
+                                text = "TP: $${CryptoRepository.formatPrice(configuredTp)}",
+                                color = CryptoGreen,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                        if (configuredTp != null && configuredSl != null) {
+                            Text(" | ", color = TextMuted, fontSize = 10.sp)
+                        }
+                        if (configuredSl != null) {
+                            Text(
+                                text = "SL: $${CryptoRepository.formatPrice(configuredSl)}",
+                                color = CryptoRed,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Action Buttons: [Cài đặt TP / SL] và [Đóng Vị Thế]
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(
+                    onClick = onEditTpSl,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("edit_tpsl_button_${position.symbol}"),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Tune,
+                        contentDescription = null,
+                        tint = CryptoGold,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Cài đặt TP / SL",
+                        color = CryptoGold,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Button(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(34.dp)
+                        .testTag("close_position_button_${position.symbol}"),
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoRed, contentColor = Color.White),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(13.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Đóng Vị Thế",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
             }
         }
     }
@@ -1410,6 +1693,7 @@ fun BinanceAssetCard(asset: BinanceAssetBalance) {
 fun OpenPositionCard(
     position: TradePosition,
     onClose: () -> Unit,
+    onEditTpSl: (() -> Unit)? = null,
     onVerify: (() -> Unit)?,
     onClick: () -> Unit
 ) {
@@ -1607,15 +1891,38 @@ fun OpenPositionCard(
             // Action row
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                OutlinedButton(
+                if (onEditTpSl != null) {
+                    OutlinedButton(
+                        onClick = onEditTpSl,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoGold),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(34.dp),
+                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f)),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(13.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Cài đặt TP / SL", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Button(
                     onClick = onClose,
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoRed),
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoRed, contentColor = Color.White),
                     shape = RoundedCornerShape(8.dp),
-                    modifier = Modifier.height(36.dp)
+                    modifier = Modifier
+                        .then(if (onEditTpSl != null) Modifier.weight(1f) else Modifier)
+                        .height(34.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
                 ) {
-                    Text("Đóng Vị Thế", fontSize = 11.sp)
+                    Icon(Icons.Default.Close, contentDescription = null, tint = Color.White, modifier = Modifier.size(13.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Đóng Vị Thế", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

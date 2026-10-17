@@ -54,6 +54,24 @@ import com.example.ui.theme.DarkBg
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
 import com.example.ui.theme.MyApplicationTheme
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Bolt
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.Surface
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.graphics.Color
+import com.example.ui.components.PinVerificationDialog
+import com.example.ui.theme.CryptoRed
+import com.example.ui.theme.DarkBorder
+import com.example.ui.theme.DarkSurfaceHighlight
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -90,6 +108,20 @@ fun MainApp(viewModel: MainViewModel) {
     val apiConfig by viewModel.apiConfig.collectAsState()
     val openPositions by viewModel.openPositions.collectAsState()
     val closedPositions by viewModel.closedPositions.collectAsState()
+
+    var showMainnetPinDialog by remember { mutableStateOf(false) }
+
+    if (showMainnetPinDialog) {
+        PinVerificationDialog(
+            actionTitle = "Kích hoạt LIVE MAINNET (Tiền thật)",
+            onVerify = { pin -> viewModel.authorizePin(pin) },
+            onSuccess = {
+                viewModel.toggleTradingMode(toLiveMainnet = true)
+                showMainnetPinDialog = false
+            },
+            onDismiss = { showMainnetPinDialog = false }
+        )
+    }
 
     // Handle back button on sub-screens
     BackHandler(enabled = currentScreen != NavScreen.MARKET) {
@@ -255,6 +287,24 @@ fun MainApp(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
+            // Header Toggle Switch / Selector: [Chế Độ Mô Phỏng] <---> [LIVE MAINNET]
+            val isLiveMainnet = !apiConfig.isTestnet && apiConfig.liveTradingEnabled
+            TradingModeHeader(
+                isLiveMainnet = isLiveMainnet,
+                onSelectMode = { toLiveMainnet ->
+                    if (toLiveMainnet && !isLiveMainnet) {
+                        showMainnetPinDialog = true
+                    } else if (!toLiveMainnet && isLiveMainnet) {
+                        viewModel.toggleTradingMode(toLiveMainnet = false)
+                    }
+                }
+            )
+
+            // Red warning risk badge when in LIVE MAINNET
+            if (isLiveMainnet) {
+                LiveMainnetRiskWarningBanner()
+            }
+
             // Live Floating Notification Banner for Auto-Trades / TP / SL
             TradeAlertBanner(
                 alert = uiState.activeAlert,
@@ -320,6 +370,155 @@ fun MainApp(viewModel: MainViewModel) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Header Toggle Switch / Selector: [Chế Độ Mô Phỏng] <---> [LIVE MAINNET]
+ */
+@Composable
+fun TradingModeHeader(
+    isLiveMainnet: Boolean,
+    onSelectMode: (toLiveMainnet: Boolean) -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 6.dp)
+            .testTag("trading_mode_header_container"),
+        color = DarkSurface,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, if (isLiveMainnet) CryptoRed.copy(alpha = 0.6f) else DarkBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            // Option 1: Chế Độ Mô Phỏng (Paper)
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .clickable { onSelectMode(false) }
+                    .testTag("mode_selector_simulation"),
+                shape = RoundedCornerShape(9.dp),
+                color = if (!isLiveMainnet) CryptoGold.copy(alpha = 0.22f) else Color.Transparent,
+                border = if (!isLiveMainnet) BorderStroke(1.dp, CryptoGold) else null
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Shield,
+                        contentDescription = null,
+                        tint = if (!isLiveMainnet) CryptoGold else TextMuted,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Chế Độ Mô Phỏng",
+                        color = if (!isLiveMainnet) CryptoGold else TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = if (!isLiveMainnet) FontWeight.Bold else FontWeight.Medium
+                    )
+                }
+            }
+
+            // Option 2: LIVE MAINNET (Vốn Thật)
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(36.dp)
+                    .clickable { onSelectMode(true) }
+                    .testTag("mode_selector_live_mainnet"),
+                shape = RoundedCornerShape(9.dp),
+                color = if (isLiveMainnet) CryptoRed else Color.Transparent,
+                border = if (isLiveMainnet) null else BorderStroke(1.dp, DarkBorder)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxSize(),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Bolt,
+                        contentDescription = null,
+                        tint = if (isLiveMainnet) Color.White else TextMuted,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "LIVE MAINNET",
+                        color = if (isLiveMainnet) Color.White else TextSecondary,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    if (isLiveMainnet) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color.Black.copy(alpha = 0.35f)
+                        ) {
+                            Text(
+                                text = "THẬT",
+                                color = Color.White,
+                                fontSize = 9.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Badge màu đỏ cảnh báo rủi ro vốn thật khi ở chế độ LIVE MAINNET
+ */
+@Composable
+fun LiveMainnetRiskWarningBanner() {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 14.dp, vertical = 2.dp)
+            .testTag("live_mainnet_risk_warning_banner"),
+        color = CryptoRed.copy(alpha = 0.15f),
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.6f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 10.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Warning,
+                contentDescription = null,
+                tint = CryptoRed,
+                modifier = Modifier.size(16.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "CẢNH BÁO RỦI RO: ĐANG GIAO DỊCH VỐN THẬT (LIVE MAINNET)",
+                    color = CryptoRed,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "Mọi lệnh đóng/mở & TP/SL sẽ được gửi thẳng lên sàn Binance Mainnet qua Proxy an toàn.",
+                    color = Color.White.copy(alpha = 0.85f),
+                    fontSize = 9.sp
+                )
             }
         }
     }

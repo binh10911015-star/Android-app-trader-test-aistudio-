@@ -438,8 +438,9 @@ fun MarketScreen(
                                         modifier = Modifier.size(11.dp)
                                     )
                                     Spacer(modifier = Modifier.width(3.dp))
+                                    val scanCount = if (uiState.tickers.isNotEmpty()) uiState.tickers.size else com.example.network.BinanceClient.getActiveSymbolsCount()
                                     Text(
-                                        text = "Quét (${uiState.tickers.size})",
+                                        text = "Quét ($scanCount)",
                                         color = DarkBg,
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold

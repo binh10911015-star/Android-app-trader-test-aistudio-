@@ -1,0 +1,145 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+
+:root {
+  --bg-dark: #0B0E14;
+  --bg-card: #181A20;
+  --bg-card-hover: #1E2329;
+  --border-color: #2B313A;
+  --gold: #F0B90B;
+  --gold-hover: #F8D33A;
+  --green: #0ECB81;
+  --green-bg: rgba(14, 203, 129, 0.12);
+  --red: #F6465D;
+  --red-bg: rgba(246, 70, 93, 0.12);
+  --blue: #3861FB;
+  --text-primary: #EAECEF;
+  --text-secondary: #848E9C;
+  --text-muted: #5E6673;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+body {
+  background-color: var(--bg-dark);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+.mono {
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--bg-dark);
+}
+::-webkit-scrollbar-thumb {
+  background: #2B313A;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #474D57;
+}
+
+/* Price Flash Animations */
+@keyframes flashGreen {
+  0% { background-color: rgba(14, 203, 129, 0.35); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flashRed {
+  0% { background-color: rgba(246, 70, 93, 0.35); }
+  100% { background-color: transparent; }
+}
+
+.price-flash-up {
+  animation: flashGreen 0.8s ease-out;
+}
+
+.price-flash-down {
+  animation: flashRed 0.8s ease-out;
+}
+
+/* Pulse Dot */
+.pulsing-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  position: relative;
+}
+
+.pulsing-dot.online {
+  background-color: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
+
+.pulsing-dot.online::after {
+  content: '';
+  position: absolute;
+  top: -2px;
+  left: -2px;
+  right: -2px;
+  bottom: -2px;
+  border-radius: 50%;
+  border: 1.5px solid var(--green);
+  animation: pulseAnim 1.6s infinite;
+}
+
+@keyframes pulseAnim {
+  0% { transform: scale(1); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+/* PIN Dots */
+.pin-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid var(--gold);
+  background-color: transparent;
+  transition: all 0.2s ease;
+}
+
+.pin-dot.filled {
+  background-color: var(--gold);
+  box-shadow: 0 0 10px rgba(240, 185, 11, 0.5);
+  transform: scale(1.1);
+}
+
+/* Tab Active Styles */
+.tab-btn {
+  position: relative;
+  transition: all 0.2s;
+}
+
+.tab-btn.active {
+  color: var(--gold);
+  font-weight: 600;
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background-color: var(--gold);
+  border-radius: 2px 2px 0 0;
+}
+
+/* Shimmer on active trading */
+.trading-badge-glow {
+  box-shadow: 0 0 12px rgba(14, 203, 129, 0.25);
+}

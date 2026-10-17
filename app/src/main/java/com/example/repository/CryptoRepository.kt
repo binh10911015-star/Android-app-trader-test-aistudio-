@@ -253,6 +253,12 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         PositionUpdateResult(alerts, closedPositions, totalReturnedCapital)
     }
 
+    suspend fun updatePositionTpSl(positionId: Long, tpPrice: Double?, slPrice: Double?) = withContext(Dispatchers.IO) {
+        val pos = tradeDao.getPositionById(positionId) ?: return@withContext
+        val updated = pos.copy(takeProfitPrice = tpPrice, stopLossPrice = slPrice)
+        tradeDao.update(updated)
+    }
+
     suspend fun closePositionManually(positionId: Long, currentMarketPrice: Double): TradeAlert? = withContext(Dispatchers.IO) {
         val pos = tradeDao.getPositionById(positionId) ?: return@withContext null
         if (pos.status != TradePosition.STATUS_OPEN) return@withContext null

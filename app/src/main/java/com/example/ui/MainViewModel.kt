@@ -137,6 +137,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isVerifyingOrder = MutableStateFlow(false)
     val isVerifyingOrder: StateFlow<Boolean> = _isVerifyingOrder.asStateFlow()
 
+    // Lưu các mốc TP/SL cấu hình cho từng cặp coin (symbol -> Pair(TP, SL))
+    private val _livePositionsTpSl = MutableStateFlow<Map<String, Pair<Double?, Double?>>>(emptyMap())
+    val livePositionsTpSl: StateFlow<Map<String, Pair<Double?, Double?>>> = _livePositionsTpSl.asStateFlow()
+
     init {
         val loadedConfig = secureApiStorage.loadConfig()
         if (loadedConfig.isProxyEnabled) {
@@ -587,6 +591,285 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Chuyển đổi qua lại giữa [Chế Độ Mô Phỏng] và [LIVE MAINNET].
+     * Khi chuyển sang LIVE MAINNET: hiển thị cảnh báo rủi ro vốn thật và kích hoạt đăng nhập Mainnet.
+     */
+    fun toggleTradingMode(toLiveMainnet: Boolean) {
+        val current = _apiConfig.value
+        val newTestnet = !toLiveMainnet
+        val newLiveTrading = toLiveMainnet
+
+        val (apiKey, apiSecret) = if (toLiveMainnet) {
+            secureApiStorage.getMainnetCredentials()
+        } else {
+            secureApiStorage.getTestnetCredentials()
+        }
+
+        secureApiStorage.saveCredentials(
+            apiKey = apiKey,
+            apiSecret = apiSecret,
+            accessPin = current.accessPin.ifBlank { "1234" },
+            isTestnet = newTestnet,
+            liveTradingEnabled = newLiveTrading
+        )
+        _apiConfig.value = secureApiStorage.loadConfig()
+
+        if (toLiveMainnet) {
+            autoLoginMainnet()
+            triggerAlert(
+                TradeAlert(
+                    symbol = "MAINNET",
+                    title = "⚠️ ĐÃ BẬT CHẾ ĐỘ LIVE MAINNET",
+                    message = "CẢNH BÁO: Đang ở chế độ LIVE MAINNET! Mọi thao tác đặt lệnh sẽ sử dụng tiền thật trên Binance Futures.",
+                    type = AlertType.INFO
+                )
+            )
+        } else {
+            autoLoginTestnet()
+            triggerAlert(
+                TradeAlert(
+                    symbol = "SIMULATION",
+                    title = "🛡️ ĐÃ CHUYỂN VỀ CHẾ ĐỘ MÔ PHỎNG",
+                    message = "Đã chuyển sang chế độ mô phỏng Paper Trading an toàn.",
+                    type = AlertType.INFO
+                )
+            )
+        }
+    }
+
+    /**
+     * Cài đặt Take Profit (Chốt lời) và Stop Loss (Cắt lỗ) thủ công cho vị thế.
+     * Hỗ trợ cả vị thế Binance Live và vị thế mô phỏng/Room DB.
+     */
+    fun setPositionTpSl(
+        symbol: String,
+        isLong: Boolean,
+        tpPrice: Double?,
+        slPrice: Double?,
+        positionId: Long? = null,
+        onResult: ((Boolean, String) -> Unit)? = null
+    ) {
+        viewModelScope.launch {
+            var msg: String
+            var success = true
+
+            // Cập nhật cho Room Database nếu có positionId
+            if (positionId != null) {
+                repository.updatePositionTpSl(positionId, tpPrice, slPrice)
+            }
+
+            // Lưu vào map TP/SL cho Binance Live
+            val currentMap = _livePositionsTpSl.value.toMutableMap()
+            currentMap[symbol] = Pair(tpPrice, slPrice)
+            _livePositionsTpSl.value = currentMap
+
+            // Nếu đang kết nối Binance, gửi lệnh điều kiện lên Binance Futures
+            if (_apiConfig.value.isConnected) {
+                val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                val res = BinanceFuturesApiVerifier.setTakeProfitAndStopLoss(
+                    symbol = symbol,
+                    isLong = isLong,
+                    takeProfitPrice = tpPrice,
+                    stopLossPrice = slPrice,
+                    apiKey = apiKey,
+                    apiSecret = apiSecret,
+                    isTestnet = isTestnet
+                )
+                success = res.tpSuccess || res.slSuccess || res.errorMessage == null
+                msg = if (success) {
+                    val tpText = tpPrice?.let { "TP: $it" } ?: ""
+                    val slText = slPrice?.let { "SL: $it" } ?: ""
+                    "Đã đặt lệnh điều kiện thành công: $tpText $slText"
+                } else {
+                    res.errorMessage ?: "Không thể gửi lệnh điều kiện lên sàn"
+                }
+            } else {
+                msg = "Đã lưu cài đặt TP: $tpPrice | SL: $slPrice cho vị thế mô phỏng."
+            }
+
+            triggerAlert(
+                TradeAlert(
+                    symbol = symbol,
+                    title = if (success) "ĐÃ CÀI ĐẶT TP / SL" else "LỖI ĐẶT TP / SL",
+                    message = msg,
+                    type = if (success) AlertType.TAKE_PROFIT else AlertType.STOP_LOSS
+                )
+            )
+            onResult?.invoke(success, msg)
+        }
+    }
+
+    /**
+     * Đóng vị thế Binance Live trực tiếp trên sàn bằng lệnh MARKET đối ứng (reduceOnly = true)
+     */
+    fun closeLiveBinancePosition(position: BinanceLivePosition) {
+        viewModelScope.launch {
+            if (!_apiConfig.value.isConnected) return@launch
+            val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+            val side = if (position.isLong) "SELL" else "BUY"
+
+            val orderResult = BinanceFuturesApiVerifier.postMarketCloseOrder(
+                symbol = position.symbol,
+                amount = position.absAmount,
+                approxPrice = position.markPrice,
+                apiKey = apiKey,
+                apiSecret = apiSecret,
+                isTestnet = isTestnet,
+                side = side
+            )
+
+            if (orderResult.success) {
+                triggerAlert(
+                    TradeAlert(
+                        symbol = position.symbol,
+                        title = "ĐÃ ĐÓNG VỊ THẾ BINANCE LIVE",
+                        message = "Đã gửi lệnh $side ${String.format(Locale.US, "%.4f", position.absAmount)} ${position.symbol} thành công trên sàn Binance!",
+                        type = AlertType.INFO
+                    )
+                )
+                refreshBinancePortfolio()
+            } else {
+                triggerAlert(
+                    TradeAlert(
+                        symbol = position.symbol,
+                        title = "LỖI ĐÓNG VỊ THẾ BINANCE",
+                        message = orderResult.errorMessage ?: "Không thể đóng vị thế",
+                        type = AlertType.STOP_LOSS
+                    )
+                )
+            }
+        }
+    }
+
+    /**
+     * Đóng toàn bộ các vị thế đang chạy trên sàn Binance Futures
+     */
+    fun closeAllLiveBinancePositions() {
+        viewModelScope.launch {
+            val livePositions = binancePortfolio.value.positions
+            if (livePositions.isEmpty() || !_apiConfig.value.isConnected) return@launch
+            val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+
+            var closedCount = 0
+            for (pos in livePositions) {
+                val side = if (pos.isLong) "SELL" else "BUY"
+                val res = BinanceFuturesApiVerifier.postMarketCloseOrder(
+                    symbol = pos.symbol,
+                    amount = pos.absAmount,
+                    approxPrice = pos.markPrice,
+                    apiKey = apiKey,
+                    apiSecret = apiSecret,
+                    isTestnet = isTestnet,
+                    side = side
+                )
+                if (res.success) closedCount++
+            }
+
+            refreshBinancePortfolio()
+            triggerAlert(
+                TradeAlert(
+                    symbol = "CLOSE_ALL",
+                    title = "ĐÃ ĐÓNG TOÀN BỘ VỊ THẾ LIVE",
+                    message = "Đã gửi lệnh đóng $closedCount/${livePositions.size} vị thế trên sàn Binance.",
+                    type = AlertType.INFO
+                )
+            )
+        }
+    }
+
+    /**
+     * Cài đặt đòn bẩy giao dịch cho symbol
+     */
+    fun updateLeverage(symbol: String, leverage: Int) {
+        val clamped = leverage.coerceIn(1, 50)
+        _uiState.value = _uiState.value.copy(
+            settings = _uiState.value.settings.copy(leverage = clamped)
+        )
+        if (_apiConfig.value.isConnected) {
+            viewModelScope.launch {
+                val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                BinanceFuturesApiVerifier.setLeverage(symbol, clamped, apiKey, apiSecret, isTestnet)
+            }
+        }
+    }
+
+    /**
+     * Đặt lệnh Mua (LONG) hoặc Bán (SHORT) với cài đặt đòn bẩy tự động
+     */
+    fun executeOrder(symbol: String, isLong: Boolean, customAmountUsdt: Double? = null) {
+        viewModelScope.launch {
+            val price = _uiState.value.tickers.find { it.symbol == symbol }?.lastPrice ?: 0.0
+            if (price <= 0.0) return@launch
+
+            val volume = customAmountUsdt ?: _uiState.value.settings.calculatePositionVolume()
+            val side = if (isLong) "BUY" else "SELL"
+            val sideLabel = if (isLong) "LONG" else "SHORT"
+
+            if (_apiConfig.value.isConnected) {
+                val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
+
+                // Cài đặt đòn bẩy trước khi vào lệnh
+                BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
+
+                val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
+                    symbol = symbol,
+                    side = side,
+                    targetUsdtAmount = volume,
+                    approxPrice = price,
+                    apiKey = apiKey,
+                    apiSecret = apiSecret,
+                    isTestnet = isTestnet
+                )
+
+                if (orderResult.success) {
+                    val alert = repository.executeSimulatedBuy(
+                        symbol = symbol,
+                        currentPrice = price,
+                        settings = _uiState.value.settings,
+                        investedUsdt = volume,
+                        isAutoTriggered = false,
+                        binanceOrderId = orderResult.orderId,
+                        binanceClientOrderId = orderResult.clientOrderId,
+                        isLiveBinanceOrder = true,
+                        binanceStatus = orderResult.status ?: "FILLED",
+                        exactAmount = if (orderResult.executedQty > 0.0) orderResult.executedQty else null,
+                        exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
+                        autoFixNote = orderResult.autoFixApplied
+                    )
+                    if (alert != null) triggerAlert(alert)
+                    refreshBinancePortfolio()
+                } else {
+                    triggerAlert(
+                        TradeAlert(
+                            symbol = symbol,
+                            title = "LỖI VÀO LỆNH $sideLabel",
+                            message = "${orderResult.errorMessage ?: "Không thể kết nối"}. Vui lòng kiểm tra lại quyền API.",
+                            type = AlertType.INFO
+                        )
+                    )
+                }
+            } else {
+                // Mô phỏng
+                val alert = repository.executeSimulatedBuy(
+                    symbol = symbol,
+                    currentPrice = price,
+                    settings = _uiState.value.settings,
+                    investedUsdt = volume,
+                    isAutoTriggered = false
+                )
+                if (alert != null) {
+                    triggerAlert(alert)
+                    val newBal = _uiState.value.settings.simulatedBalanceUsdt - volume
+                    _uiState.value = _uiState.value.copy(
+                        settings = _uiState.value.settings.updateBalance(newBal)
+                    )
+                }
+            }
+        }
+    }
+
+    /**
      * Mở toàn bộ vị thế sau khi quét thấy tín hiệu tăng (MA20 > SuperTrend 4H).
      * Mở vị thế mô phỏng với volume = 0,5% số dư mô phỏng kèm TP/SL.
      * Tự động bỏ qua các coin đã có trong danh sách vào lệnh để tránh lệnh trùng lặp.
@@ -685,6 +968,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val isLive = _apiConfig.value.isConnected
                     if (isLive) {
                         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+
+                        // Đảm bảo đòn bẩy được cấu hình trên Binance trước khi mở vị thế
+                        BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
 
                         val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
                             symbol = symbol,
@@ -792,9 +1078,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isScanning = true,
-                scanProgress = "Đang tải danh sách toàn bộ Binance Futures...",
+                scanProgress = "Đang tải và lọc danh sách USDT-M Perpetual từ Binance...",
                 scanPercent = 0f
             )
+
+            // Lọc bỏ triệt để các coin đã delist thông qua exchangeInfo
+            BinanceClient.refreshValidPerpetualSymbols()
 
             // Ensure tickers are loaded
             var currentTickers = _uiState.value.tickers

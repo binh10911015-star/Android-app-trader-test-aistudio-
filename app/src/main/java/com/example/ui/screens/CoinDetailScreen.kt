@@ -1,12 +1,15 @@
 package com.example.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -85,16 +88,24 @@ fun CoinDetailScreen(
         ?: uiState.klineData.lastOrNull()?.candle?.close
         ?: 0.0
 
+    var isLongOrder by remember { mutableStateOf(true) }
     var showPinDialog by remember { mutableStateOf(false) }
+    var pinActionDesc by remember { mutableStateOf("") }
+    var onPinConfirmedAction by remember { mutableStateOf<(() -> Unit)?>(null) }
 
     if (showPinDialog) {
         PinVerificationDialog(
-            actionTitle = "vào lệnh $symbol",
+            actionTitle = pinActionDesc.ifEmpty { "vào lệnh $symbol" },
             onVerify = { pin -> viewModel.authorizePin(pin) },
             onSuccess = {
-                viewModel.executeBuy(symbol, isAuto = false)
+                onPinConfirmedAction?.invoke()
+                onPinConfirmedAction = null
+                showPinDialog = false
             },
-            onDismiss = { showPinDialog = false }
+            onDismiss = {
+                showPinDialog = false
+                onPinConfirmedAction = null
+            }
         )
     }
 
@@ -452,7 +463,13 @@ fun CoinDetailScreen(
                                     }
 
                                     OutlinedButton(
-                                        onClick = { viewModel.manualClosePosition(existingPosition.id) },
+                                        onClick = {
+                                            pinActionDesc = "đóng vị thế $symbol"
+                                            onPinConfirmedAction = {
+                                                viewModel.manualClosePosition(existingPosition.id)
+                                            }
+                                            showPinDialog = true
+                                        },
                                         colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoRed),
                                         modifier = Modifier.testTag("manual_close_button")
                                     ) {
@@ -462,37 +479,134 @@ fun CoinDetailScreen(
                             }
                         }
                     } else {
-                        // Can open new order
-                        Button(
-                            onClick = {
-                                showPinDialog = true
-                            },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isBullishAlert) CryptoGreen else CryptoGold,
-                                contentColor = DarkBg
-                            ),
-                            shape = RoundedCornerShape(10.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(48.dp)
-                                .testTag("execute_buy_button")
+                        // Cài đặt đòn bẩy giao dịch (1x - 50x)
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text("Đòn bẩy giao dịch:", color = TextSecondary, fontSize = 11.sp)
+                                Surface(
+                                    color = CryptoGold.copy(alpha = 0.15f),
+                                    shape = RoundedCornerShape(4.dp),
+                                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f))
+                                ) {
+                                    Text(
+                                        text = "${uiState.settings.leverage}x",
+                                        color = CryptoGold,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        fontFamily = FontFamily.Monospace,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                    )
+                                }
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(5, 10, 20, 50).forEach { lev ->
+                                    val isSelected = uiState.settings.leverage == lev
+                                    Surface(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(30.dp)
+                                            .clickable { viewModel.updateLeverage(symbol, lev) }
+                                            .testTag("leverage_chip_$lev"),
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = if (isSelected) CryptoGold else DarkSurfaceHighlight,
+                                        border = if (isSelected) null else BorderStroke(1.dp, DarkBorder)
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "${lev}x",
+                                                color = if (isSelected) DarkBg else TextPrimary,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        val currentVol = uiState.settings.calculatePositionVolume()
+                        val volFormatted = if (currentVol % 1.0 == 0.0) "${currentVol.toInt()}" else String.format(Locale.US, "%.1f", currentVol)
+
+                        // 2 Nút mở vị thế: [BUY / LONG] và [SELL / SHORT]
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            val currentVol = uiState.settings.calculatePositionVolume()
-                            val volFormatted = if (currentVol % 1.0 == 0.0) "${currentVol.toInt()}" else String.format(Locale.US, "%.1f", currentVol)
-                            Text(
-                                text = if (isBullishAlert)
-                                    "VÀO LỆNH MUA ($volFormatted USDT - 0.5% SỐ DƯ)"
-                                else
-                                    "MỞ LỆNH MUA MÔ PHỎNG ($volFormatted USDT)",
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 13.sp
-                            )
+                            // Nút BUY / LONG
+                            Button(
+                                onClick = {
+                                    isLongOrder = true
+                                    pinActionDesc = "vào lệnh BUY / LONG $symbol (${uiState.settings.leverage}x, $volFormatted USDT)"
+                                    onPinConfirmedAction = {
+                                        viewModel.executeOrder(symbol = symbol, isLong = true)
+                                    }
+                                    showPinDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CryptoGreen,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("execute_buy_long_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.TrendingUp,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("BUY / LONG", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("$volFormatted USDT", fontSize = 9.sp)
+                                }
+                            }
+
+                            // Nút SELL / SHORT
+                            Button(
+                                onClick = {
+                                    isLongOrder = false
+                                    pinActionDesc = "vào lệnh SELL / SHORT $symbol (${uiState.settings.leverage}x, $volFormatted USDT)"
+                                    onPinConfirmedAction = {
+                                        viewModel.executeOrder(symbol = symbol, isLong = false)
+                                    }
+                                    showPinDialog = true
+                                },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = CryptoRed,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(48.dp)
+                                    .testTag("execute_sell_short_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.TrendingDown,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("SELL / SHORT", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                    Text("$volFormatted USDT", fontSize = 9.sp)
+                                }
+                            }
                         }
                     }
                 }

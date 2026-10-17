@@ -33,9 +33,81 @@ object BinanceClient {
     @Volatile
     private var activeProxyType: String = "HTTP"
 
+    // Bộ nhớ cache động các symbol USDT-M Perpetual hợp lệ trực tiếp từ exchangeInfo (TTL = 1 giờ)
+    private val activePerpetualSymbols = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    @Volatile
+    private var lastExchangeInfoFetchTime: Long = 0L
+    private const val EXCHANGE_INFO_CACHE_TTL_MS = 3600_000L // 1 giờ
+
     @Volatile
     var okHttpClient: OkHttpClient = buildClient(null)
         private set
+
+    /**
+     * Lọc danh sách symbol hợp lệ trực tiếp từ endpoint Binance Futures exchangeInfo:
+     * - status === "TRADING" (Bỏ qua hoàn toàn SETTLING, CLOSE, DELISTED, PENDING_TRADING)
+     * - contractType === "PERPETUAL" (Chỉ lấy hợp đồng vĩnh cửu)
+     * - quoteAsset === "USDT" (Chỉ lấy các cặp ký quỹ USDT)
+     * Cache trong 1 giờ để tối ưu tốc độ và không spam rate limit.
+     */
+    fun refreshValidPerpetualSymbols(forceRefresh: Boolean = false): Set<String> {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh && activePerpetualSymbols.isNotEmpty() && (now - lastExchangeInfoFetchTime < EXCHANGE_INFO_CACHE_TTL_MS)) {
+            return activePerpetualSymbols.keys
+        }
+
+        try {
+            val request = Request.Builder()
+                .url("https://fapi.binance.com/fapi/v1/exchangeInfo")
+                .header("User-Agent", "Mozilla/5.0")
+                .build()
+            val response = okHttpClient.newCall(request).execute()
+            if (response.isSuccessful) {
+                val body = response.body?.string() ?: ""
+                val json = org.json.JSONObject(body)
+                val symbolsArr = json.optJSONArray("symbols")
+                if (symbolsArr != null && symbolsArr.length() > 0) {
+                    val newSet = mutableSetOf<String>()
+                    for (i in 0 until symbolsArr.length()) {
+                        val sObj = symbolsArr.getJSONObject(i)
+                        val sym = sObj.optString("symbol", "")
+                        val status = sObj.optString("status", "")
+                        val contractType = sObj.optString("contractType", "")
+                        val quoteAsset = sObj.optString("quoteAsset", "")
+
+                        // Tiêu chí lọc nghiêm ngặt theo yêu cầu
+                        if (status.equals("TRADING", ignoreCase = true) &&
+                            contractType.equals("PERPETUAL", ignoreCase = true) &&
+                            quoteAsset.equals("USDT", ignoreCase = true)
+                        ) {
+                            newSet.add(sym)
+                        }
+                    }
+                    if (newSet.isNotEmpty()) {
+                        activePerpetualSymbols.clear()
+                        newSet.forEach { activePerpetualSymbols[it] = true }
+                        lastExchangeInfoFetchTime = now
+                        return newSet
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            // Khi không có mạng, giữ lại cache hiện tại hoặc seed
+        }
+        return activePerpetualSymbols.keys
+    }
+
+    fun getValidSymbols(): Set<String> {
+        if (activePerpetualSymbols.isEmpty()) {
+            return refreshValidPerpetualSymbols()
+        }
+        return activePerpetualSymbols.keys
+    }
+
+    fun getActiveSymbolsCount(): Int {
+        val set = getValidSymbols()
+        return if (set.isNotEmpty()) set.size else DefaultCoinData.getSeedTickers().size
+    }
 
     /**
      * Cập nhật Proxy cho OkHttpClient (HTTP hoặc SOCKS5).
@@ -106,6 +178,14 @@ object BinanceClient {
         val cleanSymbol = symbol.uppercase()
         val altSymbol = if (cleanSymbol.startsWith("1000")) cleanSymbol.removePrefix("1000") else cleanSymbol
 
+        // Kiểm tra danh sách symbol hợp lệ để tránh lỗi 400 cho coin đã delist
+        val valid = getValidSymbols()
+        if (valid.isNotEmpty() && cleanSymbol !in valid && altSymbol !in valid) {
+            val seed = DefaultCoinData.getSeedTickers().find { it.symbol == symbol }
+            val basePrice = seed?.lastPrice ?: 100.0
+            return generateSyntheticCandles(basePrice, 50, interval)
+        }
+
         for (baseUrl in KLINE_ENDPOINTS) {
             for (sym in listOf(cleanSymbol, altSymbol).distinct()) {
                 try {
@@ -134,14 +214,24 @@ object BinanceClient {
     }
 
     fun parseTickers(jsonString: String): List<BinanceTicker> {
+        // Đảm bảo cache exchangeInfo đã được nạp
+        val validSymbols = getValidSymbols()
+
         val list = mutableListOf<BinanceTicker>()
         try {
             val jsonArray = JSONArray(jsonString)
             for (i in 0 until jsonArray.length()) {
                 val item = jsonArray.getJSONObject(i)
                 val symbol = item.optString("symbol", "")
-                // Focus on USDT contracts
-                if (symbol.endsWith("USDT")) {
+                
+                // Tiêu chí: Chỉ lấy các cặp USDT-M Perpetual hợp lệ đang TRADING (đã lọc qua exchangeInfo)
+                val isValid = if (validSymbols.isNotEmpty()) {
+                    symbol in validSymbols
+                } else {
+                    symbol.endsWith("USDT") && !symbol.contains("_")
+                }
+
+                if (isValid) {
                     val lastPrice = item.optString("lastPrice", "0").toDoubleOrNull() ?: 0.0
                     val priceChangePercent = item.optString("priceChangePercent", "0").toDoubleOrNull() ?: 0.0
                     val volume = item.optString("volume", "0").toDoubleOrNull() ?: 0.0

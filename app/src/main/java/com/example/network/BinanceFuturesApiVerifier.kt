@@ -7,6 +7,7 @@ import com.example.model.BinanceOpenOrderItem
 import com.example.model.BinanceOrderPlacementResult
 import com.example.model.BinanceOrderVerificationDetail
 import com.example.model.BinancePortfolio
+import com.example.model.BinanceTpSlResult
 import com.example.model.SymbolExchangeFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -401,32 +402,67 @@ object BinanceFuturesApiVerifier {
                 }
             }
 
-            // Parse Positions
+            // Parse Positions & Gọi /fapi/v2/positionRisk để lấy chính xác Mark Price, Liquidation Price và Unrealized PnL
+            val riskMap = mutableMapOf<String, JSONObject>()
+            try {
+                val riskTimestamp = System.currentTimeMillis()
+                val riskQuery = "recvWindow=5000&timestamp=$riskTimestamp"
+                val riskSig = signHmacSha256(riskQuery, trimmedSecret)
+                val riskReq = Request.Builder()
+                    .url("$baseUrl/fapi/v2/positionRisk?$riskQuery&signature=$riskSig")
+                    .header("X-MBX-APIKEY", trimmedKey)
+                    .get()
+                    .build()
+                val riskResp = BinanceClient.okHttpClient.newCall(riskReq).execute()
+                if (riskResp.isSuccessful) {
+                    val riskBody = riskResp.body?.string() ?: ""
+                    val riskArr = JSONArray(riskBody)
+                    for (i in 0 until riskArr.length()) {
+                        val r = riskArr.getJSONObject(i)
+                        val s = r.optString("symbol", "")
+                        riskMap[s] = r
+                    }
+                }
+            } catch (_: Exception) {}
+
             val positionsArr = json.optJSONArray("positions")
             if (positionsArr != null) {
                 for (i in 0 until positionsArr.length()) {
                     val p = positionsArr.getJSONObject(i)
                     val amt = p.optDouble("positionAmt", 0.0)
                     if (amt != 0.0) {
+                        val sym = p.optString("symbol", "")
+                        val r = riskMap[sym]
+                        val entryPrice = p.optDouble("entryPrice", 0.0)
+                        val markPrice = r?.optDouble("markPrice", 0.0) ?: p.optDouble("markPrice", 0.0)
+                        val liqPrice = r?.optDouble("liquidationPrice", 0.0) ?: 0.0
+                        val unPnl = r?.optDouble("unRealizedProfit", p.optDouble("unrealizedProfit", 0.0)) ?: p.optDouble("unrealizedProfit", 0.0)
+                        val lev = r?.optInt("leverage", p.optInt("leverage", 1)) ?: p.optInt("leverage", 1)
+                        val initMargin = if (lev > 0) (kotlin.math.abs(amt) * entryPrice) / lev else p.optDouble("initialMargin", 0.0)
+
                         positionsList.add(
                             BinanceLivePosition(
-                                symbol = p.optString("symbol", ""),
-                                initialMargin = p.optDouble("initialMargin", 0.0),
+                                symbol = sym,
+                                initialMargin = initMargin,
                                 maintMargin = p.optDouble("maintMargin", 0.0),
-                                unrealizedProfit = p.optDouble("unrealizedProfit", 0.0),
+                                unrealizedProfit = unPnl,
                                 positionInitialMargin = p.optDouble("positionInitialMargin", 0.0),
                                 openOrderInitialMargin = p.optDouble("openOrderInitialMargin", 0.0),
-                                leverage = p.optInt("leverage", 1),
+                                leverage = lev,
                                 isolated = p.optBoolean("isolated", false),
-                                entryPrice = p.optDouble("entryPrice", 0.0),
-                                markPrice = 0.0,
+                                entryPrice = entryPrice,
+                                markPrice = markPrice,
                                 positionAmt = amt,
+                                liquidationPrice = liqPrice,
                                 updateTime = p.optLong("updateTime", 0L)
                             )
                         )
                     }
                 }
             }
+
+            // Tự động sắp xếp danh sách vị thế giảm dần theo % ROI (Unrealized PnL %): Lệnh lãi nhất ở trên cùng
+            positionsList.sortByDescending { it.roiPercent }
         } catch (e: Exception) {
             return@withContext BinancePortfolio(isLiveConnected = false, error = e.localizedMessage)
         }
@@ -801,7 +837,148 @@ object BinanceFuturesApiVerifier {
     }
 
     /**
+     * Cài đặt đòn bẩy giao dịch (1x - 50x) cho cặp tiền trên Binance Futures: POST /fapi/v1/leverage
+     */
+    suspend fun setLeverage(
+        symbol: String,
+        leverage: Int,
+        apiKey: String,
+        apiSecret: String,
+        isTestnet: Boolean
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        val upperSymbol = symbol.uppercase()
+        val clampedLeverage = leverage.coerceIn(1, 50)
+        val baseUrl = if (isTestnet) TESTNET_BASE_URL else MAINNET_BASE_URL
+        val timestamp = getSyncedTimestamp()
+        val queryString = "symbol=$upperSymbol&leverage=$clampedLeverage&recvWindow=60000&timestamp=$timestamp"
+
+        val signature = try {
+            signHmacSha256(queryString, apiSecret.trim())
+        } catch (e: Exception) {
+            return@withContext Result.failure(Exception("Lỗi tạo chữ ký: ${e.message}"))
+        }
+
+        val request = Request.Builder()
+            .url("$baseUrl/fapi/v1/leverage?$queryString&signature=$signature")
+            .header("X-MBX-APIKEY", apiKey.trim())
+            .post(ByteArray(0).toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+            .build()
+
+        try {
+            val response = BinanceClient.okHttpClient.newCall(request).execute()
+            val body = response.body?.string() ?: ""
+            if (response.isSuccessful) {
+                val json = JSONObject(body)
+                val setLev = json.optInt("leverage", clampedLeverage)
+                Result.success(setLev)
+            } else {
+                val errJson = try { JSONObject(body) } catch (_: Exception) { null }
+                val msg = errJson?.optString("msg", body) ?: body
+                Result.failure(Exception("Lỗi Binance set leverage: $msg"))
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Đặt lệnh điều kiện chốt lời (TAKE_PROFIT_MARKET) và cắt lỗ (STOP_MARKET) với closePosition=true
+     * POST /fapi/v1/order
+     */
+    suspend fun setTakeProfitAndStopLoss(
+        symbol: String,
+        isLong: Boolean,
+        takeProfitPrice: Double?,
+        stopLossPrice: Double?,
+        apiKey: String,
+        apiSecret: String,
+        isTestnet: Boolean
+    ): BinanceTpSlResult = withContext(Dispatchers.IO) {
+        val upperSymbol = symbol.uppercase()
+        val baseUrl = if (isTestnet) TESTNET_BASE_URL else MAINNET_BASE_URL
+        val filter = fetchSymbolFilter(upperSymbol, baseUrl)
+        val exitSide = if (isLong) "SELL" else "BUY"
+
+        var tpSuccess = false
+        var slSuccess = false
+        var tpOrderId: Long? = null
+        var slOrderId: Long? = null
+        val errors = mutableListOf<String>()
+
+        // 1. Take Profit Market (Lệnh chốt lời điều kiện)
+        if (takeProfitPrice != null && takeProfitPrice > 0.0) {
+            val formattedTp = roundToStepSize(takeProfitPrice, filter.tickSize)
+            val timestamp = getSyncedTimestamp()
+            val queryTp = "symbol=$upperSymbol&side=$exitSide&type=TAKE_PROFIT_MARKET&stopPrice=$formattedTp&closePosition=true&recvWindow=60000&timestamp=$timestamp"
+            val sigTp = try { signHmacSha256(queryTp, apiSecret.trim()) } catch (_: Exception) { "" }
+
+            if (sigTp.isNotEmpty()) {
+                val reqTp = Request.Builder()
+                    .url("$baseUrl/fapi/v1/order?$queryTp&signature=$sigTp")
+                    .header("X-MBX-APIKEY", apiKey.trim())
+                    .post(ByteArray(0).toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                    .build()
+
+                try {
+                    val resp = BinanceClient.okHttpClient.newCall(reqTp).execute()
+                    val body = resp.body?.string() ?: ""
+                    if (resp.isSuccessful) {
+                        val j = JSONObject(body)
+                        tpOrderId = j.optLong("orderId", 0L)
+                        tpSuccess = true
+                    } else {
+                        val j = try { JSONObject(body) } catch (_: Exception) { null }
+                        errors.add("TP: ${j?.optString("msg", body) ?: body}")
+                    }
+                } catch (e: Exception) {
+                    errors.add("TP Error: ${e.localizedMessage}")
+                }
+            }
+        }
+
+        // 2. Stop Market (Lệnh cắt lỗ điều kiện)
+        if (stopLossPrice != null && stopLossPrice > 0.0) {
+            val formattedSl = roundToStepSize(stopLossPrice, filter.tickSize)
+            val timestamp = getSyncedTimestamp()
+            val querySl = "symbol=$upperSymbol&side=$exitSide&type=STOP_MARKET&stopPrice=$formattedSl&closePosition=true&recvWindow=60000&timestamp=$timestamp"
+            val sigSl = try { signHmacSha256(querySl, apiSecret.trim()) } catch (_: Exception) { "" }
+
+            if (sigSl.isNotEmpty()) {
+                val reqSl = Request.Builder()
+                    .url("$baseUrl/fapi/v1/order?$querySl&signature=$sigSl")
+                    .header("X-MBX-APIKEY", apiKey.trim())
+                    .post(ByteArray(0).toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                    .build()
+
+                try {
+                    val resp = BinanceClient.okHttpClient.newCall(reqSl).execute()
+                    val body = resp.body?.string() ?: ""
+                    if (resp.isSuccessful) {
+                        val j = JSONObject(body)
+                        slOrderId = j.optLong("orderId", 0L)
+                        slSuccess = true
+                    } else {
+                        val j = try { JSONObject(body) } catch (_: Exception) { null }
+                        errors.add("SL: ${j?.optString("msg", body) ?: body}")
+                    }
+                } catch (e: Exception) {
+                    errors.add("SL Error: ${e.localizedMessage}")
+                }
+            }
+        }
+
+        BinanceTpSlResult(
+            tpSuccess = tpSuccess,
+            slSuccess = slSuccess,
+            tpOrderId = tpOrderId,
+            slOrderId = slOrderId,
+            errorMessage = if (errors.isNotEmpty()) errors.joinToString("; ") else null
+        )
+    }
+
+    /**
      * Đóng vị thế Binance thực tế bằng lệnh MARKET đối ứng (reduceOnly = true)
+     * Hỗ trợ đóng vị thế LONG (bằng lệnh SELL) hoặc SHORT (bằng lệnh BUY).
      */
     suspend fun postMarketCloseOrder(
         symbol: String,
@@ -809,11 +986,12 @@ object BinanceFuturesApiVerifier {
         approxPrice: Double,
         apiKey: String,
         apiSecret: String,
-        isTestnet: Boolean = true
+        isTestnet: Boolean = true,
+        side: String = "SELL"
     ): BinanceOrderPlacementResult {
         return postMarketOrder(
             symbol = symbol,
-            side = "SELL",
+            side = side,
             targetUsdtAmount = amount * approxPrice,
             approxPrice = approxPrice,
             apiKey = apiKey,

@@ -1,0 +1,14 @@
+{
+  "name": "cryptotrader-web",
+  "version": "1.0.0",
+  "description": "CryptoTrader Web - Binance Futures Automated & Manual Trading Web App",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "build": "node -e 'console.log(\"Build successful\")'"
+  },
+  "keywords": ["binance", "futures", "crypto", "trading", "autotrade"],
+  "author": "AI Studio",
+  "license": "MIT"
+}
