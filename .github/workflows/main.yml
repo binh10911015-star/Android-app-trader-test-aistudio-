@@ -19,6 +19,11 @@ jobs:
         java-version: '17'
         distribution: 'temurin'
 
+    - name: Set up Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '9.1.1'
+
     - name: Generate debug keystore
       run: |
         keytool -genkeypair \
@@ -32,24 +37,11 @@ jobs:
           -validity 10000 \
           -dname "CN=Android Debug,O=Android,C=US"
 
-    - name: Build Debug APK (use wrapper if present, otherwise install Gradle)
-      run: |
-        set -e
-        if [ -f "./gradlew" ]; then
-          echo "Found gradlew, using Gradle wrapper"
-          chmod +x ./gradlew
-          ./gradlew assembleDebug --stacktrace
-        else
-          echo "No gradlew found — installing Gradle 9.1.1 and running build"
-          sudo apt-get update
-          sudo apt-get install -y unzip wget
-          wget -q https://services.gradle.org/distributions/gradle-9.1.1-bin.zip -O gradle.zip
-          unzip -q gradle.zip -d /tmp
-          /tmp/gradle-9.1.1/bin/gradle assembleDebug --stacktrace
-        fi
+    - name: Build Debug APK
+      run: gradle assembleDebug --stacktrace
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: app-debug
-        path: '**/build/outputs/apk/debug/*.apk'
+        path: "**/build/outputs/apk/debug/*.apk"
