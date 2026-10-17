@@ -32,11 +32,21 @@ jobs:
           -validity 10000 \
           -dname "CN=Android Debug,O=Android,C=US"
 
-    - name: Make Gradle wrapper executable
-      run: chmod +x ./gradlew || true
-
-    - name: Build Debug APK
-      run: ./gradlew assembleDebug --stacktrace
+    - name: Build Debug APK (use wrapper if present, otherwise install Gradle)
+      run: |
+        set -e
+        if [ -f "./gradlew" ]; then
+          echo "Found gradlew, using Gradle wrapper"
+          chmod +x ./gradlew
+          ./gradlew assembleDebug --stacktrace
+        else
+          echo "No gradlew found — installing Gradle 9.1.1 and running build"
+          sudo apt-get update
+          sudo apt-get install -y unzip wget
+          wget -q https://services.gradle.org/distributions/gradle-9.1.1-bin.zip -O gradle.zip
+          unzip -q gradle.zip -d /tmp
+          /tmp/gradle-9.1.1/bin/gradle assembleDebug --stacktrace
+        fi
 
     - name: Upload APK
       uses: actions/upload-artifact@v4
