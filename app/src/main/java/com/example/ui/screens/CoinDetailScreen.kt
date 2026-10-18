@@ -321,9 +321,14 @@ fun CoinDetailScreen(
                     }
                 }
             } else {
+                val initialMode = if (uiState.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME)
+                    com.example.ui.components.ChartStrategyMode.SMA_VOLUME
+                else
+                    com.example.ui.components.ChartStrategyMode.SMA_SUPERTREND
                 CandlestickChart(
                     indicatorData = uiState.klineData,
-                    timeframe = uiState.selectedTimeframe
+                    timeframe = uiState.selectedTimeframe,
+                    initialMode = initialMode
                 )
             }
 

@@ -1,160 +1,150 @@
-# Kế Hoạch Triển Khai: Chiến Lược Giao Dịch D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)
+# Kế Hoạch Sửa Lỗi & Nâng Cấp Giao Diện Ứng Dụng CryptoTrader
 
-## Tóm Tắt Mục Tiêu
-Nâng cấp bot giao dịch với chiến lược mới trên khung thời gian 1 Ngày (D1): Tự động phát hiện và kích hoạt lệnh MUA khi giá hiện tại cắt lên hoặc vượt trên đường SMA20 (D1 tính theo giá mở cửa - Open price) đồng thời khối lượng giao dịch nến D1 hiện tại đạt từ 2 lần trở lên so với khối lượng nến D1 của ngày hôm trước. Chiến lược được tích hợp thành tùy chọn linh hoạt trong Cài đặt (Settings), áp dụng cơ chế **chốt lời trên toàn bộ danh mục** (tự động đóng toàn bộ các vị thế khi tổng danh mục đạt % lợi nhuận mục tiêu, không chốt lẻ từng vị thế).
+Tài liệu này chi tiết hóa phương án khắc phục toàn diện 4 vấn đề tồn đọng được người dùng phản hồi, mang lại trải nghiệm phân tích thị trường, biểu đồ kỹ thuật, thống kê hiệu quả đầu tư và quản lý kết nối Binance Futures chuyên nghiệp.
 
 ---
 
-### Phản Hồi Người Dùng & Quyết Định Cốt Lõi (Confirmed Decisions)
+### User Review & Critical Decisions
 
 > [!IMPORTANT]
-> Dựa trên các phản hồi và yêu cầu điều chỉnh chính xác của bạn:
-> - **Cách tính SMA20 D1**: Căn cứ theo **GIÁ MỞ CỬA (Open Price)** của 20 nến D1 gần nhất ($\text{SMA20} = \frac{1}{20} \sum \text{Open}_i$).
-> - **Thời điểm xác nhận tín hiệu**: Kiểm tra tức thì khi giá cắt lên SMA20 (Intraday Real-time Check) kết hợp khối lượng lũy kế D1 hiện tại $\ge 2 \times \text{Volume}(D1_{prev})$.
-> - **Cơ chế chốt lời TOÀN DANH MỤC (Portfolio Take-Profit)**: 
->   - **Không chốt lời theo từng vị thế đơn lẻ**.
->   - Giám sát tổng lợi nhuận chưa chốt (Total Unrealized PnL %) của toàn bộ danh mục các vị thế đang mở.
->   - Khi tổng lợi nhuận danh mục chạm hoặc vượt tỷ lệ % chốt lời mục tiêu thiết lập trong Cài đặt, bot lập tức kích hoạt lệnh **đóng đồng loạt toàn bộ các vị thế** để hiện thực hóa lợi nhuận.
-> - **Tùy chọn chiến lược trong Cài Đặt**: Cho phép linh hoạt chuyển đổi giữa **D1 SMA20 Breakout & Bùng Nổ Khối Lượng** và chiến lược **4H SuperTrend và 4H MA20**.
+> Toàn bộ các yêu cầu đã được làm rõ thông qua quá trình phỏng vấn người dùng và thống nhất triển khai như sau:
+
+- **Confirmed Decision 1 (Thẻ Biểu đồ)**: Giới hạn biểu đồ hiển thị 30 nến gần nhất (`takeLast(30)`), tính toán khoảng cách và tỷ lệ co dãn tối ưu để các thanh nến không bị dính sát nhau. Tích hợp thanh nút chuyển đổi linh hoạt giữa 2 chế độ:
+  1. *SMA + SuperTrend*: Vẽ đường MA20 vàng và dải SuperTrend (xanh lá khi UP, đỏ khi DOWN) theo dữ liệu kỹ thuật thực tế.
+  2. *SMA + Khối lượng*: Vẽ đường MA20 kết hợp biểu đồ thanh khối lượng (Volume bars) bên dưới cùng vạch mốc bùng nổ 2x.
+- **Confirmed Decision 2 (Thẻ Thống kê)**: Thay thế hoàn toàn stub 2 dòng chữ bằng bảng điều khiển Analytics đầy đủ: Thẻ tổng quan PnL ròng, Tỷ lệ thắng (Win Rate %), Profit Factor, Biểu đồ đường cong lợi nhuận tích lũy (Cumulative PnL Chart) vẽ bằng Canvas mượt mà, và Danh sách lịch sử lệnh đã đóng.
+- **Confirmed Decision 3 (Thẻ API Key)**: Xây dựng màn hình API Config hoàn chỉnh gồm Form nhập API Key, Secret Key, Mã PIN bảo vệ, công tắc Testnet/Mainnet và nút "Kiểm Tra Kết Nối Trực Tiếp Binance" hiển thị ngay số dư ví USDT và trạng thái tài khoản.
+- **Confirmed Decision 4 (Thẻ Thị trường)**: Tái cấu trúc phân cấp giao diện cho phép cuộn toàn bộ trang hoặc cuộn danh sách ticker mượt mà, không bị kẹt; thẻ coin hiển thị chi tiết các thông số của từng tín hiệu (Giá mở cửa SMA20 D1, Tỷ lệ bùng nổ khối lượng, Tín hiệu SuperTrend).
 
 ---
 
-### 1. Tổng Quan & Trải Nghiệm Người Dùng (Overview & Core Concept)
+## 1. Overview & Core Concept
 
-- **Chi tiết Chiến lược D1 SMA20 + Volume Breakout**:
-  - **Khung thời gian (Timeframe)**: D1 (Daily - Nến 1 Ngày).
-  - **Cơ sở đường SMA20 (D1)**: Tính từ trung bình cộng của **20 giá mở cửa (Open Price)** của các nến ngày gần nhất.
-  - **Điều kiện Kỹ thuật (Price)**: Giá giao dịch hiện tại $\ge \text{SMA20}(D1)$ (giá cắt lên hoặc duy trì trên SMA20).
-  - **Điều kiện Xác nhận Dòng tiền (Volume)**: Khối lượng giao dịch tại thời điểm nến D1 hiện tại $\ge 2 \times$ Khối lượng giao dịch nến D1 ngày hôm trước ($V_{today} \ge 2 \cdot V_{yesterday}$).
-  - **Cơ chế Chốt lời Danh mục (Portfolio Take-Profit)**: Toàn bộ vị thế mở của bot sẽ được giữ song song cho đến khi tổng PnL của cả danh mục đạt ngưỡng mục tiêu (ví dụ: $+5\%$ hoặc $+10\%$ tổng giá trị danh mục). Khi đó, bot sẽ tự động chốt lời toàn bộ danh mục trong 1 lần đóng.
-- **Trải nghiệm người dùng**:
-  - Người dùng truy cập tab **Cài Đặt (Settings)**, thấy mục **Chiến Lược Giao Dịch Của Bot (Trading Strategy)**:
-    1. `D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)` *(Khung D1, SMA20 giá Open)*
-    2. `4H SuperTrend và 4H MA20` *(Khung 4H)*
-    3. `Đa chiến lược (Chạy song song)`
-  - Thiết lập **Mục tiêu Chốt Lời Toàn Danh Mục (% Portfolio TP)**: Người dùng nhập tỷ lệ % mong muốn cho toàn bộ danh mục (mặc định ví dụ $4.0\% - 5.0\%$).
-  - Trên màn hình Vị Thế (Positions), hiển thị thanh tiến độ **Tổng Lợi Nhuận Danh Mục** so với mục tiêu chốt lời chung: `Tổng ROI Danh Mục: +3.8% / Mục tiêu Chốt Lời: +4.0% 🎯`.
+- **Mục tiêu chính**: Khắc phục triệt để lỗi không thể tương tác ở 4 tab (Thị trường, Biểu đồ, Thống kê, API Key) do các thành phần UI bị thiếu hoặc đặt kích thước không phù hợp trong Jetpack Compose.
+- **Đối tượng sử dụng**: Nhà giao dịch Binance Futures cần một công cụ theo dõi tín hiệu tự động, kiểm tra nến kỹ thuật rõ ràng và quản lý tài khoản bảo mật trực tiếp trên thiết bị di động.
+- **Giá trị cốt lõi**: Trực quan hóa dữ liệu nến và chỉ báo chính xác, minh bạch hóa lịch sử lãi lỗ và cung cấp công cụ xác thực API Binance an toàn, tin cậy.
 
 ---
 
-### 2. Thiết Kế Giao Diện & Tương Tác (UX & Visual Design)
+## 2. User Experience & Visual Design
 
-- **Khu vực Cài Đặt Chiến Lược & Chốt Lời Danh Mục (Settings UI)**:
-  - Thẻ **Chiến Lược Giao Dịch Bot**:
-    - Bộ chọn Radio / Segmented Button:
-      - Thẻ 1: **D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)** (Chú thích: *SMA20 tính theo giá Open, nến D1*).
-      - Thẻ 2: **4H SuperTrend và 4H MA20** (Chú thích: *Giao dịch linh hoạt theo xu hướng 4H*).
-  - Thẻ **Cơ Chế Quản Lý Lệnh & Chốt Lời Toàn Danh Mục**:
-    - Ô nhập: **Tỷ lệ Chốt Lời Toàn Danh Mục (% Portfolio TP)**.
-    - Dòng hướng dẫn trực quan: *"Hệ thống sẽ không chốt lời lẻ tẻ từng lệnh. Khi tổng lãi của tất cả các vị thế đang mở đạt mức % này, bot sẽ tự động chốt lời toàn bộ danh mục cùng lúc."*
-- **Giao diện Bảng Quét Tín Hiệu (Market Scanner UI)**:
-  - Cột thông số cho từng đồng coin:
-    - **Giá vs SMA20 Open (D1)**: Hiển thị giá hiện tại và giá trị SMA20 (Open) nến D1 (Màu xanh khi Giá $\ge$ SMA20).
-    - **Tỷ lệ Khối lượng D1 ($V / V_{prev}$)**: Hiển thị nổi bật (ví dụ: `2.4x` màu xanh ngọc kèm biểu tượng ngọn lửa 🔥 khi $\ge 2.0x$).
-  - Bộ lọc nhanh: Lọc danh sách các coin đang thỏa mãn đồng thời: Giá $\ge$ SMA20 (D1 Open) và Vol D1 $\ge 2x$.
-- **Thanh Tiến Độ Chốt Lời Danh Mục (Portfolio TP Progress Bar)**:
-  - Đặt ở đầu màn hình Vị Thế hoặc đầu bảng điều khiển:
-    - Hiển thị: Tổng số vốn đầu tư, Tổng PnL chưa chốt ($/%) và thanh đo % tiến tới điểm chốt lời toàn danh mục.
-    - Nút thao tác thủ công: "Chốt Lời Toàn Bộ Danh Mục Ngay" (nếu người dùng muốn đóng sớm trước khi bot tự động đóng).
+### Key User Flows
+1. **Flow 1: Khám phá Thị Trường & Tín Hiệu (Tab Thị trường)**
+   - Người dùng mở tab Thị trường: Toàn bộ màn hình cuộn mượt mà.
+   - Thẻ mỗi coin hiển thị đầy đủ chi tiết: Giá hiện tại, tỷ lệ thay đổi 24h, Giá SMA20 D1 Open, Tỷ lệ khối lượng hiện tại so với trung bình (ví dụ: `2.4x / 2.0x`), và nhãn trạng thái đạt chuẩn chiến lược.
+   - Người dùng có thể nhấn "Quét ngay" hoặc lọc theo "Tín hiệu tăng" để xem danh sách thu gọn.
+2. **Flow 2: Phân Tích Biểu Đồ & Chuyển Đổi Chiến Lược (Tab Biểu đồ)**
+   - Người dùng bấm vào một coin hoặc tab Biểu đồ: 30 nến gần nhất hiển thị thoáng đãng, rõ nét từng thân nến và râu nến.
+   - Người dùng bấm nút chuyển đổi:
+     - Chế độ **"SMA + SuperTrend"**: Nổi bật đường MA20 màu vàng óng và các đoạn dải SuperTrend xanh lá (mua) / đỏ (bán).
+     - Chế độ **"SMA + Khối Lượng"**: Hiển thị đường MA20 trên nến và khung phụ Volume phía dưới với các cột khối lượng và đường kẻ chuẩn bùng nổ 2x.
+3. **Flow 3: Theo Dõi Hiệu Quả Đầu Tư (Tab Thống kê)**
+   - Xem tổng PnL (USDT), tỷ lệ thắng (Win Rate %), số lệnh thắng/thua.
+   - Biểu đồ tăng trưởng PnL vẽ trực tiếp bằng Canvas thể hiện xu hướng tài khoản.
+   - Bảng lịch sử lệnh đóng thể hiện rõ thời gian, giá vào/ra, lý do chốt (TP/SL/Thủ công).
+4. **Flow 4: Cấu Hình & Kiểm Tra API (Tab API Key)**
+   - Người dùng nhập API Key, API Secret và mã PIN truy cập.
+   - Nhấn nút **"Kiểm Tra Kết Nối Trực Tiếp Binance"**: Hệ thống gửi yêu cầu xác thực tới máy chủ Binance Futures và hiển thị hộp thoại kết quả thành công với số dư ví USDT thực tế hoặc thông báo lỗi cụ thể.
 
----
-
-### 3. Các Quyết Định Sản Phẩm & Đánh Đổi (Key Product Decisions)
-
-- **Quyết định 1: SMA20 D1 tính căn cứ theo Giá Mở Cửa (Open Price)**:
-  - *Phương án chọn*: $\text{SMA20}(D1) = \frac{\sum_{i=1}^{20} \text{Open}_i}{20}$.
-  - *Lý do*: Giá mở cửa của các nến ngày là mốc giá cố định, không bị dao động nhiễu trong phiên nến hiện tại, tạo ra đường chuẩn tham chiếu ổn định tuyệt đối khi kiểm tra tức thì giá hiện tại cắt lên SMA20.
-- **Quyết định 2: Chốt lời trên toàn danh mục (Portfolio-level TP)**:
-  - *Phương án chọn*: Không đặt TP riêng rẽ ở từng vị thế (`takeProfitPrice = null` ở từng lệnh). Thay vào đó, bộ giám sát Portfolio Engine liên tục tính tổng ROI danh mục:
-    $$\text{Portfolio ROI} = \frac{\sum \text{Unrealized PnL}}{\sum \text{Invested Margin}} \times 100\%$$
-    Khi $\text{Portfolio ROI} \ge \text{Target TP}\%$, bot kích hoạt lệnh đóng toàn bộ vị thế (`closeAllPositions()`).
-  - *Lý do*: Đáp ứng chính xác yêu cầu của người dùng, giúp tối ưu hóa tổng danh mục đầu tư, hạn chế tình trạng lệnh thắng bị chốt non trong khi lệnh thua vẫn gồng, và chốt lời đúng lúc toàn bộ danh mục đạt mục tiêu tài chính.
-- **Quyết định 3: Danh mục chiến lược độc lập và rõ ràng**:
-  - *Phương án chọn*: Phân tách rõ ràng giữa chiến lược mới **D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)** và chiến lược **4H SuperTrend và 4H MA20**.
-  - *Lý do*: Giúp người dùng có toàn quyền kiểm soát và dễ dàng so sánh hiệu suất giữa hai trường phái giao dịch.
+### Visual Identity & Theme Tokens
+- **Bảng màu chủ đạo**:
+  - `DarkBg` (`0xFF121418`): Nền tối sang trọng, giảm mỏi mắt cho trader.
+  - `DarkSurface` (`0xFF1E2329`): Màu bề mặt thẻ theo phong cách Binance Pro.
+  - `CryptoGold` (`0xFFF0B90B`): Màu nhấn thương hiệu Binance cho các hành động quan trọng và đường MA20.
+  - `CryptoGreen` (`0xFF0ECB81`): Nến tăng, tín hiệu Buy, trạng thái có lãi.
+  - `CryptoRed` (`0xFFF6465D`): Nến giảm, trạng thái lỗ, cảnh báo rủi ro.
+- **Typography & Font**: Sử dụng `FontFamily.Monospace` cho các thông số giá, khối lượng và tỷ lệ % nhằm đảm bảo các con số luôn thẳng hàng và dễ đọc.
 
 ---
 
-### 4. Kiến Trúc Kỹ Thuật & Luồng Dữ Liệu (Technical Architecture)
+## 3. Key Product Decisions & Trade-Offs
+
+- **Quyết định 1: Giới hạn 30 nến gần nhất trong CandlestickChart**
+  - *Phương án chọn*: Lấy đúng 30 nến gần nhất (`candles.takeLast(30)`) và tính toán chiều rộng từng nến tỷ lệ với bề ngang màn hình (`availableWidth / 30`).
+  - *Lý do*: Giúp nến có độ rộng từ 6dp - 10dp kèm khoảng cách 3dp - 4dp, trader quan sát rõ hình thái nến thay vì hàng trăm nến mỏng đặc như sợi chỉ.
+- **Quyết định 2: Hai chế độ xem biểu đồ chuyên biệt (Toggle Mode)**
+  - *Phương án chọn*: Đặt 2 nút chip "SMA + SuperTrend" và "SMA + Khối Lượng" ngay trên đầu biểu đồ.
+  - *Lý do*: Tránh nhồi nhét quá nhiều đường vẽ vào một màn hình điện thoại nhỏ, giúp người dùng tập trung đánh giá đúng tiêu chí của chiến lược mình đang theo dõi.
+- **Quyết định 3: Cấu trúc cuộn trong Tab Thị trường**
+  - *Phương án chọn*: Đặt các phần Header (Tài khoản, Bộ lọc, Tín hiệu đã quét) vào các `item` của `LazyColumn` hoặc sử dụng `weight(1f)` chuẩn Compose.
+  - *Lý do*: Khắc phục triệt để hiện tượng xung đột cuộn khiến danh sách không thể vuốt xuống được.
+
+---
+
+## 4. Technical Architecture & Data Strategy
+
+### Component Hierarchy Diagram
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                           GIAO DIỆN NGƯỜI DÙNG                          │
-│   ┌──────────────────────────────┐   ┌──────────────────────────────┐   │
-│   │   CÀI ĐẶT (SETTINGS)         │   │   THEO DÕI TOÀN DANH MỤC     │   │
-│   │   - Chọn Chiến lược:         │   │   - Tổng PnL Danh mục: +4.2% │   │
-│   │     * D1 SMA20 Open + Vol 2x │   │   - Mục tiêu TP: +4.0%       │   │
-│   │     * 4H SuperTrend & 4H MA20│   │   - Trạng thái: CHỐT LỜI ALL │   │
-│   │   - Mục tiêu TP Danh mục (%) │   │                              │   │
-│   └──────────────┬───────────────┘   └──────────────┬───────────────┘   │
-└──────────────────┼──────────────────────────────────┼───────────────────┘
-                   │                                  │
-                   ▼                                  ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│                      ENGINE PHÂN TÍCH & QUÉT TÍN HIỆU                   │
-│                                                                         │
-│   1. Lấy chuỗi nến D1 (interval = 1d, limit = 25)                       │
-│   2. Trích xuất mảng 20 giá MỞ CỬA (Open) gần nhất                      │
-│      => sma20OpenD1 = average(openPrices.takeLast(20))                  │
-│   3. Lấy khối lượng D1:                                                 │
-│      - V_today = nến D1 hiện tại (đang chạy)                            │
-│      - V_yesterday = nến D1 đóng cửa hôm qua                            │
-│                                                                         │
-│   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │                 ĐIỀU KIỆN KÍCH HOẠT MUA D1                      │   │
-│   │   - Giá hiện tại >= sma20OpenD1                                 │   │
-│   │   - V_today >= 2.0 * V_yesterday                                │   │
-│   │   => Kích hoạt Tín hiệu BUY (D1 SMA20 Open + Vol 2x)            │   │
-│   └─────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────┬──────────────────────────────────────┘
-                                   │
-                                   ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│              ENGINE GIÁM SÁT & CHỐT LỜI TOÀN DANH MỤC                   │
-│                                                                         │
-│   - Mở vị thế mới: Không gán TP cho riêng từng vị thế                   │
-│   - Vòng lặp giám sát danh mục thời gian thực:                          │
-│       totalUnrealizedPnl = SUM(pos.unrealizedPnl)                       │
-│       totalMargin = SUM(pos.investedMargin)                             │
-│       portfolioRoiPercent = (totalUnrealizedPnl / totalMargin) * 100    │
-│                                                                         │
-│       IF portfolioRoiPercent >= settings.portfolioTakeProfitPercent:    │
-│           => THỰC HIỆN ĐÓNG TOÀN BỘ DANH MỤC VỊ THẾ (CLOSE ALL)        │
-│           => Gửi thông báo: "Đã chốt lời toàn danh mục thành công!"    │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                          MainActivity                           │
+│  ┌───────────────────────┐   ┌───────────────────────────────┐  │
+│  │ TradingModeHeader     │   │ BottomNavigationBar (5 Tabs)  │  │
+│  └───────────────────────┘   └───────────────────────────────┘  │
+└────────────────────────────────┬────────────────────────────────┘
+                                 │ Crossfade Navigation
+         ┌───────────────────────┼─────────────────────────┐
+         ▼                       ▼                         ▼
+┌──────────────────┐   ┌──────────────────┐      ┌──────────────────┐
+│   MarketScreen   │   │ CoinDetailScreen │      │ AnalyticsScreen  │
+│ ┌──────────────┐ │   │ ┌──────────────┐ │      │ ┌──────────────┐ │
+│ │ AccountCard  │ │   │ │TimeframeChip │ │      │ │ PnL Summary  │ │
+│ ├──────────────┤ │   │ ├──────────────┤ │      │ ├──────────────┤ │
+│ │ SignalBreak- │ │   │ │StrategyToggle│ │      │ │ Win Rate Win/│ │
+│ │ down Cards   │ │   │ ├──────────────┤ │      │ │ Loss Stats   │ │
+│ ├──────────────┤ │   │ │Candlestick-  │ │      │ ├──────────────┤ │
+│ │ LazyColumn   │ │   │ │Chart(30 nến) │ │      │ │Canvas Profit │ │
+│ │ (Full Scroll)│ │   │ ├──────────────┤ │      │ │ Curve Chart  │ │
+│ └──────────────┘ │   │ │Order Box     │ │      │ ├──────────────┤ │
+└──────────────────┘   │ └──────────────┘ │      │ │ Closed Pos.  │ │
+                       └──────────────────┘      │ │ LazyColumn   │ │
+                                                 │ └──────────────┘ │
+                                                 └──────────────────┘
+                                                           ▲
+                                 ┌─────────────────────────┘
+                                 ▼
+                       ┌──────────────────┐
+                       │ ApiConfigScreen  │
+                       │ ┌──────────────┐ │
+                       │ │ Key & Secret │ │
+                       │ ├──────────────┤ │
+                       │ │ Testnet/Live │ │
+                       │ ├──────────────┤ │
+                       │ │ Test Button  │ │
+                       │ │ & Live Check │ │
+                       │ └──────────────┘ │
+                       └──────────────────┘
 ```
 
-#### Quy Trình Tính Toán Tín Hiệu (Logic Code Blueprint):
-1. **Lấy dữ liệu nến D1 & Tính SMA20 theo Giá Mở Cửa**:
-   - Gọi API klines với khung `1d`.
-   - Lấy 20 nến gần nhất: Lấy trường `open` (giá mở cửa) của từng nến.
-   - `sma20Open = (open_1 + open_2 + ... + open_20) / 20.0`.
-2. **So sánh Khối lượng Nến D1**:
-   - `vToday = currentD1Candle.volume` (khối lượng tích lũy của nến hôm nay).
-   - `vYesterday = previousD1Candle.volume` (toàn bộ khối lượng nến ngày hôm qua).
-   - `volumeRatio = vToday / vYesterday`.
-   - Điều kiện mua: `currentPrice >= sma20Open && volumeRatio >= 2.0`.
-3. **Cơ chế Chốt Lời Toàn Danh Mục**:
-   - Mỗi chu kỳ cập nhật giá (hoặc WebSocket), tính tổng `portfolioRoiPercent`.
-   - Nếu `portfolioRoiPercent >= settings.portfolioTakeProfitPercent` (ví dụ $\ge 4.0\%$): Kích hoạt `closeAllPositions()` để đóng tất cả các vị thế đang mở và cập nhật số dư ví.
+### Chi Tiết Cải Tiến Từng File
 
----
-
-### Kế Hoạch Các Bước Thực Hiện Chi Tiết
-
-1. **Bước 1: Cập nhật Cấu trúc Dữ liệu & Cài Đặt**:
-   - Thêm `TradingStrategyType`: `D1_SMA20_VOLUME` và `FOUR_HOUR_SUPERTREND_MA20`.
-   - Cập nhật cấu hình: `portfolioTakeProfitPercent` (mục tiêu chốt lời toàn danh mục, ví dụ mặc định 4.0%), `volumeMultiplierThreshold` (mặc định 2.0).
-2. **Bước 2: Xây dựng Thuật toán SMA20 D1 (Giá Open) & So Sánh Volume**:
-   - Viết hàm phân tích dữ liệu D1 klines: trích xuất 20 giá Open để tính `sma20OpenD1`.
-   - Trích xuất $V_{today}$ và $V_{yesterday}$, tính tỷ lệ bùng nổ khối lượng.
-   - Đánh giá tín hiệu BUY tức thì khi giá $\ge$ `sma20OpenD1` và $V_{today} \ge 2 \times V_{yesterday}$.
-3. **Bước 3: Xây dựng Bộ Giám Sát Chốt Lời Toàn Danh Mục (Portfolio TP Engine)**:
-   - Viết hàm kiểm tra tổng lợi nhuận danh mục `checkAndExecutePortfolioTakeProfit()`.
-   - Khi tổng ROI danh mục chạm ngưỡng thiết lập, tự động đóng toàn bộ các vị thế đang mở.
-4. **Bước 4: Cập nhật Giao diện Cài Đặt & Bảng Quét Tín Hiệu**:
-   - Giao diện Cài Đặt: Tùy chọn chuyển đổi giữa `D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)` và `4H SuperTrend và 4H MA20`; ô cài đặt % Chốt Lời Toàn Danh Mục kèm giải thích rõ ràng.
-   - Giao diện Quét & Vị Thế: Hiển thị trạng thái SMA20 Open, tỷ lệ Khối lượng D1, và thanh tiến độ chốt lời của toàn danh mục.
-5. **Bước 5: Kiểm tra và Xác thực**:
-   - Kiểm tra xác thực tính toán SMA20 Open và tỷ lệ Volume 2x.
-   - Kiểm tra kịch bản chốt lời toàn danh mục khi tổng ROI đạt mục tiêu, đảm bảo không đóng lẻ tẻ và đóng đồng loạt an toàn.
+1. **`app/src/main/java/com/example/ui/screens/MarketScreen.kt`**:
+   - Sắp xếp lại container: sử dụng `LazyColumn` làm gốc hoặc gán `Modifier.weight(1f)` cho danh sách ticker để cuộn tự nhiên.
+   - Nâng cấp `CoinCardItem` và `ScannedSignalCard`: hiển thị tường minh các chỉ số kỹ thuật:
+     - Giá đóng cửa vs SMA20 Open D1 (`$lastPrice` vs `$sma20OpenD1` chênh lệch % cụ thể).
+     - Tỷ lệ khối lượng D1 (`volumeRatioD1` kèm icon bùng nổ khi >= 2.0x).
+     - Trạng thái điều kiện nến đáp ứng chuẩn breakout.
+2. **`app/src/main/java/com/example/ui/components/CandlestickChart.kt`**:
+   - Nhận danh sách `candles` và `indicatorData`, lọc 30 nến gần nhất (`takeLast(30)`).
+   - Thêm tham số `chartMode` (`SMA_SUPERTREND` vs `SMA_VOLUME`).
+   - Tính toán `minPrice` và `maxPrice` chính xác dựa trên giá High/Low của 30 nến và các đường chỉ báo để scale nến chuẩn mực.
+   - Vẽ nến: Thân nến đặc và râu nến bằng màu chuẩn crypto.
+   - Vẽ đường MA20 cong mượt nối các điểm MA20 của 30 nến.
+   - Nếu ở chế độ `SMA_SUPERTREND`: Vẽ các đoạn SuperTrend bằng đường kẻ dày hoặc điểm chấm màu xanh lá/đỏ tương ứng xu hướng.
+   - Nếu ở chế độ `SMA_VOLUME`: Vẽ các cột thể tích ở 25% chiều cao phía dưới, kèm đường đứt nét ngưỡng 2x Volume.
+3. **`app/src/main/java/com/example/ui/screens/CoinDetailScreen.kt`**:
+   - Bổ sung bộ nút chuyển đổi chế độ biểu đồ: "SMA + SuperTrend" vs "SMA + Khối Lượng".
+   - Liên kết dữ liệu nến thực tế từ Binance vào biểu đồ.
+4. **`app/src/main/java/com/example/ui/screens/AnalyticsScreen.kt`**:
+   - Xây dựng giao diện Analytics chuyên nghiệp:
+     - **Thẻ Thống Kê Tổng Quan**: Tổng PnL USDT (hiển thị màu xanh nếu lãi, đỏ nếu lỗ), ROI %, Tỷ Lệ Thắng (Win Rate %), Hệ Số Lợi Nhuận (Profit Factor).
+     - **Biểu Đồ Lợi Nhuận Tích Lũy (PnL Growth Chart)**: Vẽ đồ thị đường Canvas trực quan thể hiện đường vốn qua từng giao dịch đã đóng.
+     - **Lịch Sử Giao Dịch (Closed Positions)**: Hiển thị danh sách các lệnh đã đóng với huy hiệu Take Profit (xanh), Stop Loss (đỏ), thời gian vào/ra, giá khớp và PnL thực tế.
+5. **`app/src/main/java/com/example/ui/screens/ApiConfigScreen.kt`**:
+   - Xây dựng form nhập liệu đầy đủ:
+     - Binance API Key (Text field có nút sao chép/dán).
+     - Binance API Secret (Password field có icon ẩn/hiện mắt).
+     - Access PIN (Mã PIN bảo vệ xác thực khi vào lệnh thực).
+     - Switch chọn môi trường: Binance Futures Testnet vs Binance Futures Live Mainnet.
+     - Nút **"Test Kết Nối Trực Tiếp Binance"**: Gọi hàm `viewModel.saveAndVerifyApiCredentials` / `viewModel.testApiConnection`, hiển thị spinner khi đang kiểm tra và card trạng thái chi tiết (Số dư ví USDT khả dụng, quyền Trade, quyền Đọc dữ liệu).
+     - Nút "Lưu Cấu Hình" và hiển thị hướng dẫn tạo API Key an toàn trên Binance (chỉ cấp quyền Futures, không cấp quyền Rút tiền).

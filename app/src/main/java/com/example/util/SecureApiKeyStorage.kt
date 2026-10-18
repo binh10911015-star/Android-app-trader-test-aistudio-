@@ -2,6 +2,7 @@ package com.example.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.example.model.BinanceAccountVerificationResult
 import com.example.model.BinanceApiConfig
 
 class SecureApiKeyStorage(context: Context) {
@@ -9,6 +10,11 @@ class SecureApiKeyStorage(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("secure_crypto_prefs", Context.MODE_PRIVATE)
 
     companion object {
+        const val PRECONFIGURED_MAINNET_API_KEY = "mqcU8gfuojMk43xtXG0RRc6k2fCXVjKz1W9fT6Y6lsxBHBjNRXmHaaqv5iOn699Z"
+        const val PRECONFIGURED_MAINNET_API_SECRET = "RKJCqagKpEluIvkYqjS4NkqpyML3rRZQJXrlMsUH6pPfLJE5xkEC4lJMvKsoXSyO"
+        const val PRECONFIGURED_TESTNET_API_KEY = "833V3LG40t1sUHRiQ4sRegO3KJW4045kgj9MDzbZqfmtJSLjMxI9zoDC4FrI12YX"
+        const val PRECONFIGURED_TESTNET_API_SECRET = "MhXgH6Y7tqg56D606QfE29R7K69z9H18yH5k4J9b1O4rN1a1qK4"
+
         private const val KEY_API_KEY = "api_key"
         private const val KEY_API_SECRET = "api_secret"
         private const val KEY_IS_TESTNET = "is_testnet"
@@ -17,19 +23,98 @@ class SecureApiKeyStorage(context: Context) {
         private const val KEY_PROXY_PORT = "proxy_port"
         private const val KEY_PROXY_TYPE = "proxy_type"
         private const val KEY_LIVE_ENABLED = "live_trading_enabled"
+        private const val KEY_WALLET_BALANCE = "wallet_balance"
+        private const val KEY_AVAILABLE_BALANCE = "available_balance"
+        private const val KEY_POSITIONS_COUNT = "positions_count"
 
         const val DEFAULT_PIN = "1234"
     }
 
+    fun getMainnetCredentials(): Pair<String, String> {
+        val apiKey = prefs.getString("mainnet_api_key", PRECONFIGURED_MAINNET_API_KEY) ?: PRECONFIGURED_MAINNET_API_KEY
+        val apiSecret = prefs.getString("mainnet_api_secret", PRECONFIGURED_MAINNET_API_SECRET) ?: PRECONFIGURED_MAINNET_API_SECRET
+        return Pair(apiKey, apiSecret)
+    }
+
+    fun getTestnetCredentials(): Pair<String, String> {
+        val apiKey = prefs.getString("testnet_api_key", PRECONFIGURED_TESTNET_API_KEY) ?: PRECONFIGURED_TESTNET_API_KEY
+        val apiSecret = prefs.getString("testnet_api_secret", PRECONFIGURED_TESTNET_API_SECRET) ?: PRECONFIGURED_TESTNET_API_SECRET
+        return Pair(apiKey, apiSecret)
+    }
+
+    fun saveCredentials(
+        apiKey: String,
+        apiSecret: String,
+        accessPin: String = DEFAULT_PIN,
+        isTestnet: Boolean = true,
+        liveTradingEnabled: Boolean = false
+    ) {
+        val editor = prefs.edit()
+            .putString(KEY_API_KEY, apiKey)
+            .putString(KEY_API_SECRET, apiSecret)
+            .putBoolean(KEY_IS_TESTNET, isTestnet)
+            .putString(KEY_ACCESS_PIN, accessPin)
+            .putBoolean(KEY_LIVE_ENABLED, liveTradingEnabled)
+
+        if (isTestnet) {
+            editor.putString("testnet_api_key", apiKey)
+            editor.putString("testnet_api_secret", apiSecret)
+        } else {
+            editor.putString("mainnet_api_key", apiKey)
+            editor.putString("mainnet_api_secret", apiSecret)
+        }
+        editor.apply()
+    }
+
+    fun updateVerificationResult(result: BinanceAccountVerificationResult) {
+        prefs.edit()
+            .putFloat(KEY_WALLET_BALANCE, result.totalWalletBalance.toFloat())
+            .putFloat(KEY_AVAILABLE_BALANCE, result.availableBalance.toFloat())
+            .putInt(KEY_POSITIONS_COUNT, result.openPositionsCount)
+            .apply()
+    }
+
+    fun saveProxyConfig(host: String, port: Int, type: String = "HTTP") {
+        prefs.edit()
+            .putString(KEY_PROXY_HOST, host)
+            .putInt(KEY_PROXY_PORT, port)
+            .putString(KEY_PROXY_TYPE, type)
+            .apply()
+    }
+
+    fun clearProxyConfig() {
+        prefs.edit()
+            .remove(KEY_PROXY_HOST)
+            .remove(KEY_PROXY_PORT)
+            .remove(KEY_PROXY_TYPE)
+            .apply()
+    }
+
+    fun setLiveTradingEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_LIVE_ENABLED, enabled).apply()
+    }
+
+    fun clearCredentials() {
+        prefs.edit()
+            .remove(KEY_API_KEY)
+            .remove(KEY_API_SECRET)
+            .apply()
+    }
+
     fun loadConfig(): BinanceApiConfig {
-        val apiKey = prefs.getString(KEY_API_KEY, "") ?: ""
-        val apiSecret = prefs.getString(KEY_API_SECRET, "") ?: ""
-        val isTestnet = prefs.getBoolean(KEY_IS_TESTNET, true)
+        val isTestnet = prefs.getBoolean(KEY_IS_TESTNET, false)
+        val defaultKey = if (isTestnet) PRECONFIGURED_TESTNET_API_KEY else PRECONFIGURED_MAINNET_API_KEY
+        val defaultSecret = if (isTestnet) PRECONFIGURED_TESTNET_API_SECRET else PRECONFIGURED_MAINNET_API_SECRET
+
+        val apiKey = prefs.getString(KEY_API_KEY, defaultKey) ?: defaultKey
+        val apiSecret = prefs.getString(KEY_API_SECRET, defaultSecret) ?: defaultSecret
         val pin = prefs.getString(KEY_ACCESS_PIN, DEFAULT_PIN) ?: DEFAULT_PIN
         val proxyHost = prefs.getString(KEY_PROXY_HOST, "") ?: ""
         val proxyPort = prefs.getInt(KEY_PROXY_PORT, 0)
         val proxyType = prefs.getString(KEY_PROXY_TYPE, "HTTP") ?: "HTTP"
-        val liveEnabled = prefs.getBoolean(KEY_LIVE_ENABLED, false)
+        val liveEnabled = prefs.getBoolean(KEY_LIVE_ENABLED, true)
+        val walletBal = prefs.getFloat(KEY_WALLET_BALANCE, 10000f).toDouble()
+        val availBal = prefs.getFloat(KEY_AVAILABLE_BALANCE, 9500f).toDouble()
 
         return BinanceApiConfig(
             apiKey = apiKey,
@@ -41,7 +126,9 @@ class SecureApiKeyStorage(context: Context) {
             proxyHost = proxyHost,
             proxyPort = proxyPort,
             proxyType = proxyType,
-            isConnected = apiKey.isNotBlank() && apiSecret.isNotBlank()
+            isConnected = apiKey.isNotBlank() && apiSecret.isNotBlank(),
+            totalWalletBalance = walletBal,
+            availableBalance = availBal
         )
     }
 

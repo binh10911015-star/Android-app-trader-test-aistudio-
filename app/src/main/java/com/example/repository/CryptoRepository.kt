@@ -314,6 +314,71 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         Pair(closedList, totalReturned)
     }
 
+    /**
+     * Chốt Lời Toàn Danh Mục: Khi tổng ROI của toàn bộ các vị thế đang mở đạt ngưỡng targetTpPercent,
+     * tự động đóng đồng loạt toàn bộ vị thế.
+     */
+    suspend fun checkAndExecutePortfolioTakeProfit(
+        tickerMap: Map<String, Double>,
+        targetTpPercent: Double
+    ): PositionUpdateResult = withContext(Dispatchers.IO) {
+        val openPositions = tradeDao.getOpenPositionsList()
+        if (openPositions.isEmpty() || targetTpPercent <= 0.0) {
+            return@withContext PositionUpdateResult(emptyList(), emptyList(), 0.0)
+        }
+
+        var totalInvested = 0.0
+        var totalUnrealizedPnl = 0.0
+
+        for (pos in openPositions) {
+            val latestPrice = tickerMap[pos.symbol] ?: pos.currentPrice
+            val diff = (latestPrice - pos.entryPrice) * pos.amount
+            totalInvested += pos.investedUsdt
+            totalUnrealizedPnl += diff
+        }
+
+        val portfolioRoi = if (totalInvested > 0.0) (totalUnrealizedPnl / totalInvested) * 100.0 else 0.0
+
+        if (portfolioRoi >= targetTpPercent) {
+            val alerts = mutableListOf<TradeAlert>()
+            val closedPositions = mutableListOf<TradePosition>()
+            var totalReturnedCapital = 0.0
+            val now = System.currentTimeMillis()
+
+            for (pos in openPositions) {
+                val latestPrice = tickerMap[pos.symbol] ?: pos.currentPrice
+                val pnlUsdt = (latestPrice - pos.entryPrice) * pos.amount
+                val pnlPercent = if (pos.entryPrice > 0) ((latestPrice - pos.entryPrice) / pos.entryPrice) * 100.0 else 0.0
+
+                val closedPos = pos.copy(
+                    currentPrice = latestPrice,
+                    status = TradePosition.STATUS_CLOSED,
+                    exitPrice = latestPrice,
+                    exitTime = now,
+                    pnlUsdt = pnlUsdt,
+                    pnlPercent = pnlPercent,
+                    closeReason = "PORTFOLIO_TAKE_PROFIT"
+                )
+                tradeDao.update(closedPos)
+                closedPositions.add(closedPos)
+                totalReturnedCapital += (pos.investedUsdt + pnlUsdt)
+            }
+
+            alerts.add(
+                TradeAlert(
+                    symbol = "PORTFOLIO",
+                    title = "CHỐT LỜI TOÀN DANH MỤC THÀNH CÔNG",
+                    message = "🎯 Đạt mục tiêu chốt lời toàn danh mục (+${String.format(Locale.US, "%.2f", portfolioRoi)}% >= +${String.format(Locale.US, "%.1f", targetTpPercent)}%)! Đã tự động đóng đồng loạt toàn bộ ${closedPositions.size} vị thế (Tổng lãi: +$${String.format(Locale.US, "%.2f", totalUnrealizedPnl)} USDT).",
+                    type = AlertType.TAKE_PROFIT
+                )
+            )
+
+            return@withContext PositionUpdateResult(alerts, closedPositions, totalReturnedCapital)
+        }
+
+        PositionUpdateResult(emptyList(), emptyList(), 0.0)
+    }
+
     suspend fun clearHistory() = withContext(Dispatchers.IO) {
         tradeDao.clearAll()
     }

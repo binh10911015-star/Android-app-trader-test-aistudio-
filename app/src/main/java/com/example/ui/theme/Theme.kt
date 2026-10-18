@@ -22,9 +22,6 @@ val IndicatorMA20 = Color(0xFF7CD6FF)
 val IndicatorSuperTrendUp = Color(0xFF42C88A)
 val IndicatorSuperTrendDown = Color(0xFFEA5C5A)
 
-val IndicatorMA20 = Color(0xFFFFC107)
-val IndicatorSuperTrendUp = Color(0xFF0ECB81)
-val IndicatorSuperTrendDown = Color(0xFFF6465D)
 
 @Composable
 fun MyApplicationTheme(content: @Composable () -> Unit) {

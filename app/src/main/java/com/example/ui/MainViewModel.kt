@@ -314,9 +314,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 for (alert in updateResult.alerts) {
                     triggerAlert(alert)
                 }
+                var totalReturned = updateResult.totalReturnedCapital
+
+                // Kiểm tra Chốt Lời Toàn Danh Mục (Portfolio Take-Profit)
+                val targetTp = _uiState.value.settings.portfolioTakeProfitPercent
+                if (targetTp > 0.0) {
+                    val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
+                    for (alert in ptpResult.alerts) {
+                        triggerAlert(alert)
+                    }
+                    totalReturned += ptpResult.totalReturnedCapital
+                }
+
                 // Cập nhật số dư mô phỏng khi lệnh chạm TP hoặc SL
-                if (updateResult.closedPositions.isNotEmpty()) {
-                    val newBal = _uiState.value.settings.simulatedBalanceUsdt + updateResult.totalReturnedCapital
+                if (totalReturned > 0.0) {
+                    val newBal = _uiState.value.settings.simulatedBalanceUsdt + totalReturned
                     _uiState.value = _uiState.value.copy(
                         settings = _uiState.value.settings.updateBalance(newBal)
                     )
@@ -1128,7 +1140,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     scannedCount++
                     result.onSuccess { data ->
                         val latest = data.lastOrNull()
-                        val isBullish = latest?.isBullishSignal(_uiState.value.settings.useSuperTrendFilter) == true
+                        val isD1 = _uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME
+                        val isBullish = if (isD1) {
+                            val ticker = currentTickers.find { it.symbol == symbol }
+                            val price = ticker?.lastPrice ?: latest?.candle?.close ?: 0.0
+                            val sma20 = ticker?.sma20OpenD1 ?: (price * 0.99)
+                            val volRatio = ticker?.volumeRatioD1 ?: 1.0
+                            price >= sma20 && volRatio >= _uiState.value.settings.volumeMultiplierThreshold
+                        } else {
+                            latest?.isBullishSignal(_uiState.value.settings.useSuperTrendFilter) == true
+                        }
                         if (isBullish) {
                             repository.setCachedSignal(symbol, true)
                         }
@@ -1233,17 +1254,34 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
 
-                    // Check technical indicator
-                    val res = repository.getCandlesWithIndicators(sym, _uiState.value.settings.timeframe)
+                    // Check technical indicator according to selectedStrategy
                     var tradeExecuted = false
-                    res.onSuccess { data ->
-                        val latest = data.lastOrNull()
-                        if (latest != null && latest.isBullishSignal(_uiState.value.settings.useSuperTrendFilter)) {
-                            // Signal condition met (Price > SMA20, with or without SuperTrend)
+                    val ticker = _uiState.value.tickers.find { it.symbol == sym }
+
+                    if (_uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME) {
+                        val price = ticker?.lastPrice ?: 0.0
+                        val sma20 = ticker?.sma20OpenD1 ?: (price * 0.99)
+                        val volRatio = ticker?.volumeRatioD1 ?: 1.0
+                        val threshold = _uiState.value.settings.volumeMultiplierThreshold
+                        val isBuy = price >= sma20 && volRatio >= threshold
+
+                        if (isBuy && price > 0.0) {
                             val vol = _uiState.value.settings.calculatePositionVolume()
                             if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
                                 executeBuy(sym, isAuto = true)
                                 tradeExecuted = true
+                            }
+                        }
+                    } else {
+                        val res = repository.getCandlesWithIndicators(sym, _uiState.value.settings.timeframe)
+                        res.onSuccess { data ->
+                            val latest = data.lastOrNull()
+                            if (latest != null && latest.isBullishSignal(_uiState.value.settings.useSuperTrendFilter)) {
+                                val vol = _uiState.value.settings.calculatePositionVolume()
+                                if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
+                                    executeBuy(sym, isAuto = true)
+                                    tradeExecuted = true
+                                }
                             }
                         }
                     }

@@ -274,6 +274,189 @@ fun PositionsScreen(
             }
         }
 
+        val allActivePositions = remember(openPositions) { openPositions.filter { it.status == com.example.model.TradePosition.STATUS_OPEN } }
+        val totalInvested = remember(allActivePositions) { allActivePositions.sumOf { it.investedUsdt } }
+        val totalUnrealizedPnl = remember(allActivePositions) { allActivePositions.sumOf { it.unrealizedPnlUsdt } }
+        val portfolioRoi = remember(totalInvested, totalUnrealizedPnl) {
+            if (totalInvested > 0.0) (totalUnrealizedPnl / totalInvested) * 100.0 else 0.0
+        }
+        val targetTpPercent = uiState.settings.portfolioTakeProfitPercent
+        val progressFraction = remember(portfolioRoi, targetTpPercent) {
+            if (targetTpPercent > 0.0) (portfolioRoi / targetTpPercent).toFloat().coerceIn(0f, 1f) else 0f
+        }
+
+        // Portfolio Take-Profit (Chốt Lời Toàn Danh Mục) Banner Card
+        Surface(
+            shape = RoundedCornerShape(12.dp),
+            color = DarkSurfaceElevated,
+            border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f)),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp, vertical = 4.dp)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = CryptoGold.copy(alpha = 0.2f),
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.TrendingUp,
+                                    contentDescription = null,
+                                    tint = CryptoGold,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = "Chốt Lời Toàn Danh Mục",
+                                    color = TextPrimary,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Surface(
+                                    shape = RoundedCornerShape(4.dp),
+                                    color = CryptoGold.copy(alpha = 0.2f)
+                                ) {
+                                    Text(
+                                        text = "TỰ ĐỘNG ĐÓNG ALL",
+                                        color = CryptoGold,
+                                        fontSize = 8.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "Lưu ý: Chốt lời trên toàn danh mục (không chốt lời từng vị thế)",
+                                color = TextSecondary,
+                                fontSize = 9.sp
+                            )
+                        }
+                    }
+
+                    // Button Đóng Tất Cả Vị Thế
+                    if (allActivePositions.isNotEmpty()) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = CryptoRed.copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.6f)),
+                            modifier = Modifier.clickable {
+                                performWithPinCheck("Đóng toàn bộ ${allActivePositions.size} vị thế") {
+                                    viewModel.closeAllPositions()
+                                }
+                            }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = null,
+                                    tint = CryptoRed,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Đóng All (${allActivePositions.size})",
+                                    color = CryptoRed,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Stats Row: Total ROI vs Target TP %
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "ROI Danh Mục: ",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        val isPositive = portfolioRoi >= 0.0
+                        Text(
+                            text = "${if (isPositive) "+" else ""}${String.format(Locale.US, "%.2f", portfolioRoi)}%",
+                            color = if (isPositive) CryptoGreen else CryptoRed,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                        Text(
+                            text = " (${if (totalUnrealizedPnl >= 0) "+" else ""}$${String.format(Locale.US, "%.2f", totalUnrealizedPnl)})",
+                            color = TextMuted,
+                            fontSize = 10.sp
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "Mục tiêu: ",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                        Text(
+                            text = "+${String.format(Locale.US, "%.1f", targetTpPercent)}%",
+                            color = CryptoGold,
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                // Linear Progress Indicator
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { progressFraction },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(6.dp)
+                        .clip(RoundedCornerShape(3.dp)),
+                    color = if (progressFraction >= 1f) CryptoGreen else CryptoGold,
+                    trackColor = DarkSurfaceHighlight
+                )
+
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Tiến độ: ${(progressFraction * 100).toInt()}%",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                    Text(
+                        text = "${allActivePositions.size} vị thế đang mở",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+        }
+
         // BỘ CHỌN 2 TAB CHÍNH TÁCH BIỆT: Paper Trading vs Binance Thực Tế
         Row(
             modifier = Modifier

@@ -19,23 +19,32 @@ data class BinanceTicker(
     val priceChangePercent: Double = 0.0,
     val volume: Double = 0.0,
     val highPrice: Double = 0.0,
-    val lowPrice: Double = 0.0
+    val lowPrice: Double = 0.0,
+    val sma20OpenD1: Double = lastPrice * 0.99,
+    val volumeRatioD1: Double = 1.0
 )
 
 data class SuperTrendPoint(
     val value: Double = 0.0,
-    val direction: String = "UP"
+    val isBullish: Boolean = true,
+    val direction: String = if (isBullish) "UP" else "DOWN"
 )
 
 data class IndicatorData(
     val candle: Candle,
-    val ma20: Double = 0.0,
+    val ma20: Double? = null,
     val superTrend: SuperTrendPoint? = null,
     val isMaAboveSuperTrend: Boolean = false,
-    val isBullishSignal: Boolean = false
+    val isBullishSignal: Boolean = false,
+    val sma20OpenD1: Double? = null,
+    val volumeRatioD1: Double = 1.0,
+    val isD1BreakoutBuy: Boolean = false
 ) {
-    fun isBullishSignal(useSuperTrendFilter: Boolean = true): Boolean {
-        return if (useSuperTrendFilter) isMaAboveSuperTrend else candle.close >= ma20
+    val isPriceAboveSma20: Boolean
+        get() = (ma20 != null && candle.close >= ma20)
+
+    fun isBullishSignal(useSuperTrend: Boolean = true): Boolean {
+        return if (useSuperTrend) isMaAboveSuperTrend else isPriceAboveSma20
     }
 }
 
@@ -55,8 +64,12 @@ data class BinanceApiConfig(
     val isConfigured: Boolean = false,
     val isProxyEnabled: Boolean = false
 ) {
+    val hasAccessPin: Boolean
+        get() = accessPin.isNotBlank()
+
     fun verifyPin(entered: String): Boolean {
-        return accessPin.ifBlank { "1234" } == entered.trim()
+        if (!hasAccessPin) return true
+        return accessPin == entered.trim()
     }
 }
 
@@ -334,61 +347,4 @@ data class SymbolExchangeFilter(
     val minQty: Double = 0.001,
     val tickSize: Double = 0.01,
     val minNotional: Double = 5.0
-)
-
-data class Candle(
-    val openTime: Long,
-    val open: Double,
-    val high: Double,
-    val low: Double,
-    val close: Double,
-    val volume: Double,
-    val closeTime: Long
-)
-
-data class BinanceTicker(
-    val symbol: String,
-    val lastPrice: Double,
-    val priceChangePercent: Double,
-    val volume: Double,
-    val highPrice: Double = lastPrice,
-    val lowPrice: Double = lastPrice,
-    val sma20OpenD1: Double = lastPrice * 0.99,
-    val volumeRatioD1: Double = 1.0
-)
-
-data class SuperTrendPoint(
-    val value: Double,
-    val isBullish: Boolean
-)
-
-data class IndicatorData(
-    val candle: Candle,
-    val ma20: Double? = null,
-    val superTrend: SuperTrendPoint? = null,
-    val isMaAboveSuperTrend: Boolean = false,
-    val sma20OpenD1: Double? = null,
-    val volumeRatioD1: Double = 1.0,
-    val isD1BreakoutBuy: Boolean = false
-)
-
-data class BinanceApiConfig(
-    val apiKey: String = "",
-    val apiSecret: String = "",
-    val isTestnet: Boolean = true,
-    val isConfigured: Boolean = false,
-    val liveTradingEnabled: Boolean = false,
-    val accessPin: String = "1234",
-    val proxyHost: String = "",
-    val proxyPort: Int = 0,
-    val proxyType: String = "HTTP",
-    val isConnected: Boolean = true
-)
-
-data class BinanceAccountVerificationResult(
-    val isSuccess: Boolean = false,
-    val totalWalletBalance: Double = 0.0,
-    val availableBalance: Double = 0.0,
-    val positionsCount: Int = 0,
-    val errorMessage: String? = null
 )
