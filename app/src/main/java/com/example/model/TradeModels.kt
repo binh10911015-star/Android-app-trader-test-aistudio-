@@ -3,6 +3,76 @@ package com.example.model
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
+data class Candle(
+    val openTime: Long,
+    val open: Double,
+    val high: Double,
+    val low: Double,
+    val close: Double,
+    val volume: Double,
+    val closeTime: Long
+)
+
+data class BinanceTicker(
+    val symbol: String,
+    val lastPrice: Double = 0.0,
+    val priceChangePercent: Double = 0.0,
+    val volume: Double = 0.0,
+    val highPrice: Double = 0.0,
+    val lowPrice: Double = 0.0
+)
+
+data class SuperTrendPoint(
+    val value: Double = 0.0,
+    val direction: String = "UP"
+)
+
+data class IndicatorData(
+    val candle: Candle,
+    val ma20: Double = 0.0,
+    val superTrend: SuperTrendPoint? = null,
+    val isMaAboveSuperTrend: Boolean = false,
+    val isBullishSignal: Boolean = false
+) {
+    fun isBullishSignal(useSuperTrendFilter: Boolean = true): Boolean {
+        return if (useSuperTrendFilter) isMaAboveSuperTrend else candle.close >= ma20
+    }
+}
+
+data class BinanceApiConfig(
+    val apiKey: String = "",
+    val apiSecret: String = "",
+    val accessPin: String = "",
+    val isTestnet: Boolean = true,
+    val liveTradingEnabled: Boolean = false,
+    val isConnected: Boolean = false,
+    val proxyHost: String = "",
+    val proxyPort: Int = 0,
+    val proxyType: String = "HTTP",
+    val lastErrorMessage: String = "",
+    val totalWalletBalance: Double = 0.0,
+    val availableBalance: Double = 0.0,
+    val isConfigured: Boolean = false,
+    val isProxyEnabled: Boolean = false
+) {
+    fun verifyPin(entered: String): Boolean {
+        return accessPin.ifBlank { "1234" } == entered.trim()
+    }
+}
+
+data class BinanceAccountVerificationResult(
+    val isSuccess: Boolean = false,
+    val totalWalletBalance: Double = 0.0,
+    val availableBalance: Double = 0.0,
+    val errorMessage: String = "",
+    val isConnected: Boolean = isSuccess,
+    val message: String = errorMessage,
+    val canTrade: Boolean = false,
+    val canDeposit: Boolean = false,
+    val canWithdraw: Boolean = false,
+    val openPositionsCount: Int = 0
+)
+
 @Entity(tableName = "trade_positions")
 data class TradePosition(
     @PrimaryKey(autoGenerate = true)

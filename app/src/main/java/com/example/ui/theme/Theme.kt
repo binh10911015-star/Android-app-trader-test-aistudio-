@@ -18,6 +18,9 @@ val DarkBorder = Color(0xFF2A2C2E)
 val TextMuted = Color(0xFF8A8D90)
 val TextPrimary = Color(0xFFFFFFFF)
 val TextSecondary = Color(0xFFBFC3C6)
+val IndicatorMA20 = Color(0xFF7CD6FF)
+val IndicatorSuperTrendUp = Color(0xFF42C88A)
+val IndicatorSuperTrendDown = Color(0xFFEA5C5A)
 
 @Composable
 fun MyApplicationTheme(content: @Composable () -> Unit) {
