@@ -1,132 +1,160 @@
-# Kế Hoạch Triển Khai: Gửi Lệnh Trực Tiếp Binance Demo, Tự Động Sửa Lỗi & Tách Biệt Hai Tab Vị Thế
+# Kế Hoạch Triển Khai: Chiến Lược Giao Dịch D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)
 
 ## Tóm Tắt Mục Tiêu
-Nâng cấp hệ thống giao dịch Binance Futures: Khi đã nhập API, mọi thao tác đặt lệnh (thủ công hoặc tự động qua Auto-Trade) sẽ được gửi thẳng lên Binance Demo/Futures API bằng lệnh Thị Trường (MARKET). Hệ thống tích hợp thuật toán **tự động phát hiện và sửa lỗi** (đồng bộ timestamp lệch giờ, chuẩn hóa bước giá/khối lượng tối thiểu theo bộ lọc sàn, tự bù ký quỹ hoặc số lượng), tự động thực hiện thao tác kiểm tra đối soát lệnh trực tiếp trên sàn Binance Demo ngay sau khi gửi. Đồng thời, cấu trúc lại toàn bộ giao diện thành **2 Tab chính tách biệt rõ ràng**: Tab **Paper Trading** (Mô Phỏng Ảo) và Tab **Binance Thực Tế** (API Demo / Live).
+Nâng cấp bot giao dịch với chiến lược mới trên khung thời gian 1 Ngày (D1): Tự động phát hiện và kích hoạt lệnh MUA khi giá hiện tại cắt lên hoặc vượt trên đường SMA20 (D1 tính theo giá mở cửa - Open price) đồng thời khối lượng giao dịch nến D1 hiện tại đạt từ 2 lần trở lên so với khối lượng nến D1 của ngày hôm trước. Chiến lược được tích hợp thành tùy chọn linh hoạt trong Cài đặt (Settings), áp dụng cơ chế **chốt lời trên toàn bộ danh mục** (tự động đóng toàn bộ các vị thế khi tổng danh mục đạt % lợi nhuận mục tiêu, không chốt lẻ từng vị thế).
 
 ---
 
 ### Phản Hồi Người Dùng & Quyết Định Cốt Lõi (Confirmed Decisions)
 
 > [!IMPORTANT]
-> Dựa trên lựa chọn của bạn trong phiên phỏng vấn làm rõ:
-> - **Cơ chế tự động sửa lỗi khi gửi lệnh Binance Demo**: Tự động lấy quy cách sàn (`exchangeInfo`), chuẩn hóa bước giá (`tickSize`), làm tròn khối lượng (`stepSize`), đảm bảo khối lượng tối thiểu (`minNotional`), và tự động lấy `serverTime` bù trừ độ lệch đồng hồ (`timestamp offset` sửa lỗi mã -1021) khi gửi lại lệnh.
-> - **Cấu trúc phân biệt vị thế**: Thiết kế **2 Tab chính tách biệt hoàn toàn**:
->   1. **Tab Paper Trading**: Chuyên quản lý các vị thế mô phỏng nội bộ, số dư ảo ban đầu, lợi nhuận giả lập không rủi ro.
->   2. **Tab Binance Thực Tế**: Chuyên quản lý các vị thế thực tế mở trực tiếp trên Binance Futures (Demo / Mainnet), số dư ví USDT thực, lệnh chờ khớp trên sàn và lịch sử lệnh kèm mã `Binance Order ID`.
-> - **Loại lệnh ưu tiên khi gửi Binance Demo**: Sử dụng lệnh Thị Trường (**MARKET**) để lệnh được gửi và khớp ngay lập tức trên sàn Binance Demo.
+> Dựa trên các phản hồi và yêu cầu điều chỉnh chính xác của bạn:
+> - **Cách tính SMA20 D1**: Căn cứ theo **GIÁ MỞ CỬA (Open Price)** của 20 nến D1 gần nhất ($\text{SMA20} = \frac{1}{20} \sum \text{Open}_i$).
+> - **Thời điểm xác nhận tín hiệu**: Kiểm tra tức thì khi giá cắt lên SMA20 (Intraday Real-time Check) kết hợp khối lượng lũy kế D1 hiện tại $\ge 2 \times \text{Volume}(D1_{prev})$.
+> - **Cơ chế chốt lời TOÀN DANH MỤC (Portfolio Take-Profit)**: 
+>   - **Không chốt lời theo từng vị thế đơn lẻ**.
+>   - Giám sát tổng lợi nhuận chưa chốt (Total Unrealized PnL %) của toàn bộ danh mục các vị thế đang mở.
+>   - Khi tổng lợi nhuận danh mục chạm hoặc vượt tỷ lệ % chốt lời mục tiêu thiết lập trong Cài đặt, bot lập tức kích hoạt lệnh **đóng đồng loạt toàn bộ các vị thế** để hiện thực hóa lợi nhuận.
+> - **Tùy chọn chiến lược trong Cài Đặt**: Cho phép linh hoạt chuyển đổi giữa **D1 SMA20 Breakout & Bùng Nổ Khối Lượng** và chiến lược **4H SuperTrend và 4H MA20**.
 
 ---
 
 ### 1. Tổng Quan & Trải Nghiệm Người Dùng (Overview & Core Concept)
 
-- **Quy trình gửi lệnh & Tự động sửa lỗi**:
-  1. Người dùng bấm "Mở Vị Thế" hoặc Bot quét tín hiệu và kích hoạt "Auto-Trade".
-  2. Nếu API đã kết nối: Thay vì chỉ lưu cục bộ, hệ thống chuẩn bị payload `POST /fapi/v1/order` (symbol, side=BUY, type=MARKET, quantity, timestamp).
-  3. **Khối Xử Lý Lỗi Tự Động (Auto Error-Fix Engine)**:
-     - Nếu gặp lỗi `-1021 Timestamp out of recvWindow`: Hệ thống gọi `GET /fapi/v1/time`, tính độ chênh lệch thời gian `offset = serverTime - localTime`, tự điều chỉnh và gửi lại lệnh ngay tức thì.
-     - Nếu gặp lỗi `-1111 Precision / -1013 LOT_SIZE`: Hệ thống tự truy vấn `exchangeInfo` của cặp giao dịch, định dạng lại số chữ số thập phân của số lượng theo `stepSize` và `minQty` rồi tự động đặt lại lệnh.
-     - Nếu gặp lỗi `-4164 / MIN_NOTIONAL` (khối lượng lệnh nhỏ hơn mức tối thiểu 5 USDT): Hệ thống tự làm tròn lên mức hợp lệ tối thiểu để đảm bảo lệnh được sàn chấp nhận.
-  4. **Kiểm tra đối soát tức thì (Immediate Verification)**:
-     - Ngay sau khi Binance phản hồi thành công, ứng dụng nhận về `orderId`, `clientOrderId`, `executedQty`, `avgPrice`, `status`.
-     - Ứng dụng tự động gọi hàm xác thực đối soát `GET /fapi/v1/order` để xác nhận trạng thái lệnh trên Binance Demo và hiển thị thông báo thành công kèm huy hiệu xanh lá `[BINANCE DEMO #ID]`.
-     - Nếu có sự cố bất khả kháng (ví dụ mạng đứt hoặc tài khoản hết số dư Demo), hệ thống đưa ra thông báo rõ ràng kèm phương án khắc phục.
-
-- **Tách biệt 2 Tab Vị Thế Chuyên Biệt**:
-  - **Tab 1: Paper Trading (Mô Phỏng)**:
-    - Hiển thị danh sách vị thế mô phỏng với đòn bẩy ảo, PnL tính toán theo giá thị trường thời gian thực.
-    - Cho phép đóng vị thế, chốt lời/cắt lỗ mô phỏng, xóa toàn bộ lịch sử ảo.
-  - **Tab 2: Binance Thực Tế (API Demo / Live)**:
-    - Hiển thị số dư ví Binance Futures thực tế (Wallet Balance, Margin Balance, Available Balance).
-    - Danh sách các vị thế hợp đồng đang mở trên tài khoản Binance Demo (`positionAmt != 0`).
-    - Danh sách lệnh chờ khớp (`openOrders`).
-    - Lịch sử các lệnh đã gửi thành công lên Binance Demo kèm nút "Kiểm Tra Trạng Thái Lệnh" trên máy chủ Binance.
+- **Chi tiết Chiến lược D1 SMA20 + Volume Breakout**:
+  - **Khung thời gian (Timeframe)**: D1 (Daily - Nến 1 Ngày).
+  - **Cơ sở đường SMA20 (D1)**: Tính từ trung bình cộng của **20 giá mở cửa (Open Price)** của các nến ngày gần nhất.
+  - **Điều kiện Kỹ thuật (Price)**: Giá giao dịch hiện tại $\ge \text{SMA20}(D1)$ (giá cắt lên hoặc duy trì trên SMA20).
+  - **Điều kiện Xác nhận Dòng tiền (Volume)**: Khối lượng giao dịch tại thời điểm nến D1 hiện tại $\ge 2 \times$ Khối lượng giao dịch nến D1 ngày hôm trước ($V_{today} \ge 2 \cdot V_{yesterday}$).
+  - **Cơ chế Chốt lời Danh mục (Portfolio Take-Profit)**: Toàn bộ vị thế mở của bot sẽ được giữ song song cho đến khi tổng PnL của cả danh mục đạt ngưỡng mục tiêu (ví dụ: $+5\%$ hoặc $+10\%$ tổng giá trị danh mục). Khi đó, bot sẽ tự động chốt lời toàn bộ danh mục trong 1 lần đóng.
+- **Trải nghiệm người dùng**:
+  - Người dùng truy cập tab **Cài Đặt (Settings)**, thấy mục **Chiến Lược Giao Dịch Của Bot (Trading Strategy)**:
+    1. `D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)` *(Khung D1, SMA20 giá Open)*
+    2. `4H SuperTrend và 4H MA20` *(Khung 4H)*
+    3. `Đa chiến lược (Chạy song song)`
+  - Thiết lập **Mục tiêu Chốt Lời Toàn Danh Mục (% Portfolio TP)**: Người dùng nhập tỷ lệ % mong muốn cho toàn bộ danh mục (mặc định ví dụ $4.0\% - 5.0\%$).
+  - Trên màn hình Vị Thế (Positions), hiển thị thanh tiến độ **Tổng Lợi Nhuận Danh Mục** so với mục tiêu chốt lời chung: `Tổng ROI Danh Mục: +3.8% / Mục tiêu Chốt Lời: +4.0% 🎯`.
 
 ---
 
 ### 2. Thiết Kế Giao Diện & Tương Tác (UX & Visual Design)
 
-- **Thanh chọn 2 Tab Chính Nổi Bật**:
-  - Đặt ở vị trí cao nhất của màn hình Vị Thế:
-    - Nút 1: `📊 Paper Trading (Mô Phỏng)` (Màu sắc hiện đại, viền sắc nét).
-    - Nút 2: `⚡ Binance Thực Tế (API Demo)` (Có chấm xanh sáng báo hiệu kết nối API hoạt động).
-- **Trải nghiệm khi ở Tab Paper Trading**:
-  - Thẻ tóm tắt số dư ảo, tổng PnL chưa chốt và đã chốt.
-  - Danh sách thẻ vị thế mô phỏng với màu viền Amber/Gold đặc trưng.
-  - Các nút thao tác nhanh: Đóng vị thế, sửa đòn bẩy mô phỏng.
-- **Trải nghiệm khi ở Tab Binance Thực Tế**:
-  - Thanh trạng thái kết nối Binance Testnet với nút "Làm mới danh mục" tức thì.
-  - Thẻ hiển thị số dư thực tế từ Binance (USDT khả dụng, ký quỹ duy trì, PnL chưa thực hiện).
-  - 3 nhóm nội dung con rõ ràng:
-    - **Vị Thế Mở Trên Binance**: Hiển thị từng vị thế thực tế với Size, Entry Price, Mark Price, Liq. Price, PnL% và nút Đóng Lệnh trên sàn.
-    - **Lệnh Chờ Sàn (Open Orders)**: Hiển thị các lệnh LIMIT/STOP đang chờ khớp trên sàn.
-    - **Lệnh Đã Gửi & Đối Soát**: Danh sách các lệnh đã được gửi thành công, gắn mã `Binance Order ID`, trạng thái `FILLED`, kèm nút "Đối soát trên Binance" để mở modal tra cứu trực tiếp.
-- **Modal Kiểm Tra & Đối Soát Lệnh Trực Tiếp (Order Verification Dialog)**:
-  - Hiển thị thông số từ server Binance: `Mã lệnh Binance (orderId)`, `Mã tham chiếu (clientOrderId)`, `Thời gian ghi nhận`, `Giá khớp trung bình`, `Số lượng đã khớp`, `Tình trạng: ĐÃ KHỚP HOÀN TOÀN (FILLED)`.
+- **Khu vực Cài Đặt Chiến Lược & Chốt Lời Danh Mục (Settings UI)**:
+  - Thẻ **Chiến Lược Giao Dịch Bot**:
+    - Bộ chọn Radio / Segmented Button:
+      - Thẻ 1: **D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)** (Chú thích: *SMA20 tính theo giá Open, nến D1*).
+      - Thẻ 2: **4H SuperTrend và 4H MA20** (Chú thích: *Giao dịch linh hoạt theo xu hướng 4H*).
+  - Thẻ **Cơ Chế Quản Lý Lệnh & Chốt Lời Toàn Danh Mục**:
+    - Ô nhập: **Tỷ lệ Chốt Lời Toàn Danh Mục (% Portfolio TP)**.
+    - Dòng hướng dẫn trực quan: *"Hệ thống sẽ không chốt lời lẻ tẻ từng lệnh. Khi tổng lãi của tất cả các vị thế đang mở đạt mức % này, bot sẽ tự động chốt lời toàn bộ danh mục cùng lúc."*
+- **Giao diện Bảng Quét Tín Hiệu (Market Scanner UI)**:
+  - Cột thông số cho từng đồng coin:
+    - **Giá vs SMA20 Open (D1)**: Hiển thị giá hiện tại và giá trị SMA20 (Open) nến D1 (Màu xanh khi Giá $\ge$ SMA20).
+    - **Tỷ lệ Khối lượng D1 ($V / V_{prev}$)**: Hiển thị nổi bật (ví dụ: `2.4x` màu xanh ngọc kèm biểu tượng ngọn lửa 🔥 khi $\ge 2.0x$).
+  - Bộ lọc nhanh: Lọc danh sách các coin đang thỏa mãn đồng thời: Giá $\ge$ SMA20 (D1 Open) và Vol D1 $\ge 2x$.
+- **Thanh Tiến Độ Chốt Lời Danh Mục (Portfolio TP Progress Bar)**:
+  - Đặt ở đầu màn hình Vị Thế hoặc đầu bảng điều khiển:
+    - Hiển thị: Tổng số vốn đầu tư, Tổng PnL chưa chốt ($/%) và thanh đo % tiến tới điểm chốt lời toàn danh mục.
+    - Nút thao tác thủ công: "Chốt Lời Toàn Bộ Danh Mục Ngay" (nếu người dùng muốn đóng sớm trước khi bot tự động đóng).
 
 ---
 
-### 3. Kiến Trúc Kỹ Thuật & Tự Động Sửa Lỗi (Technical Architecture)
+### 3. Các Quyết Định Sản Phẩm & Đánh Đổi (Key Product Decisions)
+
+- **Quyết định 1: SMA20 D1 tính căn cứ theo Giá Mở Cửa (Open Price)**:
+  - *Phương án chọn*: $\text{SMA20}(D1) = \frac{\sum_{i=1}^{20} \text{Open}_i}{20}$.
+  - *Lý do*: Giá mở cửa của các nến ngày là mốc giá cố định, không bị dao động nhiễu trong phiên nến hiện tại, tạo ra đường chuẩn tham chiếu ổn định tuyệt đối khi kiểm tra tức thì giá hiện tại cắt lên SMA20.
+- **Quyết định 2: Chốt lời trên toàn danh mục (Portfolio-level TP)**:
+  - *Phương án chọn*: Không đặt TP riêng rẽ ở từng vị thế (`takeProfitPrice = null` ở từng lệnh). Thay vào đó, bộ giám sát Portfolio Engine liên tục tính tổng ROI danh mục:
+    $$\text{Portfolio ROI} = \frac{\sum \text{Unrealized PnL}}{\sum \text{Invested Margin}} \times 100\%$$
+    Khi $\text{Portfolio ROI} \ge \text{Target TP}\%$, bot kích hoạt lệnh đóng toàn bộ vị thế (`closeAllPositions()`).
+  - *Lý do*: Đáp ứng chính xác yêu cầu của người dùng, giúp tối ưu hóa tổng danh mục đầu tư, hạn chế tình trạng lệnh thắng bị chốt non trong khi lệnh thua vẫn gồng, và chốt lời đúng lúc toàn bộ danh mục đạt mục tiêu tài chính.
+- **Quyết định 3: Danh mục chiến lược độc lập và rõ ràng**:
+  - *Phương án chọn*: Phân tách rõ ràng giữa chiến lược mới **D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)** và chiến lược **4H SuperTrend và 4H MA20**.
+  - *Lý do*: Giúp người dùng có toàn quyền kiểm soát và dễ dàng so sánh hiệu suất giữa hai trường phái giao dịch.
+
+---
+
+### 4. Kiến Trúc Kỹ Thuật & Luồng Dữ Liệu (Technical Architecture)
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                           GIAO DIỆN VỊ THẾ                              │
-│       ┌──────────────────────────────┬──────────────────────────────┐   │
-│       │  TAB 1: PAPER TRADING        │  TAB 2: BINANCE THỰC TẾ      │   │
-│       │  - Vị thế mô phỏng nội bộ    │  - Vị thế mở Binance Demo    │   │
-│       │  - PnL ảo & Quản lý vốn ảo   │  - Số dư ký quỹ thật Binance │   │
-│       │                              │  - Lệnh chờ (Open Orders)    │   │
-│       │                              │  - Lệnh đã khớp & Đối soát   │   │
-│       └──────────────────────────────┴──────────────────────────────┘   │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
+│                           GIAO DIỆN NGƯỜI DÙNG                          │
+│   ┌──────────────────────────────┐   ┌──────────────────────────────┐   │
+│   │   CÀI ĐẶT (SETTINGS)         │   │   THEO DÕI TOÀN DANH MỤC     │   │
+│   │   - Chọn Chiến lược:         │   │   - Tổng PnL Danh mục: +4.2% │   │
+│   │     * D1 SMA20 Open + Vol 2x │   │   - Mục tiêu TP: +4.0%       │   │
+│   │     * 4H SuperTrend & 4H MA20│   │   - Trạng thái: CHỐT LỜI ALL │   │
+│   │   - Mục tiêu TP Danh mục (%) │   │                              │   │
+│   └──────────────┬───────────────┘   └──────────────┬───────────────┘   │
+└──────────────────┼──────────────────────────────────┼───────────────────┘
+                   │                                  │
+                   ▼                                  ▼
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                             MAIN VIEWMODEL                              │
-│  - executeBuy() -> Tự động phân luồng (Paper vs Binance Demo)           │
-│  - postOrderToBinanceWithAutoFix()                                      │
-│  - verifyRemoteOrderStatus(symbol, orderId)                             │
-│  - refreshBinancePortfolio()                                            │
-└────────────────────────────────────┬────────────────────────────────────┘
-                                     │
-                                     ▼
-┌─────────────────────────────────────────────────────────────────────────┐
-│               BINANCE FUTURES API VERIFIER & ORDER ENGINE               │
+│                      ENGINE PHÂN TÍCH & QUÉT TÍN HIỆU                   │
 │                                                                         │
-│   POST /fapi/v1/order (Lệnh MARKET)                                     │
+│   1. Lấy chuỗi nến D1 (interval = 1d, limit = 25)                       │
+│   2. Trích xuất mảng 20 giá MỞ CỬA (Open) gần nhất                      │
+│      => sma20OpenD1 = average(openPrices.takeLast(20))                  │
+│   3. Lấy khối lượng D1:                                                 │
+│      - V_today = nến D1 hiện tại (đang chạy)                            │
+│      - V_yesterday = nến D1 đóng cửa hôm qua                            │
+│                                                                         │
 │   ┌─────────────────────────────────────────────────────────────────┐   │
-│   │                      AUTO-FIX ENGINE                            │   │
-│   │  [Lỗi -1021 Lệch giờ]     -> Đồng bộ GET /fapi/v1/time + Retry  │   │
-│   │  [Lỗi -1111/LOT_SIZE]     -> Sửa precision theo exchangeInfo    │   │
-│   │  [Lỗi -4164 MIN_NOTIONAL] -> Tự bù khối lượng lên >= 5 USDT     │   │
-│   │  [Lỗi Mạng/Timeout]       -> Retry lũy tiến (tối đa 2 lần)      │   │
+│   │                 ĐIỀU KIỆN KÍCH HOẠT MUA D1                      │   │
+│   │   - Giá hiện tại >= sma20OpenD1                                 │   │
+│   │   - V_today >= 2.0 * V_yesterday                                │   │
+│   │   => Kích hoạt Tín hiệu BUY (D1 SMA20 Open + Vol 2x)            │   │
 │   └─────────────────────────────────────────────────────────────────┘   │
-│                                     │                                   │
-│                                     ▼                                   │
-│   GET /fapi/v1/order (Kiểm tra đối soát lệnh đã khớp hay chưa)          │
-│   GET /fapi/v2/account & /fapi/v1/openOrders (Đồng bộ danh mục)         │
+└──────────────────────────────────┬──────────────────────────────────────┘
+                                   │
+                                   ▼
+┌─────────────────────────────────────────────────────────────────────────┐
+│              ENGINE GIÁM SÁT & CHỐT LỜI TOÀN DANH MỤC                   │
+│                                                                         │
+│   - Mở vị thế mới: Không gán TP cho riêng từng vị thế                   │
+│   - Vòng lặp giám sát danh mục thời gian thực:                          │
+│       totalUnrealizedPnl = SUM(pos.unrealizedPnl)                       │
+│       totalMargin = SUM(pos.investedMargin)                             │
+│       portfolioRoiPercent = (totalUnrealizedPnl / totalMargin) * 100    │
+│                                                                         │
+│       IF portfolioRoiPercent >= settings.portfolioTakeProfitPercent:    │
+│           => THỰC HIỆN ĐÓNG TOÀN BỘ DANH MỤC VỊ THẾ (CLOSE ALL)        │
+│           => Gửi thông báo: "Đã chốt lời toàn danh mục thành công!"    │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
+
+#### Quy Trình Tính Toán Tín Hiệu (Logic Code Blueprint):
+1. **Lấy dữ liệu nến D1 & Tính SMA20 theo Giá Mở Cửa**:
+   - Gọi API klines với khung `1d`.
+   - Lấy 20 nến gần nhất: Lấy trường `open` (giá mở cửa) của từng nến.
+   - `sma20Open = (open_1 + open_2 + ... + open_20) / 20.0`.
+2. **So sánh Khối lượng Nến D1**:
+   - `vToday = currentD1Candle.volume` (khối lượng tích lũy của nến hôm nay).
+   - `vYesterday = previousD1Candle.volume` (toàn bộ khối lượng nến ngày hôm qua).
+   - `volumeRatio = vToday / vYesterday`.
+   - Điều kiện mua: `currentPrice >= sma20Open && volumeRatio >= 2.0`.
+3. **Cơ chế Chốt Lời Toàn Danh Mục**:
+   - Mỗi chu kỳ cập nhật giá (hoặc WebSocket), tính tổng `portfolioRoiPercent`.
+   - Nếu `portfolioRoiPercent >= settings.portfolioTakeProfitPercent` (ví dụ $\ge 4.0\%$): Kích hoạt `closeAllPositions()` để đóng tất cả các vị thế đang mở và cập nhật số dư ví.
 
 ---
 
 ### Kế Hoạch Các Bước Thực Hiện Chi Tiết
 
-1. **Bước 1: Nâng cấp `BinanceFuturesApiVerifier`**:
-   - Thêm phương thức `syncServerTimeOffset()` để tự động tính độ lệch đồng hồ máy chủ Binance.
-   - Thêm phương thức `getSymbolLotSizeInfo()` để tra cứu bước giá, số lượng tối thiểu và precision của từng cặp coin.
-   - Viết phương thức `postMarketOrderWithAutoFix(symbol, side, usdtAmount, apiKey, apiSecret, isTestnet)` gửi lệnh MARKET lên Binance Demo với chu trình tự động sửa lỗi (-1021 timestamp, -1111 lot size, -4164 min notional) và trả về thông tin chi tiết của lệnh.
-   - Kết nối với hàm `checkOrderStatus` hiện có để kiểm tra ngay lập tức trạng thái khớp lệnh.
-
-2. **Bước 2: Cập nhật `MainViewModel`**:
-   - Mở rộng hàm `executeBuy` và `openAllScannedPositions`: Nếu API Binance đã kết nối, kích hoạt `postMarketOrderWithAutoFix` gửi thẳng lên Binance Demo.
-   - Lưu trữ mã `binanceOrderId`, `binanceStatus` vào cơ sở dữ liệu `TradePosition` để theo dõi.
-   - Tự động làm mới `binancePortfolio` ngay sau khi đặt lệnh để vị thế mới xuất hiện lập tức.
-   - Bổ sung hàm tiện ích chuyển đổi tab và kích hoạt kiểm tra đối soát.
-
-3. **Bước 3: Tái cấu trúc giao diện `PositionsScreen.kt`**:
-   - Xây dựng 2 Tab chính phân biệt rõ ràng: **Paper Trading** và **Binance Thực Tế**.
-   - Tab Paper Trading: Giữ nguyên trải nghiệm mô phỏng, trực quan và an toàn.
-   - Tab Binance Thực Tế: Hiển thị trọn vẹn danh mục thực của Binance Demo (Số dư ví ký quỹ, các vị thế hợp đồng đang mở, danh sách lệnh chờ khớp, và các lệnh đã đặt kèm huy hiệu Binance Order ID và nút đối soát trực tiếp).
-
-4. **Bước 4: Kiểm tra và Biên dịch**:
-   - Chạy `compile_applet` để xác thực toàn bộ mã nguồn Kotlin/Compose biên dịch sạch sẽ, không có lỗi.
+1. **Bước 1: Cập nhật Cấu trúc Dữ liệu & Cài Đặt**:
+   - Thêm `TradingStrategyType`: `D1_SMA20_VOLUME` và `FOUR_HOUR_SUPERTREND_MA20`.
+   - Cập nhật cấu hình: `portfolioTakeProfitPercent` (mục tiêu chốt lời toàn danh mục, ví dụ mặc định 4.0%), `volumeMultiplierThreshold` (mặc định 2.0).
+2. **Bước 2: Xây dựng Thuật toán SMA20 D1 (Giá Open) & So Sánh Volume**:
+   - Viết hàm phân tích dữ liệu D1 klines: trích xuất 20 giá Open để tính `sma20OpenD1`.
+   - Trích xuất $V_{today}$ và $V_{yesterday}$, tính tỷ lệ bùng nổ khối lượng.
+   - Đánh giá tín hiệu BUY tức thì khi giá $\ge$ `sma20OpenD1` và $V_{today} \ge 2 \times V_{yesterday}$.
+3. **Bước 3: Xây dựng Bộ Giám Sát Chốt Lời Toàn Danh Mục (Portfolio TP Engine)**:
+   - Viết hàm kiểm tra tổng lợi nhuận danh mục `checkAndExecutePortfolioTakeProfit()`.
+   - Khi tổng ROI danh mục chạm ngưỡng thiết lập, tự động đóng toàn bộ các vị thế đang mở.
+4. **Bước 4: Cập nhật Giao diện Cài Đặt & Bảng Quét Tín Hiệu**:
+   - Giao diện Cài Đặt: Tùy chọn chuyển đổi giữa `D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)` và `4H SuperTrend và 4H MA20`; ô cài đặt % Chốt Lời Toàn Danh Mục kèm giải thích rõ ràng.
+   - Giao diện Quét & Vị Thế: Hiển thị trạng thái SMA20 Open, tỷ lệ Khối lượng D1, và thanh tiến độ chốt lời của toàn danh mục.
+5. **Bước 5: Kiểm tra và Xác thực**:
+   - Kiểm tra xác thực tính toán SMA20 Open và tỷ lệ Volume 2x.
+   - Kiểm tra kịch bản chốt lời toàn danh mục khi tổng ROI đạt mục tiêu, đảm bảo không đóng lẻ tẻ và đóng đồng loạt an toàn.

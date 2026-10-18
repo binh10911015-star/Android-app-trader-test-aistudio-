@@ -1,26 +1,45 @@
 package com.example.util
 
+import java.util.Calendar
+import java.util.TimeZone
 import java.util.concurrent.TimeUnit
 
 object ScanScheduler {
-    fun getNextScanTimestamp(referenceTime: Long = System.currentTimeMillis()): Long {
-        val from = referenceTime + TimeUnit.MINUTES.toMillis(1)
-        val now = java.util.Calendar.getInstance()
-        now.timeInMillis = from
-        val minute = now.get(java.util.Calendar.MINUTE)
-        val remainder = if (minute % 5 == 0) 0 else 5 - (minute % 5)
-        now.add(java.util.Calendar.MINUTE, remainder)
-        now.set(java.util.Calendar.SECOND, 0)
-        now.set(java.util.Calendar.MILLISECOND, 0)
-        return now.timeInMillis
+
+    val TIMEZONE_UTC7: TimeZone = TimeZone.getTimeZone("GMT+7")
+    private val SCAN_HOURS = listOf(3, 7, 11, 15, 19, 23)
+
+    fun getNextScanTimestamp(): Long {
+        val now = Calendar.getInstance(TIMEZONE_UTC7)
+        for (targetHour in SCAN_HOURS) {
+            val candidate = Calendar.getInstance(TIMEZONE_UTC7).apply {
+                set(Calendar.HOUR_OF_DAY, targetHour)
+                set(Calendar.MINUTE, 0)
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            if (candidate.timeInMillis > now.timeInMillis) {
+                return candidate.timeInMillis
+            }
+        }
+
+        // If all hours today passed, next is 03:00 tomorrow
+        val tomorrow = Calendar.getInstance(TIMEZONE_UTC7).apply {
+            add(Calendar.DAY_OF_YEAR, 1)
+            set(Calendar.HOUR_OF_DAY, 3)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        return tomorrow.timeInMillis
     }
 
-    fun formatCountdown(targetMillis: Long, nowMillis: Long): String {
-        val diff = (targetMillis - nowMillis).coerceAtLeast(0L)
-        val totalSeconds = diff / 1000L
-        val hours = totalSeconds / 3600
-        val minutes = (totalSeconds % 3600) / 60
-        val seconds = totalSeconds % 60
+    fun formatCountdown(targetTimestamp: Long): String {
+        val diff = targetTimestamp - System.currentTimeMillis()
+        if (diff <= 0) return "00:00:00"
+        val hours = TimeUnit.MILLISECONDS.toHours(diff)
+        val minutes = TimeUnit.MILLISECONDS.toMinutes(diff) % 60
+        val seconds = TimeUnit.MILLISECONDS.toSeconds(diff) % 60
         return String.format(java.util.Locale.US, "%02d:%02d:%02d", hours, minutes, seconds)
     }
 }

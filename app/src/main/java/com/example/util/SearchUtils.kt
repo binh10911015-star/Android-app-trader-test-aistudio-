@@ -1,11 +1,12 @@
 package com.example.util
 
 object SearchUtils {
-    fun stripUsdtSuffix(query: String): String {
-        val trimmed = query.trim()
-        return when {
-            trimmed.endsWith("USDT", ignoreCase = true) -> trimmed.substring(0, trimmed.length - 4).trim()
-            else -> trimmed
-        }
+
+    fun stripUsdtSuffix(input: String): String {
+        var text = input.trim()
+        val regex = Regex("(?i)[/\\s_-]?usdt$")
+        text = text.replace(regex, "")
+        if (text.equals("usdt", ignoreCase = true)) return ""
+        return text.trim()
     }
 }
