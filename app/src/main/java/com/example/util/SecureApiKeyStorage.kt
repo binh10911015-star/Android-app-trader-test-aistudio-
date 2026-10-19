@@ -10,10 +10,10 @@ class SecureApiKeyStorage(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("secure_crypto_prefs", Context.MODE_PRIVATE)
 
     companion object {
-        const val PRECONFIGURED_MAINNET_API_KEY = "mqcU8gfuojMk43xtXG0RRc6k2fCXVjKz1W9fT6Y6lsxBHBjNRXmHaaqv5iOn699Z"
-        const val PRECONFIGURED_MAINNET_API_SECRET = "RKJCqagKpEluIvkYqjS4NkqpyML3rRZQJXrlMsUH6pPfLJE5xkEC4lJMvKsoXSyO"
-        const val PRECONFIGURED_TESTNET_API_KEY = "833V3LG40t1sUHRiQ4sRegO3KJW4045kgj9MDzbZqfmtJSLjMxI9zoDC4FrI12YX"
-        const val PRECONFIGURED_TESTNET_API_SECRET = "MhXgH6Y7tqg56D606QfE29R7K69z9H18yH5k4J9b1O4rN1a1qK4"
+        const val PRECONFIGURED_MAINNET_API_KEY = ""
+        const val PRECONFIGURED_MAINNET_API_SECRET = ""
+        const val PRECONFIGURED_TESTNET_API_KEY = "ZpsofRaa3VMg3NZh10HfCaxoJcMdmHLwfCxI7opxyWlrbzRQnKZtWFfxOGWw9DtZ"
+        const val PRECONFIGURED_TESTNET_API_SECRET = "eYRso0CQuSJ6m9WDgy6nRF9PuoDLw1tsRNt4bVCqYhyo2Sd4OjmP5NvoXYRmiQrI"
 
         private const val KEY_API_KEY = "api_key"
         private const val KEY_API_SECRET = "api_secret"
@@ -28,6 +28,22 @@ class SecureApiKeyStorage(context: Context) {
         private const val KEY_POSITIONS_COUNT = "positions_count"
 
         const val DEFAULT_PIN = "1234"
+    }
+
+    init {
+        // Đảm bảo cập nhật ngay API Key & Secret Testnet mới của người dùng và xóa sạch khóa cũ
+        val currentStoredTestnetKey = prefs.getString("testnet_api_key", null)
+        if (currentStoredTestnetKey != PRECONFIGURED_TESTNET_API_KEY) {
+            prefs.edit()
+                .putString("testnet_api_key", PRECONFIGURED_TESTNET_API_KEY)
+                .putString("testnet_api_secret", PRECONFIGURED_TESTNET_API_SECRET)
+                .putString(KEY_API_KEY, PRECONFIGURED_TESTNET_API_KEY)
+                .putString(KEY_API_SECRET, PRECONFIGURED_TESTNET_API_SECRET)
+                .putBoolean(KEY_IS_TESTNET, true)
+                .remove("mainnet_api_key")
+                .remove("mainnet_api_secret")
+                .apply()
+        }
     }
 
     fun getMainnetCredentials(): Pair<String, String> {
@@ -102,7 +118,7 @@ class SecureApiKeyStorage(context: Context) {
     }
 
     fun loadConfig(): BinanceApiConfig {
-        val isTestnet = prefs.getBoolean(KEY_IS_TESTNET, false)
+        val isTestnet = prefs.getBoolean(KEY_IS_TESTNET, true)
         val defaultKey = if (isTestnet) PRECONFIGURED_TESTNET_API_KEY else PRECONFIGURED_MAINNET_API_KEY
         val defaultSecret = if (isTestnet) PRECONFIGURED_TESTNET_API_SECRET else PRECONFIGURED_MAINNET_API_SECRET
 

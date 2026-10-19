@@ -1055,18 +1055,33 @@ fun BinanceRealTradingTabView(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text("PnL Hợp Đồng Chưa Chốt", color = TextSecondary, fontSize = 11.sp)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("PnL Chưa Chốt Binance Demo", color = TextSecondary, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = CryptoGreen.copy(alpha = 0.18f)
+                            ) {
+                                Text(
+                                    text = "ĐỒNG BỘ 100%",
+                                    color = CryptoGreen,
+                                    fontSize = 8.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                )
+                            }
+                        }
                         val unPnl = binancePortfolio.totalUnrealizedProfit
                         val isPos = unPnl >= 0
                         Text(
-                            text = "${if (isPos) "+" else ""}$${String.format(Locale.US, "%.2f", unPnl)}",
+                            text = "${if (isPos) "+" else ""}$${String.format(Locale.US, "%.2f", unPnl)} USDT",
                             color = if (isPos) CryptoGreen else CryptoRed,
                             fontSize = 15.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = FontFamily.Monospace
                         )
                         Text(
-                            text = "${binancePortfolio.positions.size + binanceExecutedOpenPositions.size} vị thế đang mở",
+                            text = "${binancePortfolio.positions.size} vị thế khớp hoàn toàn với Binance Demo",
                             color = TextMuted,
                             fontSize = 10.sp
                         )

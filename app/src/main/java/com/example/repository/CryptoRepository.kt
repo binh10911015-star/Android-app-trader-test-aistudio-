@@ -26,7 +26,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
     private val signalCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     init {
-        // Pre-seed initial bullish signals so UI immediately has scanned signals to display
         listOf(
             "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT",
             "PEPEUSDT", "SUIUSDT", "AVAXUSDT", "NEARUSDT", "WIFUSDT", "AAVEUSDT", "ENAUSDT"
@@ -40,7 +39,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             val list = BinanceClient.fetchTickersWithFallback()
             Result.success(list)
         } catch (e: Exception) {
-            // Even in worst case, return seed data
             Result.success(com.example.data.DefaultCoinData.getSeedTickers())
         }
     }
@@ -84,6 +82,14 @@ class CryptoRepository(private val tradeDao: TradeDao) {
 
     fun getAllPositions(): Flow<List<TradePosition>> = tradeDao.getAllPositions()
 
+    suspend fun getOpenPositionsList(): List<TradePosition> = withContext(Dispatchers.IO) {
+        tradeDao.getOpenPositionsList()
+    }
+
+    fun getOpenPositionsListSync(): List<TradePosition> = kotlinx.coroutines.runBlocking(Dispatchers.IO) {
+        tradeDao.getOpenPositionsList()
+    }
+
     suspend fun hasOpenPositionForSymbol(symbol: String): Boolean = withContext(Dispatchers.IO) {
         tradeDao.countOpenForSymbol(symbol) > 0
     }
@@ -92,11 +98,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         tradeDao.getOpenPositionsList().map { it.symbol }.toSet()
     }
 
-    /**
-     * Executes automated or manual simulated buy order.
-     * Volume mỗi vị thế = 0,5% số dư mô phỏng (hoặc investedUsdt được chỉ định).
-     * Enforces requirement: "Nếu danh sách vào lệnh đã có thì không tự động mở thêm lệnh mới cho coin đó"
-     */
     suspend fun executeSimulatedBuy(
         symbol: String,
         currentPrice: Double,
@@ -114,12 +115,10 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val effectiveEntryPrice = if (exactEntryPrice != null && exactEntryPrice > 0.0) exactEntryPrice else currentPrice
         if (effectiveEntryPrice <= 0.0) return@withContext null
 
-        // Check rule: If coin already has open order, DO NOT open new order!
         if (tradeDao.countOpenForSymbol(symbol) > 0) {
             return@withContext null
         }
 
-        // Volume mỗi vị thế = 0.5% số dư mô phỏng
         val invested = investedUsdt ?: settings.calculatePositionVolume()
         val amount = exactAmount ?: (invested / effectiveEntryPrice)
         val tpPrice = settings.takeProfitPercent?.let { effectiveEntryPrice * (1.0 + it / 100.0) }
@@ -180,10 +179,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         )
     }
 
-    /**
-     * Check open positions against new prices, triggering TP / SL exits, updating PnL,
-     * and returning closed positions + total refunded capital (invested + PnL) to update simulated balance.
-     */
     suspend fun updatePositionsWithPrices(tickerMap: Map<String, Double>): PositionUpdateResult = withContext(Dispatchers.IO) {
         val alerts = mutableListOf<TradeAlert>()
         val closedPositions = mutableListOf<TradePosition>()
@@ -194,7 +189,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             val latestPrice = tickerMap[pos.symbol] ?: continue
             val now = System.currentTimeMillis()
 
-            // Check Take Profit trigger (only if TP was set)
             if (pos.takeProfitPrice != null && latestPrice >= pos.takeProfitPrice) {
                 val pnlUsdt = (pos.takeProfitPrice - pos.entryPrice) * pos.amount
                 val pnlPercent = ((pos.takeProfitPrice - pos.entryPrice) / pos.entryPrice) * 100.0
@@ -218,9 +212,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                         type = AlertType.TAKE_PROFIT
                     )
                 )
-            }
-            // Check Stop Loss trigger (only if SL was set)
-            else if (pos.stopLossPrice != null && latestPrice <= pos.stopLossPrice) {
+            } else if (pos.stopLossPrice != null && latestPrice <= pos.stopLossPrice) {
                 val pnlUsdt = (pos.stopLossPrice - pos.entryPrice) * pos.amount
                 val pnlPercent = ((pos.stopLossPrice - pos.entryPrice) / pos.entryPrice) * 100.0
                 val closedPos = pos.copy(
@@ -243,9 +235,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                         type = AlertType.STOP_LOSS
                     )
                 )
-            }
-            // Normal real-time price update
-            else if (latestPrice != pos.currentPrice) {
+            } else if (latestPrice != pos.currentPrice) {
                 tradeDao.update(pos.copy(currentPrice = latestPrice))
             }
         }
@@ -283,7 +273,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         TradeAlert(
             symbol = pos.symbol,
             title = "ĐÃ ĐÓNG LỆNH THỦ CÔNG",
-            message = "Đã đóng ${pos.symbol} tại $${formatPrice(exitPrice)}. PnL: $sign$${String.format(Locale.US, "%.2f", pnlUsdt)} ($sign${String.format(Locale.US, "%.2f", pnlPercent)}%)",
+            message = "Đã đóng ${pos.symbol} tại $${formatPrice(exitPrice)}. PnL: $sign$${String.format(Locale.US, "%.2f", pnlUsdt)} ($sign$${String.format(Locale.US, "%.2f", pnlPercent)}%)",
             type = AlertType.MANUAL_CLOSE
         )
     }
@@ -314,10 +304,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         Pair(closedList, totalReturned)
     }
 
-    /**
-     * Chốt Lời Toàn Danh Mục: Khi tổng ROI của toàn bộ các vị thế đang mở đạt ngưỡng targetTpPercent,
-     * tự động đóng đồng loạt toàn bộ vị thế.
-     */
     suspend fun checkAndExecutePortfolioTakeProfit(
         tickerMap: Map<String, Double>,
         targetTpPercent: Double
@@ -377,6 +363,71 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         }
 
         PositionUpdateResult(emptyList(), emptyList(), 0.0)
+    }
+
+    /**
+     * Đồng bộ trực tiếp danh sách lệnh đang mở trên Binance Demo với Room database của app,
+     * đảm bảo không có bất kỳ sự sai lệch nào.
+     */
+    suspend fun syncWithBinanceLivePositions(
+        livePositions: List<com.example.model.BinanceLivePosition>
+    ) = withContext(Dispatchers.IO) {
+        val currentOpen = tradeDao.getOpenPositionsList()
+        
+        val liveLocalPositions = currentOpen.filter { it.isLiveBinanceOrder }
+        val liveLocalMap = liveLocalPositions.associateBy { it.symbol }
+        
+        val liveSymbolsFromBinance = livePositions.map { it.symbol }.toSet()
+
+        for (live in livePositions) {
+            val existingLive = liveLocalMap[live.symbol]
+            val side = if (live.isLong) "LONG" else "SHORT"
+            val invested = if (live.initialMargin > 0) live.initialMargin else (live.absAmount * live.entryPrice / live.leverage.coerceAtLeast(1))
+
+            if (existingLive != null) {
+                val updated = existingLive.copy(
+                    entryPrice = live.entryPrice,
+                    currentPrice = live.markPrice,
+                    amount = live.absAmount,
+                    investedUsdt = invested,
+                    positionSide = side,
+                    liveUnrealizedProfit = live.unrealizedProfit,
+                    leverage = live.leverage,
+                    binanceUpdateTime = System.currentTimeMillis()
+                )
+                tradeDao.update(updated)
+            } else {
+                val newPos = TradePosition(
+                    symbol = live.symbol,
+                    entryPrice = live.entryPrice,
+                    currentPrice = live.markPrice,
+                    amount = live.absAmount,
+                    investedUsdt = invested,
+                    entryTime = if (live.updateTime > 0) live.updateTime else System.currentTimeMillis(),
+                    status = TradePosition.STATUS_OPEN,
+                    isLiveBinanceOrder = true,
+                    positionSide = side,
+                    liveUnrealizedProfit = live.unrealizedProfit,
+                    leverage = live.leverage,
+                    binanceUpdateTime = System.currentTimeMillis()
+                )
+                tradeDao.insert(newPos)
+            }
+        }
+
+        for (pos in liveLocalPositions) {
+            if (pos.symbol !in liveSymbolsFromBinance) {
+                val closed = pos.copy(
+                    status = TradePosition.STATUS_CLOSED,
+                    exitPrice = pos.currentPrice,
+                    exitTime = System.currentTimeMillis(),
+                    pnlUsdt = pos.unrealizedPnlUsdt,
+                    pnlPercent = pos.unrealizedPnlPercent,
+                    closeReason = TradePosition.REASON_BINANCE_SYNC
+                )
+                tradeDao.update(closed)
+            }
+        }
     }
 
     suspend fun clearHistory() = withContext(Dispatchers.IO) {

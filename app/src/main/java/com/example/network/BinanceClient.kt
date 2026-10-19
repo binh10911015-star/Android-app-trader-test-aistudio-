@@ -3,28 +3,38 @@ package com.example.network
 import com.example.data.DefaultCoinData
 import com.example.model.BinanceTicker
 import com.example.model.Candle
+import com.example.model.SuperTrendPoint
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
-import java.util.concurrent.TimeUnit
-import kotlin.random.Random
-
+import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 object BinanceClient {
-    // Endpoints in priority order
-    private val TICKER_ENDPOINTS = listOf(
-        "https://fapi.binance.com/fapi/v1/ticker/24hr",
-        "https://data-api.binance.vision/api/v3/ticker/24hr",
-        "https://api.binance.com/api/v3/ticker/24hr"
-    )
+    
+    // Công tắc đồng bộ luồng giá theo môi trường của App
+    @Volatile
+    var isTestnet: Boolean = true 
 
-    private val KLINE_ENDPOINTS = listOf(
-        "https://fapi.binance.com/fapi/v1/klines",
-        "https://data-api.binance.vision/api/v3/klines",
-        "https://api.binance.com/api/v3/klines"
-    )
+    private fun getBaseUrls(): List<String> {
+        return if (isTestnet) {
+            listOf("https://testnet.binancefuture.com") // Lấy giá Demo chuẩn 100%
+        } else {
+            listOf(
+                "https://fapi.binance.com",
+                "https://fapi1.binance.com",
+                "https://fapi2.binance.com"
+            )
+        }
+    }
 
     @Volatile
     private var activeProxyHost: String = ""
@@ -33,38 +43,66 @@ object BinanceClient {
     @Volatile
     private var activeProxyType: String = "HTTP"
 
-    // Bộ nhớ cache động các symbol USDT-M Perpetual hợp lệ trực tiếp từ exchangeInfo (TTL = 1 giờ)
-    private val activePerpetualSymbols = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    // Cache symbol USDT-M Perpetual hợp lệ (TTL = 1 giờ)
+    private val activePerpetualSymbols = ConcurrentHashMap<String, Boolean>()
     @Volatile
     private var lastExchangeInfoFetchTime: Long = 0L
-    private const val EXCHANGE_INFO_CACHE_TTL_MS = 3600_000L // 1 giờ
+    private const val EXCHANGE_INFO_CACHE_TTL_MS = 3600_000L
+
+    val usedWeight1m = AtomicInteger(0)
 
     @Volatile
     var okHttpClient: OkHttpClient = buildClient(null)
         private set
 
-    /**
-     * Lọc danh sách symbol hợp lệ trực tiếp từ endpoint Binance Futures exchangeInfo:
-     * - status === "TRADING" (Bỏ qua hoàn toàn SETTLING, CLOSE, DELISTED, PENDING_TRADING)
-     * - contractType === "PERPETUAL" (Chỉ lấy hợp đồng vĩnh cửu)
-     * - quoteAsset === "USDT" (Chỉ lấy các cặp ký quỹ USDT)
-     * Cache trong 1 giờ để tối ưu tốc độ và không spam rate limit.
-     */
+    fun hmacSha256(secret: String, data: String): String {
+        return try {
+            val sha256Hmac = Mac.getInstance("HmacSHA256")
+            val secretKey = SecretKeySpec(secret.toByteArray(Charsets.UTF_8), "HmacSHA256")
+            sha256Hmac.init(secretKey)
+            val signedBytes = sha256Hmac.doFinal(data.toByteArray(Charsets.UTF_8))
+            signedBytes.joinToString("") { "%02x".format(it) }
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    fun setCrossMarginAndLeverage1x(symbol: String, apiKey: String, apiSecret: String, isTestnet: Boolean = false): Boolean {
+        val baseUrl = if (isTestnet) "https://testnet.binancefuture.com" else "https://fapi.binance.com"
+        val emptyBody = "".toRequestBody("application/x-www-form-urlencoded".toMediaTypeOrNull())
+
+        try {
+            val ts1 = System.currentTimeMillis()
+            val queryMargin = "symbol=${symbol.uppercase()}&marginType=CROSSED&timestamp=$ts1&recvWindow=60000"
+            val sigMargin = hmacSha256(apiSecret, queryMargin)
+            val requestMargin = Request.Builder().url("$baseUrl/fapi/v1/marginType?$queryMargin&signature=$sigMargin").header("X-MBX-APIKEY", apiKey).post(emptyBody).build()
+            okHttpClient.newCall(requestMargin).execute()
+        } catch (_: Exception) {}
+
+        try {
+            val ts2 = System.currentTimeMillis()
+            val queryLev = "symbol=${symbol.uppercase()}&leverage=1&timestamp=$ts2&recvWindow=60000"
+            val sigLev = hmacSha256(apiSecret, queryLev)
+            val requestLev = Request.Builder().url("$baseUrl/fapi/v1/leverage?$queryLev&signature=$sigLev").header("X-MBX-APIKEY", apiKey).post(emptyBody).build()
+            return okHttpClient.newCall(requestLev).execute().isSuccessful
+        } catch (_: Exception) {
+            return false
+        }
+    }
+
     fun refreshValidPerpetualSymbols(forceRefresh: Boolean = false): Set<String> {
         val now = System.currentTimeMillis()
         if (!forceRefresh && activePerpetualSymbols.isNotEmpty() && (now - lastExchangeInfoFetchTime < EXCHANGE_INFO_CACHE_TTL_MS)) {
             return activePerpetualSymbols.keys
         }
 
+        val baseUrl = getBaseUrls().first()
         try {
-            val request = Request.Builder()
-                .url("https://fapi.binance.com/fapi/v1/exchangeInfo")
-                .header("User-Agent", "Mozilla/5.0")
-                .build()
+            val request = Request.Builder().url("$baseUrl/fapi/v1/exchangeInfo").build()
             val response = okHttpClient.newCall(request).execute()
             if (response.isSuccessful) {
                 val body = response.body?.string() ?: ""
-                val json = org.json.JSONObject(body)
+                val json = JSONObject(body)
                 val symbolsArr = json.optJSONArray("symbols")
                 if (symbolsArr != null && symbolsArr.length() > 0) {
                     val newSet = mutableSetOf<String>()
@@ -75,7 +113,6 @@ object BinanceClient {
                         val contractType = sObj.optString("contractType", "")
                         val quoteAsset = sObj.optString("quoteAsset", "")
 
-                        // Tiêu chí lọc nghiêm ngặt theo yêu cầu
                         if (status.equals("TRADING", ignoreCase = true) &&
                             contractType.equals("PERPETUAL", ignoreCase = true) &&
                             quoteAsset.equals("USDT", ignoreCase = true)
@@ -91,16 +128,12 @@ object BinanceClient {
                     }
                 }
             }
-        } catch (_: Exception) {
-            // Khi không có mạng, giữ lại cache hiện tại hoặc seed
-        }
+        } catch (_: Exception) {}
         return activePerpetualSymbols.keys
     }
 
     fun getValidSymbols(): Set<String> {
-        if (activePerpetualSymbols.isEmpty()) {
-            return refreshValidPerpetualSymbols()
-        }
+        if (activePerpetualSymbols.isEmpty()) return refreshValidPerpetualSymbols()
         return activePerpetualSymbols.keys
     }
 
@@ -109,13 +142,6 @@ object BinanceClient {
         return if (set.isNotEmpty()) set.size else DefaultCoinData.getSeedTickers().size
     }
 
-    /**
-     * Cập nhật Proxy cho OkHttpClient (HTTP hoặc SOCKS5).
-     * Kiểm tra nếu proxyHost khác rỗng và proxyPort > 0, tạo một đối tượng
-     * java.net.Proxy(Proxy.Type.HTTP, InetSocketAddress(proxyHost, proxyPort))
-     * và gắn vào OkHttpClient.Builder().proxy(proxy).
-     * Nếu để trống hoặc port <= 0, client giữ kết nối trực tiếp bình thường.
-     */
     fun updateProxy(host: String, port: Int, isSocks: Boolean = false) {
         val trimmedHost = host.trim()
         activeProxyHost = trimmedHost
@@ -137,99 +163,68 @@ object BinanceClient {
             .readTimeout(10, TimeUnit.SECONDS)
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
-                    .header("Accept", "application/json, text/plain, */*")
-                    .header("Accept-Language", "en-US,en;q=0.9")
+                    .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+                    .header("Accept", "application/json")
                     .build()
-                chain.proceed(request)
+                val response = chain.proceed(request)
+                response.header("x-mbx-used-weight-1m")?.toIntOrNull()?.let { usedWeight1m.set(it) }
+                response
             }
-
-        if (proxy != null) {
-            builder.proxy(proxy)
-        }
-
+        if (proxy != null) builder.proxy(proxy)
         return builder.build()
     }
 
     fun fetchTickersWithFallback(): List<BinanceTicker> {
-        for (url in TICKER_ENDPOINTS) {
+        val baseUrls = getBaseUrls()
+        for (baseUrl in baseUrls) {
             try {
-                val request = Request.Builder().url(url).build()
+                val request = Request.Builder().url("$baseUrl/fapi/v1/ticker/24hr").build()
                 val response = okHttpClient.newCall(request).execute()
                 if (response.isSuccessful) {
                     val bodyString = response.body?.string()
                     if (!bodyString.isNullOrEmpty()) {
                         val parsed = parseTickers(bodyString)
-                        if (parsed.isNotEmpty()) {
-                            return parsed
-                        }
+                        if (parsed.isNotEmpty()) return parsed
                     }
                 }
-            } catch (e: Exception) {
-                // Try next endpoint
-            }
+            } catch (_: Exception) {}
         }
-        // If all network endpoints fail (e.g. offline or complete network outage), return rich seed data
         return DefaultCoinData.getSeedTickers()
     }
 
-    fun fetchKlinesWithFallback(symbol: String, interval: String = "4h"): List<Candle> {
-        // Strip 1000 prefix for spot mirror fallback if needed
+    fun fetchKlinesWithFallback(symbol: String, interval: String = "4h", limit: Int = 100): List<Candle> {
         val cleanSymbol = symbol.uppercase()
-        val altSymbol = if (cleanSymbol.startsWith("1000")) cleanSymbol.removePrefix("1000") else cleanSymbol
-
-        // Kiểm tra danh sách symbol hợp lệ để tránh lỗi 400 cho coin đã delist
         val valid = getValidSymbols()
-        if (valid.isNotEmpty() && cleanSymbol !in valid && altSymbol !in valid) {
-            val seed = DefaultCoinData.getSeedTickers().find { it.symbol == symbol }
-            val basePrice = seed?.lastPrice ?: 100.0
-            return generateSyntheticCandles(basePrice, 50, interval)
-        }
+        if (valid.isNotEmpty() && cleanSymbol !in valid) return emptyList()
+        if (usedWeight1m.get() > 2100) try { Thread.sleep(500) } catch (_: Exception) {}
 
-        for (baseUrl in KLINE_ENDPOINTS) {
-            for (sym in listOf(cleanSymbol, altSymbol).distinct()) {
-                try {
-                    val url = "$baseUrl?symbol=$sym&interval=$interval&limit=100"
-                    val request = Request.Builder().url(url).build()
-                    val response = okHttpClient.newCall(request).execute()
-                    if (response.isSuccessful) {
-                        val bodyString = response.body?.string()
-                        if (!bodyString.isNullOrEmpty()) {
-                            val parsed = parseKlines(bodyString)
-                            if (parsed.isNotEmpty()) {
-                                return parsed
-                            }
-                        }
+        val baseUrls = getBaseUrls()
+        for (baseUrl in baseUrls) {
+            try {
+                val url = "$baseUrl/fapi/v1/klines?symbol=$cleanSymbol&interval=$interval&limit=$limit"
+                val request = Request.Builder().url(url).build()
+                val response = okHttpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    val bodyString = response.body?.string()
+                    if (!bodyString.isNullOrEmpty()) {
+                        val parsed = parseKlines(bodyString)
+                        if (parsed.isNotEmpty()) return parsed
                     }
-                } catch (e: Exception) {
-                    // Try next endpoint
                 }
-            }
+            } catch (_: Exception) {}
         }
-
-        // Fallback: Generate realistic candles based on coin seed/last price so user is never left with empty chart
-        val seed = DefaultCoinData.getSeedTickers().find { it.symbol == symbol }
-        val basePrice = seed?.lastPrice ?: 100.0
-        return generateSyntheticCandles(basePrice, 50, interval)
+        return emptyList()
     }
 
     fun parseTickers(jsonString: String): List<BinanceTicker> {
-        // Đảm bảo cache exchangeInfo đã được nạp
         val validSymbols = getValidSymbols()
-
         val list = mutableListOf<BinanceTicker>()
         try {
             val jsonArray = JSONArray(jsonString)
             for (i in 0 until jsonArray.length()) {
                 val item = jsonArray.getJSONObject(i)
                 val symbol = item.optString("symbol", "")
-                
-                // Tiêu chí: Chỉ lấy các cặp USDT-M Perpetual hợp lệ đang TRADING (đã lọc qua exchangeInfo)
-                val isValid = if (validSymbols.isNotEmpty()) {
-                    symbol in validSymbols
-                } else {
-                    symbol.endsWith("USDT") && !symbol.contains("_")
-                }
+                val isValid = if (validSymbols.isNotEmpty()) symbol in validSymbols else (symbol.endsWith("USDT") && !symbol.contains("_"))
 
                 if (isValid) {
                     val lastPrice = item.optString("lastPrice", "0").toDoubleOrNull() ?: 0.0
@@ -239,27 +234,17 @@ object BinanceClient {
                     val lowPrice = item.optString("lowPrice", "0").toDoubleOrNull() ?: 0.0
 
                     if (lastPrice > 0.0) {
-                        val hash = kotlin.math.abs(symbol.hashCode())
-                        val sma20 = lastPrice * (0.985 + (hash % 5) * 0.005)
-                        val volRatio = 1.4 + ((hash % 8) * 0.15)
                         list.add(
                             BinanceTicker(
-                                symbol = symbol,
-                                lastPrice = lastPrice,
-                                priceChangePercent = priceChangePercent,
-                                volume = volume,
-                                highPrice = highPrice,
-                                lowPrice = lowPrice,
-                                sma20OpenD1 = sma20,
-                                volumeRatioD1 = volRatio
+                                symbol = symbol, lastPrice = lastPrice, priceChangePercent = priceChangePercent,
+                                volume = volume, highPrice = highPrice, lowPrice = lowPrice,
+                                sma20OpenD1 = lastPrice, volumeRatioD1 = 1.0
                             )
                         )
                     }
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
         return list.sortedByDescending { it.volume * it.lastPrice }
     }
 
@@ -269,54 +254,21 @@ object BinanceClient {
             val array = JSONArray(jsonString)
             for (i in 0 until array.length()) {
                 val kline = array.getJSONArray(i)
-                val openTime = kline.optLong(0, 0L)
                 val open = kline.optString(1, "0").toDoubleOrNull() ?: 0.0
-                val high = kline.optString(2, "0").toDoubleOrNull() ?: 0.0
-                val low = kline.optString(3, "0").toDoubleOrNull() ?: 0.0
                 val close = kline.optString(4, "0").toDoubleOrNull() ?: 0.0
-                val volume = kline.optString(5, "0").toDoubleOrNull() ?: 0.0
-                val closeTime = kline.optLong(6, 0L)
-
                 if (open > 0.0 && close > 0.0) {
                     candles.add(
                         Candle(
-                            openTime = openTime,
-                            open = open,
-                            high = high,
-                            low = low,
-                            close = close,
-                            volume = volume,
-                            closeTime = closeTime
+                            openTime = kline.optLong(0, 0L), open = open,
+                            high = kline.optString(2, "0").toDoubleOrNull() ?: 0.0,
+                            low = kline.optString(3, "0").toDoubleOrNull() ?: 0.0,
+                            close = close, volume = kline.optString(5, "0").toDoubleOrNull() ?: 0.0,
+                            closeTime = kline.optLong(6, 0L)
                         )
                     )
                 }
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        return candles
-    }
-
-    private fun generateSyntheticCandles(currentPrice: Double, count: Int, interval: String): List<Candle> {
-        val candles = mutableListOf<Candle>()
-        val intervalMillis = if (interval == "1d") 86400000L else 14400000L
-        val now = System.currentTimeMillis()
-        var price = currentPrice * 0.90 // Start slightly lower to simulate trend
-        val rnd = Random(currentPrice.toLong().coerceAtLeast(1L))
-
-        for (i in 0 until count) {
-            val openTime = now - (count - i) * intervalMillis
-            val closeTime = openTime + intervalMillis - 1
-            val deltaPct = (rnd.nextDouble() - 0.47) * 0.04 // Slight upward bias
-            val open = price
-            val close = open * (1.0 + deltaPct)
-            val high = maxOf(open, close) * (1.0 + rnd.nextDouble() * 0.015)
-            val low = minOf(open, close) * (1.0 - rnd.nextDouble() * 0.015)
-            val volume = 1000.0 + rnd.nextDouble() * 5000.0
-
-            candles.add(Candle(openTime, open, high, low, close, volume, closeTime))
-            price = close
-        }
+        } catch (e: Exception) { e.printStackTrace() }
         return candles
     }
 }

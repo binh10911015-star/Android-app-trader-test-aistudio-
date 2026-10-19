@@ -141,8 +141,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _livePositionsTpSl = MutableStateFlow<Map<String, Pair<Double?, Double?>>>(emptyMap())
     val livePositionsTpSl: StateFlow<Map<String, Pair<Double?, Double?>>> = _livePositionsTpSl.asStateFlow()
 
-    init {
+init {
         val loadedConfig = secureApiStorage.loadConfig()
+        
+        // Công tắc đồng bộ giá cho Testnet/Mainnet ngay khi mở app
+        BinanceClient.isTestnet = loadedConfig.isTestnet 
+
         if (loadedConfig.isProxyEnabled) {
             BinanceClient.updateProxy(
                 loadedConfig.proxyHost,
@@ -319,11 +323,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 // Kiểm tra Chốt Lời Toàn Danh Mục (Portfolio Take-Profit)
                 val targetTp = _uiState.value.settings.portfolioTakeProfitPercent
                 if (targetTp > 0.0) {
-                    val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
-                    for (alert in ptpResult.alerts) {
-                        triggerAlert(alert)
+                    val currentOpen = repository.getOpenPositionsList()
+                    var totalInvested = 0.0
+                    var totalCurrentValue = 0.0
+
+                    for (pos in currentOpen) {
+                        val currentPrice = priceMap[pos.symbol] ?: pos.currentPrice
+                        val pnl = (currentPrice - pos.entryPrice) * pos.amount
+                        totalInvested += pos.investedUsdt
+                        totalCurrentValue += (pos.investedUsdt + pnl)
                     }
-                    totalReturned += ptpResult.totalReturnedCapital
+
+                    if (totalInvested > 0.0) {
+                        val currentPnlPercent = ((totalCurrentValue - totalInvested) / totalInvested) * 100.0
+                        if (currentPnlPercent >= targetTp) {
+                            // 1. ĐÃ ĐẠT TARGET: Đóng toàn bộ lệnh Binance thật trước
+                            if (_apiConfig.value.isConnected) {
+                                val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                                for (pos in currentOpen.filter { it.isLiveBinanceOrder }) {
+                                    val price = priceMap[pos.symbol] ?: pos.currentPrice
+                                    BinanceFuturesApiVerifier.postMarketCloseOrder(
+                                        symbol = pos.symbol,
+                                        amount = pos.amount,
+                                        approxPrice = price,
+                                        apiKey = apiKey,
+                                        apiSecret = apiSecret,
+                                        isTestnet = isTestnet
+                                    )
+                                }
+                            }
+                            
+                            // 2. Sau đó mới đóng trên app mô phỏng và thông báo
+                            val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
+                            for (alert in ptpResult.alerts) {
+                                triggerAlert(alert)
+                            }
+                            totalReturned += ptpResult.totalReturnedCapital
+                            
+                            // 3. Tải lại danh mục Binance để app đồng bộ làm sạch 35 vị thế
+                            if (_apiConfig.value.isConnected) {
+                                refreshBinancePortfolio()
+                            }
+                        }
+                    }
                 }
 
                 // Cập nhật số dư mô phỏng khi lệnh chạm TP hoặc SL
@@ -610,6 +652,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val current = _apiConfig.value
         val newTestnet = !toLiveMainnet
         val newLiveTrading = toLiveMainnet
+
+        // Tự động lật công tắc đổi luồng giá sang Testnet hoặc Mainnet
+        BinanceClient.isTestnet = !toLiveMainnet
 
         val (apiKey, apiSecret) = if (toLiveMainnet) {
             secureApiStorage.getMainnetCredentials()
@@ -1231,8 +1276,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         tickerPollJob?.cancel()
         tickerPollJob = viewModelScope.launch {
             while (isActive) {
-                delay(8000)
+                delay(5000)
                 refreshTickers()
+                if (_apiConfig.value.isConnected) {
+                    refreshBinancePortfolio()
+                }
             }
         }
     }
@@ -1666,6 +1714,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isTestnet = isTestnet
             )
             _binancePortfolio.value = portfolio
+            if (portfolio.isLiveConnected) {
+                // Đồng bộ trực tiếp lệnh đang mở từ Binance Demo vào app
+                repository.syncWithBinanceLivePositions(portfolio.positions)
+                _apiConfig.value = _apiConfig.value.copy(
+                    isConnected = true,
+                    totalWalletBalance = portfolio.totalWalletBalance,
+                    availableBalance = portfolio.availableBalance
+                )
+            }
             _isRefreshingPortfolio.value = false
         }
     }

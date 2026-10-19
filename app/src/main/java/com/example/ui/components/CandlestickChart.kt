@@ -19,8 +19,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.ShowChart
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -44,8 +42,10 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.indicators.TechnicalAnalysis
 import com.example.model.Candle
 import com.example.model.IndicatorData
+import com.example.network.BinanceClient
 import com.example.repository.CryptoRepository
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
@@ -77,45 +77,29 @@ fun CandlestickChart(
     initialMode: ChartStrategyMode = ChartStrategyMode.SMA_SUPERTREND,
     modifier: Modifier = Modifier
 ) {
-    var strategyMode by remember { mutableStateOf(initialMode) }
+    var strategyMode by remember(initialMode) { mutableStateOf(initialMode) }
 
-    // Take exactly the 30 most recent candles for clear spacing
-    val displayIndicators = remember(indicatorData) {
-        if (indicatorData.size > 30) indicatorData.takeLast(30) else indicatorData
-    }
-    val displayCandles = remember(candles, displayIndicators) {
-        if (displayIndicators.isNotEmpty()) {
-            displayIndicators.map { it.candle }
-        } else if (candles.size > 30) {
-            candles.takeLast(30)
+    // Đảm bảo luôn có 30 nến kèm chỉ báo MA20 & SuperTrend đầy đủ
+    val effectiveIndicators = remember(indicatorData, candles, timeframe) {
+        if (indicatorData.isNotEmpty()) {
+            if (indicatorData.size > 30) indicatorData.takeLast(30) else indicatorData
+        } else if (candles.isNotEmpty()) {
+            val list = if (candles.size > 30) candles.takeLast(30) else candles
+            TechnicalAnalysis.computeIndicators(list)
         } else {
-            candles
+            val fallbackCandles = emptyList<Candle>()
+            TechnicalAnalysis.computeIndicators(fallbackCandles)
         }
     }
 
-    if (displayCandles.isEmpty()) {
-        Surface(
-            modifier = modifier
-                .fillMaxWidth()
-                .height(260.dp),
-            shape = RoundedCornerShape(12.dp),
-            color = DarkSurface
-        ) {
-            Box(contentAlignment = Alignment.Center) {
-                Text(
-                    text = "Chưa có dữ liệu nến Binance ($timeframe)",
-                    color = TextMuted,
-                    fontSize = 13.sp
-                )
-            }
-        }
-        return
+    val displayCandles = remember(effectiveIndicators) {
+        effectiveIndicators.map { it.candle }
     }
 
     val latestCandle = displayCandles.lastOrNull()
-    val latestIndicator = displayIndicators.lastOrNull()
+    val latestIndicator = effectiveIndicators.lastOrNull()
 
-    // Calculate price bounds
+    // Tính toán biên độ giá min/max cho 30 nến
     var minPrice = Double.MAX_VALUE
     var maxPrice = Double.MIN_VALUE
 
@@ -124,7 +108,7 @@ fun CandlestickChart(
         if (candle.high > maxPrice) maxPrice = candle.high
     }
 
-    displayIndicators.forEach { ind ->
+    effectiveIndicators.forEach { ind ->
         ind.ma20?.let {
             if (it < minPrice) minPrice = it
             if (it > maxPrice) maxPrice = it
@@ -137,18 +121,19 @@ fun CandlestickChart(
         }
     }
 
-    if (minPrice == Double.MAX_VALUE || maxPrice == Double.MIN_VALUE || minPrice == maxPrice) {
-        minPrice = (latestCandle?.close ?: 100.0) * 0.98
-        maxPrice = (latestCandle?.close ?: 100.0) * 102
+    if (minPrice == Double.MAX_VALUE || maxPrice == Double.MIN_VALUE || minPrice >= maxPrice) {
+        val base = latestCandle?.close ?: 80000.0
+        minPrice = base * 0.97
+        maxPrice = base * 1.03
     }
 
-    // Add 4% padding on top and bottom
+    // Đệm 5% ở 2 đỉnh đáy để nến và chỉ báo không bị chạm viền
     val priceRange = maxPrice - minPrice
-    val paddedMinPrice = minPrice - priceRange * 0.04
-    val paddedMaxPrice = maxPrice + priceRange * 0.04
+    val paddedMinPrice = minPrice - priceRange * 0.05
+    val paddedMaxPrice = maxPrice + priceRange * 0.05
     val effectivePriceRange = max(1e-8, paddedMaxPrice - paddedMinPrice)
 
-    // Calculate Volume bounds for Volume mode
+    // Tính toán Volume cho chế độ SMA + Khối lượng
     var maxVolume = 1.0
     var totalVolume = 0.0
     displayCandles.forEach { candle ->
@@ -166,7 +151,7 @@ fun CandlestickChart(
             .border(1.dp, DarkBorder, RoundedCornerShape(14.dp))
             .padding(12.dp)
     ) {
-        // Strategy Mode Selector Header
+        // HÀNG 1: Tiêu đề & Cặp nến & Giá hiện tại
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -189,98 +174,123 @@ fun CandlestickChart(
                         color = CryptoGold,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
 
-            // Toggle Buttons for Strategies
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) CryptoGold else DarkSurfaceHighlight,
-                    modifier = Modifier
-                        .clickable { strategyMode = ChartStrategyMode.SMA_SUPERTREND }
-                        .testTag("chart_mode_sma_supertrend")
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ShowChart,
-                            contentDescription = null,
-                            tint = if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) Color.Black else TextSecondary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "SMA + SuperTrend",
-                            color = if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) Color.Black else TextSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
+            // Giá hiện tại
+            latestCandle?.let { c ->
+                val isUp = c.close >= c.open
+                Text(
+                    text = "$${CryptoRepository.formatPrice(c.close)}",
+                    color = if (isUp) CryptoGreen else CryptoRed,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+        }
 
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = if (strategyMode == ChartStrategyMode.SMA_VOLUME) CryptoGold else DarkSurfaceHighlight,
-                    modifier = Modifier
-                        .clickable { strategyMode = ChartStrategyMode.SMA_VOLUME }
-                        .testTag("chart_mode_sma_volume")
+        Spacer(modifier = Modifier.height(10.dp))
+
+        // HÀNG 2: Hai nút chuyển đổi chiến lược dàn đều 50/50, không bị co vỡ
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Nút 1: SMA + SuperTrend
+            val isSmaSt = strategyMode == ChartStrategyMode.SMA_SUPERTREND
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { strategyMode = ChartStrategyMode.SMA_SUPERTREND }
+                    .border(
+                        1.dp,
+                        if (isSmaSt) CryptoGold else DarkBorder,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .testTag("chart_mode_sma_supertrend"),
+                color = if (isSmaSt) CryptoGold else DarkSurfaceHighlight
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.BarChart,
-                            contentDescription = null,
-                            tint = if (strategyMode == ChartStrategyMode.SMA_VOLUME) Color.Black else TextSecondary,
-                            modifier = Modifier.size(13.dp)
-                        )
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text(
-                            text = "SMA + Khối lượng",
-                            color = if (strategyMode == ChartStrategyMode.SMA_VOLUME) Color.Black else TextSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Icon(
+                        imageVector = Icons.Default.ShowChart,
+                        contentDescription = null,
+                        tint = if (isSmaSt) Color.Black else TextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "SMA + SuperTrend",
+                        color = if (isSmaSt) Color.Black else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+
+            // Nút 2: SMA + Khối lượng
+            val isSmaVol = strategyMode == ChartStrategyMode.SMA_VOLUME
+            Surface(
+                modifier = Modifier
+                    .weight(1f)
+                    .height(34.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { strategyMode = ChartStrategyMode.SMA_VOLUME }
+                    .border(
+                        1.dp,
+                        if (isSmaVol) CryptoGold else DarkBorder,
+                        RoundedCornerShape(8.dp)
+                    )
+                    .testTag("chart_mode_sma_volume"),
+                color = if (isSmaVol) CryptoGold else DarkSurfaceHighlight
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 6.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.Center
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.BarChart,
+                        contentDescription = null,
+                        tint = if (isSmaVol) Color.Black else TextSecondary,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "SMA + Khối lượng",
+                        color = if (isSmaVol) Color.Black else TextSecondary,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(8.dp))
+        Spacer(modifier = Modifier.height(10.dp))
 
-        // Dynamic Indicators Legend Bar
+        // HÀNG 3: Chú giải chỉ báo động (Legend Bar)
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
-                .background(DarkSurfaceHighlight.copy(alpha = 0.7f))
-                .padding(horizontal = 8.dp, vertical = 5.dp),
+                .background(DarkSurfaceHighlight.copy(alpha = 0.8f))
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                // Candle Close
-                Text(text = "Giá: ", color = TextSecondary, fontSize = 10.sp)
-                Text(
-                    text = "$${latestCandle?.let { CryptoRepository.formatPrice(it.close) } ?: "--"}",
-                    color = if ((latestCandle?.close ?: 0.0) >= (latestCandle?.open ?: 0.0)) CryptoGreen else CryptoRed,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
-                )
-
-                Spacer(modifier = Modifier.width(10.dp))
-
                 // MA20
                 Box(
                     modifier = Modifier
-                        .size(6.dp)
+                        .size(7.dp)
                         .background(IndicatorMA20, CircleShape)
                 )
                 Spacer(modifier = Modifier.width(4.dp))
@@ -299,11 +309,11 @@ fun CandlestickChart(
                     val isBullish = latestIndicator?.superTrend?.isBullish == true
                     Box(
                         modifier = Modifier
-                            .size(6.dp)
+                            .size(7.dp)
                             .background(if (isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown, CircleShape)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "ST(20,4): ", color = TextSecondary, fontSize = 10.sp)
+                    Text(text = "SuperTrend: ", color = TextSecondary, fontSize = 10.sp)
                     Text(
                         text = "$${latestIndicator?.superTrend?.value?.let { CryptoRepository.formatPrice(it) } ?: "--"}",
                         color = if (isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown,
@@ -325,7 +335,7 @@ fun CandlestickChart(
                         fontFamily = FontFamily.Monospace
                     )
                     if (isVolBreakout) {
-                        Text(text = " 🔥", fontSize = 9.sp)
+                        Text(text = " 🔥 (Đạt ngưỡng 2x)", color = CryptoGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -333,35 +343,34 @@ fun CandlestickChart(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // High-Precision Candlestick & Indicator Canvas
+        // HÀNG 4: KHUNG CANVAS VẼ NẾN & CHỈ BÁO RÕ NÉT
         val canvasHeight = if (strategyMode == ChartStrategyMode.SMA_VOLUME) 240.dp else 220.dp
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(canvasHeight)
                 .clip(RoundedCornerShape(8.dp))
-                .background(Color(0xFF161A1E))
+                .background(Color(0xFF14171A))
         ) {
             Canvas(modifier = Modifier.matchParentSize()) {
                 val totalWidth = size.width
                 val totalHeight = size.height
 
-                // Partition height: if Volume mode, top 72% for candles/MA20, bottom 24% for volume bars
+                // Nếu là chế độ Volume: chia 72% trên cho nến/MA20, 24% dưới cho cột volume
                 val candleAreaHeight = if (strategyMode == ChartStrategyMode.SMA_VOLUME) totalHeight * 0.72f else totalHeight
                 val volumeAreaHeight = if (strategyMode == ChartStrategyMode.SMA_VOLUME) totalHeight * 0.24f else 0f
                 val volumeAreaTop = totalHeight - volumeAreaHeight
 
-                // Step width per candle
-                val candleCount = displayCandles.size
+                val candleCount = max(1, displayCandles.size)
                 val step = totalWidth / candleCount
                 val candleBodyWidth = max(4f, step * 0.65f)
 
-                // 1. Draw subtle background horizontal price grid lines (3 levels)
+                // 1. Lưới ngang giá ngầm
                 val gridLevels = 3
                 for (i in 1..gridLevels) {
                     val y = candleAreaHeight * (i.toFloat() / (gridLevels + 1))
                     drawLine(
-                        color = Color(0xFF2B313A),
+                        color = Color(0xFF242A32),
                         start = Offset(0f, y),
                         end = Offset(totalWidth, y),
                         strokeWidth = 1f,
@@ -369,16 +378,15 @@ fun CandlestickChart(
                     )
                 }
 
-                // If Volume mode: draw separator line and 2x average volume threshold line
+                // Nếu là chế độ volume: vẽ vạch ngăn cách & đường ngưỡng 2x Vol
                 if (strategyMode == ChartStrategyMode.SMA_VOLUME) {
                     drawLine(
-                        color = Color(0xFF2B313A),
+                        color = Color(0xFF2E3540),
                         start = Offset(0f, volumeAreaTop),
                         end = Offset(totalWidth, volumeAreaTop),
                         strokeWidth = 1.5f
                     )
 
-                    // 2x Volume threshold dashed line
                     val maxVolWithPadding = max(maxVolume, doubleAvgVolume * 1.15)
                     val y2xVol = volumeAreaTop + volumeAreaHeight * (1f - (doubleAvgVolume / maxVolWithPadding).toFloat())
                     drawLine(
@@ -390,13 +398,13 @@ fun CandlestickChart(
                     )
                 }
 
-                // Helper to map price to Y in candleArea
+                // Chuyển đổi giá sang tọa độ Y
                 fun priceToY(price: Double): Float {
                     val normalized = (paddedMaxPrice - price) / effectivePriceRange
                     return (normalized * candleAreaHeight).toFloat().coerceIn(0f, candleAreaHeight)
                 }
 
-                // 2. Draw Candlesticks & Volume Bars
+                // 2. Vẽ từng thanh nến (Bóng nến & Thân nến)
                 displayCandles.forEachIndexed { index, candle ->
                     val centerX = (index + 0.5f) * step
                     val isGreen = candle.close >= candle.open
@@ -408,9 +416,9 @@ fun CandlestickChart(
                     val closeY = priceToY(candle.close)
 
                     val topBodyY = min(openY, closeY)
-                    val bodyHeight = max(2f, kotlin.math.abs(closeY - openY))
+                    val bodyHeight = max(2.5f, kotlin.math.abs(closeY - openY))
 
-                    // Wick line (High to Low)
+                    // Râu nến
                     drawLine(
                         color = candleColor,
                         start = Offset(centerX, highY),
@@ -418,15 +426,15 @@ fun CandlestickChart(
                         strokeWidth = 1.5f
                     )
 
-                    // Candle Body
+                    // Thân nến
                     drawRoundRect(
                         color = candleColor,
                         topLeft = Offset(centerX - candleBodyWidth / 2f, topBodyY),
                         size = Size(candleBodyWidth, bodyHeight),
-                        cornerRadius = CornerRadius(1.5f, 1.5f)
+                        cornerRadius = CornerRadius(2f, 2f)
                     )
 
-                    // Volume Bar (if volume mode)
+                    // Cột Volume (nếu ở chế độ SMA_VOLUME)
                     if (strategyMode == ChartStrategyMode.SMA_VOLUME) {
                         val maxVolWithPadding = max(maxVolume, doubleAvgVolume * 1.15)
                         val volHeight = (candle.volume / maxVolWithPadding).toFloat() * volumeAreaHeight
@@ -441,11 +449,11 @@ fun CandlestickChart(
                     }
                 }
 
-                // 3. Draw MA20 Line (Smooth connected path across available MA20 values)
+                // 3. Vẽ đường MA20 liền mạch màu vàng
                 val maPath = Path()
                 var maStarted = false
 
-                displayIndicators.forEachIndexed { index, ind ->
+                effectiveIndicators.forEachIndexed { index, ind ->
                     ind.ma20?.let { maVal ->
                         val centerX = (index + 0.5f) * step
                         val y = priceToY(maVal)
@@ -466,27 +474,27 @@ fun CandlestickChart(
                     )
                 }
 
-                // 4. Draw SuperTrend (if in SMA_SUPERTREND mode)
+                // 4. Vẽ đường SuperTrend(20,4) nếu ở chế độ SMA_SUPERTREND
                 if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) {
                     var lastStX: Float? = null
                     var lastStY: Float? = null
                     var lastBullish: Boolean? = null
 
-                    displayIndicators.forEachIndexed { index, ind ->
+                    effectiveIndicators.forEachIndexed { index, ind ->
                         ind.superTrend?.let { st ->
                             if (st.value > 0.0) {
                                 val centerX = (index + 0.5f) * step
                                 val y = priceToY(st.value)
                                 val stColor = if (st.isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown
 
-                                // Draw dot at each point
+                                // Vẽ chấm tròn tại mỗi điểm
                                 drawCircle(
                                     color = stColor,
-                                    radius = 3f,
+                                    radius = 3.5f,
                                     center = Offset(centerX, y)
                                 )
 
-                                // Connect line if same direction
+                                // Nối đường nếu cùng hướng
                                 if (lastStX != null && lastStY != null && lastBullish == st.isBullish) {
                                     drawLine(
                                         color = stColor,
@@ -505,18 +513,18 @@ fun CandlestickChart(
                 }
             }
 
-            // Legend labels inside canvas
+            // Nhãn giá Max / Min góc trên bên phải
             Column(
                 modifier = Modifier
                     .align(Alignment.TopEnd)
                     .padding(6.dp)
             ) {
                 Surface(
-                    color = Color.Black.copy(alpha = 0.5f),
+                    color = Color.Black.copy(alpha = 0.6f),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        text = "Max: $${CryptoRepository.formatPrice(paddedMaxPrice)}",
+                        text = "Cao: $${CryptoRepository.formatPrice(paddedMaxPrice)}",
                         color = TextSecondary,
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,
@@ -525,11 +533,11 @@ fun CandlestickChart(
                 }
                 Spacer(modifier = Modifier.height(2.dp))
                 Surface(
-                    color = Color.Black.copy(alpha = 0.5f),
+                    color = Color.Black.copy(alpha = 0.6f),
                     shape = RoundedCornerShape(4.dp)
                 ) {
                     Text(
-                        text = "Min: $${CryptoRepository.formatPrice(paddedMinPrice)}",
+                        text = "Thấp: $${CryptoRepository.formatPrice(paddedMinPrice)}",
                         color = TextSecondary,
                         fontSize = 9.sp,
                         fontFamily = FontFamily.Monospace,

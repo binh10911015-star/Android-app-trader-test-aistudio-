@@ -612,8 +612,10 @@ class ExampleRobolectricTest {
         val config = storage.loadConfig()
 
         // Verify preconfigured keys match user prompt requirements
-        assertEquals("mqcU8gfuojMk43xtXG0RRc6k2fCXVjKz1W9fT6Y6lsxBHBjNRXmHaaqv5iOn699Z", com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY)
-        assertEquals("RKJCqagKpEluIvkYqjS4NkqpyML3rRZQJXrlMsUH6pPfLJE5xkEC4lJMvKsoXSyO", com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET)
+        assertEquals("", com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY)
+        assertEquals("", com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET)
+        assertEquals("ZpsofRaa3VMg3NZh10HfCaxoJcMdmHLwfCxI7opxyWlrbzRQnKZtWFfxOGWw9DtZ", com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY)
+        assertEquals("eYRso0CQuSJ6m9WDgy6nRF9PuoDLw1tsRNt4bVCqYhyo2Sd4OjmP5NvoXYRmiQrI", com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET)
 
         val vm = MainViewModel(app)
         // Rule 2: isPinRequired must ALWAYS return true

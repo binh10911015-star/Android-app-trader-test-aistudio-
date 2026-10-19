@@ -92,10 +92,13 @@ fun ApiConfigScreen(
     val isVerifying by viewModel.isVerifyingApi.collectAsState()
     val clipboardManager = LocalClipboardManager.current
 
-    // Form states initialized with current config
-    var apiKey by remember(apiConfig) { mutableStateOf(apiConfig.apiKey) }
-    var apiSecret by remember(apiConfig) { mutableStateOf(apiConfig.apiSecret) }
-    var accessPin by remember(apiConfig) { mutableStateOf(apiConfig.accessPin) }
+    // Form states initialized with current config or default testnet credentials
+    val defaultInitKey = if (apiConfig.apiKey.isNotBlank()) apiConfig.apiKey else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY
+    val defaultInitSecret = if (apiConfig.apiSecret.isNotBlank()) apiConfig.apiSecret else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET
+
+    var apiKey by remember(apiConfig) { mutableStateOf(defaultInitKey) }
+    var apiSecret by remember(apiConfig) { mutableStateOf(defaultInitSecret) }
+    var accessPin by remember(apiConfig) { mutableStateOf(apiConfig.accessPin.ifBlank { "1234" }) }
     var isTestnet by remember(apiConfig) { mutableStateOf(apiConfig.isTestnet) }
     var liveTradingEnabled by remember(apiConfig) { mutableStateOf(apiConfig.liveTradingEnabled) }
 

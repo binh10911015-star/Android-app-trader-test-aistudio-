@@ -301,35 +301,44 @@ fun CoinDetailScreen(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Candlestick Chart
-            if (uiState.isKlineLoading) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(300.dp)
-                        .background(DarkSurface, RoundedCornerShape(12.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = CryptoGold, strokeWidth = 2.5.dp)
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text(
-                            text = "Đang tải dữ liệu nến Binance ${symbol} (${uiState.selectedTimeframe})...",
-                            color = TextSecondary,
-                            fontSize = 12.sp
-                        )
-                    }
-                }
-            } else {
-                val initialMode = if (uiState.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME)
-                    com.example.ui.components.ChartStrategyMode.SMA_VOLUME
-                else
-                    com.example.ui.components.ChartStrategyMode.SMA_SUPERTREND
+            // Candlestick Chart (Luôn hiển thị 30 nến kèm MA20 & SuperTrend rõ ràng)
+            val initialMode = if (uiState.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME)
+                com.example.ui.components.ChartStrategyMode.SMA_VOLUME
+            else
+                com.example.ui.components.ChartStrategyMode.SMA_SUPERTREND
+
+            Box(modifier = Modifier.fillMaxWidth()) {
                 CandlestickChart(
                     indicatorData = uiState.klineData,
                     timeframe = uiState.selectedTimeframe,
                     initialMode = initialMode
                 )
+                if (uiState.isKlineLoading) {
+                    Surface(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(8.dp),
+                        shape = RoundedCornerShape(6.dp),
+                        color = DarkBg.copy(alpha = 0.85f)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(10.dp),
+                                color = CryptoGold,
+                                strokeWidth = 1.5.dp
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "Đang đồng bộ...",
+                                color = TextMuted,
+                                fontSize = 9.sp
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(14.dp))
