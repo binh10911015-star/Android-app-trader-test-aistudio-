@@ -160,15 +160,15 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val fixPrefix = if (!autoFixNote.isNullOrBlank()) "[$autoFixNote] " else ""
 
         val title = if (isLiveBinanceOrder) {
-            if (isAutoTriggered) "TỰ ĐỘNG KHỚP LỆNH BINANCE DEMO" else "ĐÃ KHỚP LỆNH BINANCE DEMO"
+            if (isAutoTriggered) "TỰ ĐỘNG KHỚP LỆNH BINANCE" else "ĐÃ KHỚP LỆNH BINANCE"
         } else {
-            if (isAutoTriggered) "TỰ ĐỘNG VÀO LỆNH LONG (MÔ PHỎNG)" else "MỞ LỆNH MUA MÔ PHỎNG"
+            if (isAutoTriggered) "TỰ ĐỘNG VÀO LỆNH LONG" else "MỞ LỆNH MUA"
         }
 
         val message = if (isLiveBinanceOrder) {
-            "${fixPrefix}Lệnh #$binanceOrderId đã khớp trực tiếp trên Binance Demo! Giá khớp: $$priceStr, KL: ${String.format(Locale.US, "%.4f", amount)} (Vốn: $volStr). TP: $tpStr"
+            "${fixPrefix}Lệnh #$binanceOrderId đã khớp trực tiếp trên sàn Binance! Giá khớp: $$priceStr, KL: ${String.format(Locale.US, "%.4f", amount)} (Vốn: $volStr). TP: $tpStr"
         } else {
-            "Đã mua $symbol tại $$priceStr (Vốn: $volStr - 0.5% số dư). TP: $tpStr, SL: $slStr"
+            "Đã mua $symbol tại $$priceStr (Vốn: $volStr). TP: $tpStr, SL: $slStr"
         }
 
         TradeAlert(
@@ -365,18 +365,12 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         PositionUpdateResult(emptyList(), emptyList(), 0.0)
     }
 
-    /**
-     * Đồng bộ trực tiếp danh sách lệnh đang mở trên Binance Demo với Room database của app,
-     * đảm bảo không có bất kỳ sự sai lệch nào.
-     */
     suspend fun syncWithBinanceLivePositions(
         livePositions: List<com.example.model.BinanceLivePosition>
     ) = withContext(Dispatchers.IO) {
         val currentOpen = tradeDao.getOpenPositionsList()
-        
         val liveLocalPositions = currentOpen.filter { it.isLiveBinanceOrder }
         val liveLocalMap = liveLocalPositions.associateBy { it.symbol }
-        
         val liveSymbolsFromBinance = livePositions.map { it.symbol }.toSet()
 
         for (live in livePositions) {
@@ -434,6 +428,150 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         tradeDao.clearAll()
     }
 
+    // ==========================================
+    // BACKTEST ENGINE - GIAI ĐOẠN 3
+    // ==========================================
+
+    fun runD1BreakoutBacktest(
+        symbol: String, 
+        initialBalance: Double = 1000.0,
+        riskPerTradePercent: Double = 0.5,
+        takeProfitPercent: Double = 4.0,
+        stopLossPercent: Double = 3.0,
+        candleLimit: Int = 180,
+        volumeThreshold: Double = 2.0
+    ): BacktestSummaryResult {
+        val candles = BinanceClient.fetchKlinesWithFallback(symbol, interval = "1d", limit = candleLimit)
+        if (candles.size < 25) {
+            return BacktestSummaryResult(
+                symbol = symbol,
+                timeframe = "1d",
+                errorMessage = "Không đủ nến Mainnet để backtest (cần tối thiểu 25 nến D1)."
+            )
+        }
+
+        var balance = initialBalance
+        var peakBalance = balance
+        var maxDrawdown = 0.0
+        val trades = mutableListOf<BacktestTradeItem>()
+
+        var totalProfit = 0.0
+        var totalLoss = 0.0
+
+        var i = 21
+        while (i < candles.size - 1) {
+            val currentCandle = candles[i]
+            val previous20 = candles.subList(i - 20, i)
+
+            val currentPrice = currentCandle.close
+            val currentVol = currentCandle.volume
+            val sma20Open = previous20.map { it.open }.average()
+            val avgVol20 = previous20.map { it.volume }.average()
+
+            val volRatio = if (avgVol20 > 0.0) currentVol / avgVol20 else 0.0
+            val isSignal = currentPrice >= sma20Open && volRatio >= volumeThreshold
+
+            if (isSignal) {
+                val entryPrice = currentPrice
+                val investedAmount = balance * (riskPerTradePercent / 100.0).coerceAtLeast(0.005)
+                val coinQty = investedAmount / entryPrice
+                val entryTime = currentCandle.openTime
+
+                var exitPrice = entryPrice
+                var exitTime = entryTime
+                var exitReason = "HẾT DỮ LIỆU"
+                var closed = false
+
+                for (j in (i + 1) until candles.size) {
+                    val futureCandle = candles[j]
+                    val highRoi = ((futureCandle.high - entryPrice) / entryPrice) * 100.0
+                    val lowRoi = ((futureCandle.low - entryPrice) / entryPrice) * 100.0
+
+                    if (lowRoi <= -stopLossPercent) {
+                        exitPrice = entryPrice * (1.0 - stopLossPercent / 100.0)
+                        exitTime = futureCandle.openTime
+                        exitReason = "SL (-${stopLossPercent}%)"
+                        closed = true
+                        i = j
+                        break
+                    }
+
+                    if (highRoi >= takeProfitPercent) {
+                        exitPrice = entryPrice * (1.0 + takeProfitPercent / 100.0)
+                        exitTime = futureCandle.openTime
+                        exitReason = "TP (+${takeProfitPercent}%)"
+                        closed = true
+                        i = j
+                        break
+                    }
+
+                    if (futureCandle.close < sma20Open && j > i + 2) {
+                        exitPrice = futureCandle.close
+                        exitTime = futureCandle.openTime
+                        exitReason = "Gãy SMA20"
+                        closed = true
+                        i = j
+                        break
+                    }
+                }
+
+                if (!closed) {
+                    val lastCandle = candles.last()
+                    exitPrice = lastCandle.close
+                    exitTime = lastCandle.openTime
+                    i = candles.size
+                }
+
+                val pnl = (exitPrice - entryPrice) * coinQty
+                val roi = ((exitPrice - entryPrice) / entryPrice) * 100.0
+                val isWin = pnl > 0
+
+                if (isWin) totalProfit += pnl else totalLoss += Math.abs(pnl)
+
+                balance += pnl
+                if (balance > peakBalance) peakBalance = balance
+                val dd = if (peakBalance > 0.0) ((peakBalance - balance) / peakBalance) * 100.0 else 0.0
+                if (dd > maxDrawdown) maxDrawdown = dd
+
+                trades.add(
+                    BacktestTradeItem(
+                        entryTime = entryTime,
+                        exitTime = exitTime,
+                        symbol = symbol,
+                        entryPrice = entryPrice,
+                        exitPrice = exitPrice,
+                        pnlUsdt = pnl,
+                        roiPercent = roi,
+                        isWin = isWin,
+                        exitReason = exitReason
+                    )
+                )
+            }
+            i++
+        }
+
+        val winCount = trades.count { it.isWin }
+        val lossCount = trades.count { !it.isWin }
+        val winRate = if (trades.isNotEmpty()) (winCount.toDouble() / trades.size) * 100.0 else 0.0
+        val profitFactor = if (totalLoss > 0.0) totalProfit / totalLoss else if (totalProfit > 0.0) 99.9 else 0.0
+        val netProfit = balance - initialBalance
+        val totalRoi = (netProfit / initialBalance) * 100.0
+
+        return BacktestSummaryResult(
+            symbol = symbol,
+            timeframe = "1d",
+            totalTrades = trades.size,
+            winTrades = winCount,
+            lossTrades = lossCount,
+            winRatePercent = winRate,
+            netProfitUsdt = netProfit,
+            totalRoiPercent = totalRoi,
+            maxDrawdownPercent = maxDrawdown,
+            profitFactor = profitFactor,
+            tradesHistory = trades.reversed()
+        )
+    }
+
     companion object {
         fun formatPrice(price: Double): String {
             return when {
@@ -445,3 +583,34 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         }
     }
 }
+
+// ==========================================
+// ĐỊNH NGHĨA DATA MODEL CHO BACKTEST
+// ==========================================
+
+data class BacktestTradeItem(
+    val entryTime: Long,
+    val exitTime: Long,
+    val symbol: String,
+    val entryPrice: Double,
+    val exitPrice: Double,
+    val pnlUsdt: Double,
+    val roiPercent: Double,
+    val isWin: Boolean,
+    val exitReason: String
+)
+
+data class BacktestSummaryResult(
+    val symbol: String,
+    val timeframe: String,
+    val totalTrades: Int = 0,
+    val winTrades: Int = 0,
+    val lossTrades: Int = 0,
+    val winRatePercent: Double = 0.0,
+    val netProfitUsdt: Double = 0.0,
+    val totalRoiPercent: Double = 0.0,
+    val maxDrawdownPercent: Double = 0.0,
+    val profitFactor: Double = 0.0,
+    val tradesHistory: List<BacktestTradeItem> = emptyList(),
+    val errorMessage: String? = null
+)

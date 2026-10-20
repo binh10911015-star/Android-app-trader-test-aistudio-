@@ -356,9 +356,9 @@ fun SettingsDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // SECTION 5: PIN TRUY CẬP & MÔ PHỎNG
+                // SECTION 5: PIN TRUY CẬP & MÔI TRƯỜNG BINANCE
                 Text(
-                    text = "5. BẢO MẬT PIN & CHẾ ĐỘ GIAO DỊCH",
+                    text = "5. BẢO MẬT PIN & MÔI TRƯỜNG BINANCE",
                     color = CryptoGold,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold

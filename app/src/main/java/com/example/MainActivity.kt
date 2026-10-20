@@ -7,9 +7,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -17,13 +20,17 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.VpnKey
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
@@ -31,6 +38,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -38,12 +46,15 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.MainViewModel
+import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.TradeAlertBanner
 import com.example.ui.screens.AnalyticsScreen
 import com.example.ui.screens.ApiConfigScreen
@@ -52,28 +63,13 @@ import com.example.ui.screens.MarketScreen
 import com.example.ui.screens.PositionsScreen
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
+import com.example.ui.theme.CryptoRed
 import com.example.ui.theme.DarkBg
+import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
-import com.example.ui.theme.MyApplicationTheme
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.Shield
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Surface
-import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
-import com.example.ui.components.PinVerificationDialog
-import com.example.ui.theme.CryptoRed
-import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurfaceHighlight
+import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -110,8 +106,13 @@ fun MainApp(viewModel: MainViewModel) {
     val apiConfig by viewModel.apiConfig.collectAsState()
     val openPositions by viewModel.openPositions.collectAsState()
     val closedPositions by viewModel.closedPositions.collectAsState()
+    val binancePortfolio by viewModel.binancePortfolio.collectAsState()
+    val livePositionsTpSl by viewModel.livePositionsTpSl.collectAsState()
 
     var showMainnetPinDialog by remember { mutableStateOf(false) }
+
+    // Số lượng lệnh Paper Trade đang mở
+    val paperOpenCount = openPositions.count { !it.isLiveBinanceOrder }
 
     if (showMainnetPinDialog) {
         PinVerificationDialog(
@@ -187,7 +188,7 @@ fun MainApp(viewModel: MainViewModel) {
                     modifier = Modifier.testTag("nav_detail")
                 )
 
-                // 3. Vị Thế (Positions)
+                // 3. Paper Trade (Trước đây là Vị Thế)
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.POSITIONS,
                     onClick = {
@@ -197,21 +198,21 @@ fun MainApp(viewModel: MainViewModel) {
                     icon = {
                         BadgedBox(
                             badge = {
-                                if (openPositions.isNotEmpty()) {
+                                if (paperOpenCount > 0) {
                                     Badge(
-                                        containerColor = CryptoGreen,
+                                        containerColor = CryptoGold,
                                         contentColor = DarkBg
                                     ) {
-                                        Text("${openPositions.size}", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text("$paperOpenCount", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Vị thế")
+                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Paper Trade")
                         }
                     },
                     label = {
-                        Text("Vị thế", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Paper Trade", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = DarkBg,
@@ -289,18 +290,7 @@ fun MainApp(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // Header Toggle Switch / Selector: [Chế Độ Mô Phỏng] <---> [LIVE MAINNET]
             val isLiveMainnet = !apiConfig.isTestnet && apiConfig.liveTradingEnabled
-            TradingModeHeader(
-                isLiveMainnet = isLiveMainnet,
-                onSelectMode = { toLiveMainnet ->
-                    if (toLiveMainnet && !isLiveMainnet) {
-                        showMainnetPinDialog = true
-                    } else if (!toLiveMainnet && isLiveMainnet) {
-                        viewModel.toggleTradingMode(toLiveMainnet = false)
-                    }
-                }
-            )
 
             // Red warning risk badge when in LIVE MAINNET
             if (isLiveMainnet) {
@@ -322,11 +312,14 @@ fun MainApp(viewModel: MainViewModel) {
                                 viewModel = viewModel,
                                 uiState = uiState,
                                 openPositions = openPositions,
+                                apiConfig = apiConfig,
+                                binancePortfolio = binancePortfolio,
                                 onSelectCoin = { symbol ->
                                     viewModel.selectSymbol(symbol, "4h")
                                     previousScreen = NavScreen.MARKET
                                     currentScreen = NavScreen.DETAIL
                                 },
+                                onPerformWithPinCheck = { action -> action() },
                                 onOpenApiConfig = {
                                     previousScreen = NavScreen.MARKET
                                     currentScreen = NavScreen.API_CONFIG
@@ -348,12 +341,20 @@ fun MainApp(viewModel: MainViewModel) {
                         NavScreen.POSITIONS -> {
                             PositionsScreen(
                                 viewModel = viewModel,
+                                uiState = uiState,
                                 openPositions = openPositions,
                                 closedPositions = closedPositions,
+                                apiConfig = apiConfig,
+                                binancePortfolio = binancePortfolio,
+                                livePositionsTpSl = livePositionsTpSl,
                                 onSelectCoin = { symbol ->
                                     viewModel.selectSymbol(symbol, "4h")
                                     previousScreen = NavScreen.POSITIONS
                                     currentScreen = NavScreen.DETAIL
+                                },
+                                onPerformWithPinCheck = { action -> action() },
+                                onEditTpSlTarget = { sym, isLong, tp, sl, id ->
+                                    viewModel.setPositionTpSl(sym, isLong, tp, sl, id)
                                 }
                             )
                         }
@@ -368,111 +369,6 @@ fun MainApp(viewModel: MainViewModel) {
                         NavScreen.API_CONFIG -> {
                             ApiConfigScreen(
                                 viewModel = viewModel
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * Header Toggle Switch / Selector: [Chế Độ Mô Phỏng] <---> [LIVE MAINNET]
- */
-@Composable
-fun TradingModeHeader(
-    isLiveMainnet: Boolean,
-    onSelectMode: (toLiveMainnet: Boolean) -> Unit
-) {
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 6.dp)
-            .testTag("trading_mode_header_container"),
-        color = DarkSurface,
-        shape = RoundedCornerShape(12.dp),
-        border = BorderStroke(1.dp, if (isLiveMainnet) CryptoRed.copy(alpha = 0.6f) else DarkBorder)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(6.dp)
-        ) {
-            // Option 1: Chế Độ Mô Phỏng (Paper)
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .clickable { onSelectMode(false) }
-                    .testTag("mode_selector_simulation"),
-                shape = RoundedCornerShape(9.dp),
-                color = if (!isLiveMainnet) CryptoGold.copy(alpha = 0.22f) else Color.Transparent,
-                border = if (!isLiveMainnet) BorderStroke(1.dp, CryptoGold) else null
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Shield,
-                        contentDescription = null,
-                        tint = if (!isLiveMainnet) CryptoGold else TextMuted,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Chế Độ Mô Phỏng",
-                        color = if (!isLiveMainnet) CryptoGold else TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = if (!isLiveMainnet) FontWeight.Bold else FontWeight.Medium
-                    )
-                }
-            }
-
-            // Option 2: LIVE MAINNET (Vốn Thật)
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(36.dp)
-                    .clickable { onSelectMode(true) }
-                    .testTag("mode_selector_live_mainnet"),
-                shape = RoundedCornerShape(9.dp),
-                color = if (isLiveMainnet) CryptoRed else Color.Transparent,
-                border = if (isLiveMainnet) null else BorderStroke(1.dp, DarkBorder)
-            ) {
-                Row(
-                    modifier = Modifier.fillMaxSize(),
-                    horizontalArrangement = Arrangement.Center,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Bolt,
-                        contentDescription = null,
-                        tint = if (isLiveMainnet) Color.White else TextMuted,
-                        modifier = Modifier.size(15.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "LIVE MAINNET",
-                        color = if (isLiveMainnet) Color.White else TextSecondary,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    if (isLiveMainnet) {
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = Color.Black.copy(alpha = 0.35f)
-                        ) {
-                            Text(
-                                text = "THẬT",
-                                color = Color.White,
-                                fontSize = 9.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
                             )
                         }
                     }

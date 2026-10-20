@@ -1,9 +1,7 @@
 package com.example.ui.screens
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -18,34 +16,21 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoMode
-import androidx.compose.material.icons.filled.Bolt
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.Clear
-import androidx.compose.material.icons.filled.FilterList
-import androidx.compose.material.icons.filled.Radar
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ShowChart
-import androidx.compose.material.icons.filled.TrendingDown
-import androidx.compose.material.icons.filled.TrendingUp
-import androidx.compose.material.icons.filled.VpnKey
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -53,7 +38,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -61,11 +45,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.BinanceApiConfig
+import com.example.model.BinancePortfolio
 import com.example.model.BinanceTicker
 import com.example.model.TradePosition
 import com.example.model.TradingStrategyType
@@ -73,12 +59,10 @@ import com.example.repository.CryptoRepository
 import com.example.ui.MainViewModel
 import com.example.ui.MarketFilter
 import com.example.ui.UiState
-import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.SettingsDialog
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
 import com.example.ui.theme.CryptoRed
-import com.example.ui.theme.DarkBg
 import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
@@ -92,1419 +76,452 @@ import java.util.Locale
 fun MarketScreen(
     viewModel: MainViewModel,
     uiState: UiState,
-    openPositions: List<TradePosition>,
+    openPositions: List<TradePosition> = emptyList(),
+    apiConfig: BinanceApiConfig = BinanceApiConfig(),
+    binancePortfolio: BinancePortfolio = BinancePortfolio(),
     onSelectCoin: (String) -> Unit,
-    onOpenApiConfig: () -> Unit = {}
+    onPerformWithPinCheck: (() -> Unit) -> Unit = { it() },
+    onOpenApiConfig: (() -> Unit)? = null,
+    modifier: Modifier = Modifier
 ) {
-    val apiConfig by viewModel.apiConfig.collectAsState()
     var showSettingsDialog by remember { mutableStateOf(false) }
 
-    // PIN verification state for entering orders
-    var showPinDialog by remember { mutableStateOf(false) }
-    var pendingOrderAction by remember { mutableStateOf<(() -> Unit)?>(null) }
-    var pinActionTitle by remember { mutableStateOf("vào lệnh") }
-
-    val performWithPinCheck: (String, () -> Unit) -> Unit = { title, action ->
-        pinActionTitle = title
-        pendingOrderAction = action
-        showPinDialog = true
-    }
-
-    if (showPinDialog) {
-        PinVerificationDialog(
-            actionTitle = pinActionTitle,
-            onVerify = { pin -> viewModel.authorizePin(pin) },
-            onSuccess = {
-                pendingOrderAction?.invoke()
-                pendingOrderAction = null
-                showPinDialog = false
-            },
-            onDismiss = {
-                showPinDialog = false
-                pendingOrderAction = null
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .background(DarkSurface)
+            .padding(horizontal = 12.dp, vertical = 8.dp)
+    ) {
+        // HÀNG HEADER
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CryptoGreen))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Binance Futures",
+                        color = TextPrimary,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Text(
+                    text = if (uiState.settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME)
+                        "D1: SMA20 Breakout & Vol >= 2x" else "4H: SuperTrend & MA20",
+                    color = CryptoGold,
+                    fontSize = 11.sp
+                )
             }
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    modifier = Modifier.clip(CircleShape).clickable { viewModel.refreshTickers() },
+                    color = DarkSurfaceElevated,
+                    border = BorderStroke(1.dp, DarkBorder)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Làm mới",
+                        tint = TextSecondary,
+                        modifier = Modifier.padding(8.dp).size(16.dp)
+                    )
+                }
+
+                Surface(
+                    modifier = Modifier.clip(CircleShape).clickable { showSettingsDialog = true },
+                    color = DarkSurfaceElevated,
+                    border = BorderStroke(1.dp, DarkBorder)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Settings,
+                        contentDescription = "Cài đặt",
+                        tint = TextSecondary,
+                        modifier = Modifier.padding(8.dp).size(16.dp)
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(4.dp))
+
+        // THẺ SỐ DƯ & CÔNG TẮC AUTO-TRADE
+        Card(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, DarkBorder)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(text = "Số Dư Binance Futures", color = TextSecondary, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (apiConfig.isTestnet) CryptoGold.copy(alpha = 0.2f) else CryptoGreen.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = if (apiConfig.isTestnet) "Binance Demo" else "Mainnet",
+                                color = if (apiConfig.isTestnet) CryptoGold else CryptoGreen,
+                                fontSize = 9.sp,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "$${String.format(Locale.US, "%,.2f", binancePortfolio.totalWalletBalance)} USDT",
+                        color = TextPrimary,
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            text = if (uiState.settings.autoTradeEnabled) "AUTO-TRADE: BẬT" else "AUTO-TRADE: TẮT",
+                            color = if (uiState.settings.autoTradeEnabled) CryptoGreen else TextMuted,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(text = "Volume 0.5%/lệnh", color = TextMuted, fontSize = 9.sp)
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Switch(
+                        checked = uiState.settings.autoTradeEnabled,
+                        onCheckedChange = { checked ->
+                            onPerformWithPinCheck {
+                                viewModel.toggleAutoTrade(checked)
+                            }
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = CryptoGreen,
+                            checkedTrackColor = CryptoGreen.copy(alpha = 0.3f)
+                        )
+                    )
+                }
+            }
+        }
+
+        // HÀNG QUÉT TOÀN BỘ SÀN
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                color = DarkSurfaceHighlight
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(text = "Quét 4H (7:00 UTC+7)", color = TextMuted, fontSize = 11.sp)
+                    Text(text = uiState.countdownText, color = CryptoGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Button(
+                onClick = { viewModel.scanAllFuturesCoins() },
+                enabled = !uiState.isScanning,
+                modifier = Modifier.height(36.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = CryptoGold)
+            ) {
+                if (uiState.isScanning) {
+                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
+                } else {
+                    Text(text = "Quét ngay (${uiState.tickers.size})", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        if (uiState.isScanning) {
+            Spacer(modifier = Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { uiState.scanPercent },
+                modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+                color = CryptoGold,
+                trackColor = DarkSurfaceHighlight
+            )
+            Text(text = uiState.scanProgress, color = TextMuted, fontSize = 10.sp, modifier = Modifier.padding(top = 2.dp))
+        }
+
+        // Ô TÌM KIẾM COIN
+        OutlinedTextField(
+            value = uiState.searchQuery,
+            onValueChange = { viewModel.setSearchQuery(it) },
+            placeholder = { Text("Nhập tên coin (ví dụ: BTC, ETH, SOL...)", fontSize = 11.sp) },
+            leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(16.dp)) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            shape = RoundedCornerShape(8.dp),
+            colors = OutlinedTextFieldDefaults.colors(
+                focusedContainerColor = DarkSurfaceElevated,
+                unfocusedContainerColor = DarkSurfaceElevated,
+                focusedBorderColor = CryptoGold,
+                unfocusedBorderColor = DarkBorder
+            )
         )
+
+        // 2 THẺ TÍN HIỆU ĐỘC LẬP
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Thẻ 1: D1 SMA20 Breakout & Bùng Nổ Vol
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { viewModel.selectSignalTab(0) },
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                        DarkSurfaceElevated else DarkSurfaceHighlight
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                        CryptoGold else Color.Transparent
+                )
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "D1 BREAKOUT",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                                CryptoGold else TextPrimary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = CryptoGold.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "${uiState.d1BullishCount} coin",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CryptoGold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Giá >= SMA20 & Vol >= 2x (từ 7h)",
+                        fontSize = 9.sp,
+                        color = TextMuted,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+
+            // Thẻ 2: 4H SuperTrend & MA20
+            Card(
+                modifier = Modifier
+                    .weight(1f)
+                    .clickable { viewModel.selectSignalTab(1) },
+                shape = RoundedCornerShape(10.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                        DarkSurfaceElevated else DarkSurfaceHighlight
+                ),
+                border = BorderStroke(
+                    1.dp,
+                    if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                        CryptoGreen else Color.Transparent
+                )
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "4H SUPERTREND",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                                CryptoGreen else TextPrimary
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = CryptoGreen.copy(alpha = 0.2f)
+                        ) {
+                            Text(
+                                text = "${uiState.superTrendBullishCount} coin",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = CryptoGreen,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Text(
+                        text = "MA20 > SuperTrend (20,4)",
+                        fontSize = 9.sp,
+                        color = TextMuted,
+                        modifier = Modifier.padding(top = 2.dp)
+                    )
+                }
+            }
+        }
+
+        // HÀNG XEM TẤT CẢ & MỞ TOÀN BỘ
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Surface(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(6.dp))
+                    .clickable { viewModel.setFilterMode(MarketFilter.ALL) },
+                color = if (uiState.filterMode == MarketFilter.ALL) CryptoGold.copy(alpha = 0.2f) else DarkSurfaceHighlight
+            ) {
+                Text(
+                    text = "Xem tất cả (${uiState.tickers.size})",
+                    color = if (uiState.filterMode == MarketFilter.ALL) CryptoGold else TextSecondary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                )
+            }
+
+            OutlinedButton(
+                onClick = {
+                    onPerformWithPinCheck {
+                        viewModel.openAllScannedPositions(isAuto = false)
+                    }
+                },
+                modifier = Modifier.height(28.dp),
+                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                border = BorderStroke(1.dp, CryptoGreen)
+            ) {
+                Text(
+                    text = "Mở toàn bộ (${if (uiState.selectedSignalTab == 0) uiState.d1BullishCount else uiState.superTrendBullishCount})",
+                    color = CryptoGreen,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        // DANH SÁCH COIN
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+            contentPadding = PaddingValues(bottom = 16.dp)
+        ) {
+            items(uiState.filteredTickers, key = { it.symbol }) { ticker ->
+                CoinItemCard(
+                    ticker = ticker,
+                    onSelect = { onSelectCoin(ticker.symbol) },
+                    onBuyClick = {
+                        onPerformWithPinCheck {
+                            viewModel.executeBuy(ticker.symbol)
+                        }
+                    }
+                )
+            }
+        }
     }
 
     if (showSettingsDialog) {
         SettingsDialog(
             currentSettings = uiState.settings,
             apiConfig = apiConfig,
-            onSave = { viewModel.updateSettings(it) },
-            onResetAccount = { viewModel.resetAccountBalance() },
-            onSaveApiCredentials = { apiKey, secret, pin, isTestnet, liveTrading, onResult ->
-                viewModel.saveAndVerifyApiCredentials(
-                    apiKey = apiKey,
-                    apiSecret = secret,
-                    accessPin = pin,
-                    isTestnet = isTestnet,
-                    liveTradingEnabled = liveTrading,
-                    onResult = onResult
-                )
-            },
-            onOpenApiConfig = {
+            onDismiss = { showSettingsDialog = false },
+            onSave = { updated ->
+                viewModel.updateSettings(updated)
                 showSettingsDialog = false
-                onOpenApiConfig()
             },
-            onDismiss = { showSettingsDialog = false }
+            onResetAccount = { viewModel.resetAccountBalance() },
+            onSaveApiCredentials = { key, sec, pin, testnet, live, onResult ->
+                viewModel.saveAndVerifyApiCredentials(key, sec, pin, testnet, live, onResult)
+            },
+            onOpenApiConfig = onOpenApiConfig ?: {}
         )
     }
-
-    val openSymbols = remember(openPositions) { openPositions.map { it.symbol }.toSet() }
-
-    // Coin List (backed by debounced coinStateList)
-    val displayList = if (uiState.searchQuery.trim().isNotEmpty()) {
-        uiState.coinStateList
-    } else {
-        uiState.coinStateList.ifEmpty {
-            if (uiState.filterMode == MarketFilter.ALL) uiState.tickers else emptyList()
-        }
-    }
-
-    val unopenedBullishCount = remember(uiState.scannedBullishTickers, openSymbols) {
-        uiState.scannedBullishTickers.count { !openSymbols.contains(it.symbol) }
-    }
-
-    // Single unified LazyColumn ensuring 100% smooth, natural scrolling across the entire screen
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(DarkBg)
-            .testTag("market_screen_lazy_column"),
-        contentPadding = PaddingValues(bottom = 32.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
-    ) {
-        // 1. Top App Bar
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(
-                        modifier = Modifier
-                            .size(10.dp)
-                            .background(CryptoGreen, CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Column {
-                        Text(
-                            text = "Binance Futures",
-                            color = TextPrimary,
-                            fontSize = 18.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        val stratName = if (uiState.settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME)
-                            "D1 SMA20 Breakout & Vol >= 2x"
-                        else
-                            "4H SuperTrend & 4H MA20"
-                        Text(
-                            text = stratName,
-                            color = CryptoGold,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    // Prominent API Status / Config Button
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (apiConfig.isConnected) CryptoGreen.copy(alpha = 0.15f) else CryptoGold.copy(alpha = 0.15f),
-                        border = BorderStroke(1.dp, if (apiConfig.isConnected) CryptoGreen.copy(alpha = 0.5f) else CryptoGold.copy(alpha = 0.5f)),
-                        modifier = Modifier
-                            .clickable { onOpenApiConfig() }
-                            .testTag("top_api_pill_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.VpnKey,
-                                contentDescription = null,
-                                tint = if (apiConfig.isConnected) CryptoGreen else CryptoGold,
-                                modifier = Modifier.size(13.dp)
-                            )
-                            Spacer(modifier = Modifier.width(4.dp))
-                            Text(
-                                text = if (apiConfig.isConnected)
-                                    (if (apiConfig.isTestnet) "DEMO API ✓" else "REAL API ✓")
-                                else
-                                    "NHẬP API",
-                                color = if (apiConfig.isConnected) CryptoGreen else CryptoGold,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.width(4.dp))
-
-                    IconButton(
-                        onClick = { viewModel.refreshTickers() },
-                        modifier = Modifier.testTag("refresh_button")
-                    ) {
-                        if (uiState.isRefreshing) {
-                            CircularProgressIndicator(
-                                color = CryptoGold,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier.size(18.dp)
-                            )
-                        } else {
-                            Icon(Icons.Default.Refresh, contentDescription = "Làm mới", tint = TextSecondary)
-                        }
-                    }
-                    IconButton(
-                        onClick = { showSettingsDialog = true },
-                        modifier = Modifier.testTag("settings_button")
-                    ) {
-                        Icon(Icons.Default.Settings, contentDescription = "Cấu hình", tint = TextSecondary)
-                    }
-                }
-            }
-        }
-
-        // 2. Account & Auto-Trade Control Card
-        item {
-            ElevatedCard(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.elevatedCardColors(containerColor = DarkSurfaceElevated)
-            ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(
-                            modifier = Modifier.clickable { onOpenApiConfig() }
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = if (apiConfig.isConnected) "Số Dư Binance Futures" else "Số Dư Mô Phỏng",
-                                    color = TextSecondary,
-                                    fontSize = 12.sp
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Surface(
-                                    shape = RoundedCornerShape(4.dp),
-                                    color = if (apiConfig.isConnected) CryptoGreen.copy(alpha = 0.18f) else DarkSurfaceHighlight
-                                ) {
-                                    Text(
-                                        text = if (apiConfig.isConnected)
-                                            (if (apiConfig.isTestnet) "Testnet" else "Live")
-                                        else
-                                            "Mô Phỏng",
-                                        color = if (apiConfig.isConnected) CryptoGreen else TextSecondary,
-                                        fontSize = 9.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
-                            Text(
-                                text = if (apiConfig.isConnected && apiConfig.totalWalletBalance != null)
-                                    "$${String.format(Locale.US, "%,.2f", apiConfig.totalWalletBalance)} USDT"
-                                else
-                                    "$${String.format(Locale.US, "%,.2f", uiState.settings.simulatedBalanceUsdt)} USDT",
-                                color = if (apiConfig.isConnected) CryptoGreen else CryptoGold,
-                                fontSize = 20.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-
-                        // Auto-trade toggle switch
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    text = if (uiState.settings.autoTradeEnabled) "AUTO-TRADE: BẬT" else "AUTO-TRADE: TẮT",
-                                    color = if (uiState.settings.autoTradeEnabled) CryptoGreen else TextSecondary,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = if (uiState.settings.autoTradeEnabled)
-                                        "Tự động mở vị thế (5s/lệnh)"
-                                    else
-                                        "Chỉ quét, không mở vị thế",
-                                    color = if (uiState.settings.autoTradeEnabled) CryptoGreen.copy(alpha = 0.85f) else TextMuted,
-                                    fontSize = 9.sp,
-                                    fontWeight = FontWeight.Medium
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Switch(
-                                checked = uiState.settings.autoTradeEnabled,
-                                onCheckedChange = { checked ->
-                                    if (checked) {
-                                        performWithPinCheck("bật Bot tự động vào lệnh") {
-                                            viewModel.toggleAutoTrade(true)
-                                        }
-                                    } else {
-                                        viewModel.toggleAutoTrade(false)
-                                    }
-                                },
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = DarkBg,
-                                    checkedTrackColor = CryptoGreen,
-                                    uncheckedThumbColor = TextMuted,
-                                    uncheckedTrackColor = DarkSurfaceHighlight
-                                ),
-                                modifier = Modifier.testTag("auto_trade_switch")
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // 4-Hour Scan Schedule bar
-                    Column(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(DarkSurfaceHighlight)
-                            .padding(horizontal = 10.dp, vertical = 7.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.Default.Radar,
-                                    contentDescription = null,
-                                    tint = CryptoGold,
-                                    modifier = Modifier.size(15.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(
-                                    text = "Quét 4H (7:00 UTC+7):",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Surface(
-                                    color = CryptoGold.copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = uiState.countdownText.ifEmpty { "Đang tính..." },
-                                        color = CryptoGold,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-
-                            if (uiState.isScanning) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(
-                                        color = CryptoGold,
-                                        strokeWidth = 2.dp,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = "${(uiState.scanPercent * 100).toInt()}%",
-                                        color = CryptoGold,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            } else {
-                                Surface(
-                                    color = CryptoGold,
-                                    shape = RoundedCornerShape(6.dp),
-                                    modifier = Modifier
-                                        .clickable { viewModel.scanAllFuturesCoins(isAutoScheduled = false) }
-                                        .testTag("scan_all_button")
-                                ) {
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Refresh,
-                                            contentDescription = null,
-                                            tint = DarkBg,
-                                            modifier = Modifier.size(11.dp)
-                                        )
-                                        Spacer(modifier = Modifier.width(3.dp))
-                                        val scanCount = if (uiState.tickers.isNotEmpty()) uiState.tickers.size else 50
-                                        Text(
-                                            text = "Quét ngay ($scanCount)",
-                                            color = DarkBg,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        if (uiState.isScanning) {
-                            Spacer(modifier = Modifier.height(4.dp))
-                            Text(
-                                text = uiState.scanProgress,
-                                color = CryptoGold,
-                                fontSize = 9.sp
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            LinearProgressIndicator(
-                                progress = { uiState.scanPercent },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(3.dp)
-                                    .clip(RoundedCornerShape(2.dp)),
-                                color = CryptoGold,
-                                trackColor = DarkSurface
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 3. Active Strategy Banner
-        item {
-            Surface(
-                shape = RoundedCornerShape(10.dp),
-                color = DarkSurfaceElevated,
-                border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f)),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .clickable { showSettingsDialog = true }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                        Icon(
-                            imageVector = Icons.Default.TrendingUp,
-                            contentDescription = null,
-                            tint = CryptoGold,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column {
-                            Text(
-                                text = if (uiState.settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME)
-                                    "Chiến lược D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)"
-                                else
-                                    "Chiến lược 4H SuperTrend và 4H MA20",
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = if (uiState.settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME)
-                                    "SMA20 tính theo Giá Mở Cửa (Open) • KL D1 >= ${uiState.settings.volumeMultiplierThreshold}x • TP danh mục +${uiState.settings.portfolioTakeProfitPercent}%"
-                                else
-                                    "SuperTrend(20,4) đảo chiều tăng & Giá trên 4H MA20 • TP danh mục +${uiState.settings.portfolioTakeProfitPercent}%",
-                                color = TextSecondary,
-                                fontSize = 10.sp
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = CryptoGold.copy(alpha = 0.15f)
-                    ) {
-                        Text(
-                            text = "ĐỔI",
-                            color = CryptoGold,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 4. Search Bar
-        item {
-            OutlinedTextField(
-                value = uiState.searchQuery,
-                onValueChange = { viewModel.setSearchQuery(it) },
-                placeholder = { Text("Nhập tên coin (ví dụ: BTC, ETH, SOL, DOGE...)", fontSize = 13.sp) },
-                leadingIcon = {
-                    Icon(Icons.Default.Search, contentDescription = "Tìm kiếm", tint = CryptoGold)
-                },
-                trailingIcon = {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (uiState.isSearching) {
-                            CircularProgressIndicator(
-                                color = CryptoGold,
-                                strokeWidth = 2.dp,
-                                modifier = Modifier
-                                    .size(16.dp)
-                                    .padding(end = 4.dp)
-                            )
-                        }
-                        if (uiState.searchQuery.isNotEmpty()) {
-                            IconButton(onClick = { viewModel.setSearchQuery("") }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Xóa tìm kiếm", tint = TextSecondary)
-                            }
-                        }
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = CryptoGold,
-                    unfocusedBorderColor = DarkBorder,
-                    focusedTextColor = TextPrimary,
-                    unfocusedTextColor = TextPrimary,
-                    focusedContainerColor = DarkSurface,
-                    unfocusedContainerColor = DarkSurface
-                ),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .testTag("search_coin_input")
-            )
-        }
-
-        // 5. Quick Suggestion Chips for Popular Coins
-        item {
-            val popularCoins = remember { listOf("BTC", "ETH", "SOL", "BNB", "XRP", "DOGE", "PEPE", "SUI") }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                popularCoins.take(6).forEach { coin ->
-                    val isSelected = uiState.searchQuery.trim().equals(coin, ignoreCase = true)
-                    Surface(
-                        color = if (isSelected) CryptoGold else DarkSurfaceHighlight,
-                        shape = RoundedCornerShape(16.dp),
-                        modifier = Modifier.clickable {
-                            if (isSelected) viewModel.setSearchQuery("") else viewModel.setSearchQuery(coin)
-                        }
-                    ) {
-                        Text(
-                            text = coin,
-                            color = if (isSelected) DarkBg else TextSecondary,
-                            fontSize = 11.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
-                        )
-                    }
-                }
-            }
-        }
-
-        // 6. Dedicated Search Suggestions Dropdown Card
-        if (uiState.searchQuery.trim().isNotEmpty()) {
-            item {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp),
-                    color = DarkSurfaceElevated,
-                    shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f))
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = if (uiState.isSearching) {
-                                    "Đang tìm kiếm \"${uiState.searchQuery.trim()}\"..."
-                                } else {
-                                    "Gợi ý khớp với \"${uiState.searchQuery.trim()}\" (Bấm để xem nến H4):"
-                                },
-                                color = CryptoGold,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "Đóng",
-                                color = TextSecondary,
-                                fontSize = 11.sp,
-                                modifier = Modifier.clickable { viewModel.setSearchQuery("") }
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(6.dp))
-
-                        val searchMatches = uiState.coinStateList.take(5)
-                        if (searchMatches.isEmpty() && !uiState.isSearching) {
-                            Text(
-                                text = "Không tìm thấy coin nào phù hợp với \"${uiState.searchQuery}\"",
-                                color = TextMuted,
-                                fontSize = 12.sp,
-                                modifier = Modifier.padding(vertical = 4.dp)
-                            )
-                        } else {
-                            searchMatches.forEach { ticker ->
-                                val baseName = ticker.symbol.removeSuffix("USDT")
-                                val isBullish = viewModel.repository.getCachedSignal(ticker.symbol) == true
-
-                                Row(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { onSelectCoin(ticker.symbol) }
-                                        .padding(vertical = 6.dp, horizontal = 4.dp),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = baseName,
-                                            color = TextPrimary,
-                                            fontSize = 15.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Text(text = "/USDT", color = TextSecondary, fontSize = 11.sp)
-                                        if (isBullish) {
-                                            Spacer(modifier = Modifier.width(6.dp))
-                                            Surface(
-                                                color = CryptoGreen.copy(alpha = 0.15f),
-                                                shape = RoundedCornerShape(4.dp)
-                                            ) {
-                                                Text(
-                                                    text = "MA20 > ST",
-                                                    color = CryptoGreen,
-                                                    fontSize = 9.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-
-                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                        Text(
-                                            text = "$${CryptoRepository.formatPrice(ticker.lastPrice)}",
-                                            color = TextPrimary,
-                                            fontSize = 13.sp,
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
-                                        )
-                                        Spacer(modifier = Modifier.width(8.dp))
-                                        Surface(
-                                            color = CryptoGold,
-                                            shape = RoundedCornerShape(6.dp)
-                                        ) {
-                                            Row(
-                                                verticalAlignment = Alignment.CenterVertically,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                            ) {
-                                                Icon(
-                                                    Icons.Default.ShowChart,
-                                                    contentDescription = null,
-                                                    tint = DarkBg,
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(3.dp))
-                                                Text(
-                                                    text = "Mở nến",
-                                                    color = DarkBg,
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // 7. Scanned Signals Section (Horizontal row)
-        item {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-            ) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 3.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = CryptoGreen,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(5.dp))
-                        Text(
-                            text = "Tín Hiệu Đã Quét",
-                            color = TextPrimary,
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            color = CryptoGreen.copy(alpha = 0.2f),
-                            shape = RoundedCornerShape(10.dp)
-                        ) {
-                            Text(
-                                text = "${uiState.scannedBullishTickers.size}",
-                                color = CryptoGreen,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        // Button to Open All Positions for Scanned Bullish Coins
-                        if (uiState.scannedBullishTickers.isNotEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = when {
-                                    uiState.isOpeningPositions -> CryptoGold.copy(alpha = 0.2f)
-                                    unopenedBullishCount > 0 -> CryptoGreen
-                                    else -> DarkSurfaceHighlight
-                                },
-                                modifier = Modifier
-                                    .testTag("open_all_scanned_positions_button")
-                                    .clickable(enabled = !uiState.isOpeningPositions && unopenedBullishCount > 0) {
-                                        performWithPinCheck("mở toàn bộ vị thế") {
-                                            viewModel.openAllScannedPositions(isAuto = false)
-                                        }
-                                    }
-                            ) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                ) {
-                                    if (uiState.isOpeningPositions) {
-                                        CircularProgressIndicator(
-                                            color = CryptoGold,
-                                            modifier = Modifier.size(12.dp),
-                                            strokeWidth = 1.5.dp
-                                        )
-                                    } else {
-                                        Icon(
-                                            imageVector = if (unopenedBullishCount > 0) Icons.Default.Bolt else Icons.Default.CheckCircle,
-                                            contentDescription = null,
-                                            tint = if (unopenedBullishCount > 0) DarkBg else CryptoGreen,
-                                            modifier = Modifier.size(13.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(
-                                        text = when {
-                                            uiState.isOpeningPositions -> "Đang mở (5s/lệnh)..."
-                                            unopenedBullishCount > 0 -> "Mở toàn bộ ($unopenedBullishCount)"
-                                            else -> "Đã mở tất cả"
-                                        },
-                                        color = when {
-                                            uiState.isOpeningPositions -> CryptoGold
-                                            unopenedBullishCount > 0 -> DarkBg
-                                            else -> TextSecondary
-                                        },
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                            Spacer(modifier = Modifier.width(8.dp))
-                        }
-
-                        Text(
-                            text = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL) "Đang lọc" else "Xem tất cả",
-                            color = CryptoGold,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier
-                                .clickable { viewModel.setFilterMode(MarketFilter.BULLISH_SIGNAL) }
-                                .padding(4.dp)
-                        )
-                    }
-                }
-
-                if (uiState.isOpeningPositions && uiState.openingPositionsProgress.isNotEmpty()) {
-                    Surface(
-                        color = CryptoGold.copy(alpha = 0.12f),
-                        shape = RoundedCornerShape(8.dp),
-                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.3f)),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 4.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                color = CryptoGold,
-                                modifier = Modifier.size(13.dp),
-                                strokeWidth = 1.5.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = uiState.openingPositionsProgress,
-                                color = CryptoGold,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Medium
-                            )
-                        }
-                    }
-                }
-
-                if (uiState.scannedBullishTickers.isEmpty()) {
-                    Surface(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 16.dp, vertical = 2.dp),
-                        shape = RoundedCornerShape(10.dp),
-                        color = DarkSurfaceHighlight
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text(
-                                text = if (uiState.isScanning) "Đang quét tín hiệu toàn bộ Binance Futures..." else "Chưa có tín hiệu tăng mới",
-                                color = TextMuted,
-                                fontSize = 11.sp
-                            )
-                            if (!uiState.isScanning) {
-                                Text(
-                                    text = "Quét ngay",
-                                    color = CryptoGold,
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.clickable { viewModel.scanAllFuturesCoins(isAutoScheduled = false) }
-                                )
-                            }
-                        }
-                    }
-                } else {
-                    LazyRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 2.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        items(uiState.scannedBullishTickers, key = { "scanned_${it.symbol}" }) { ticker ->
-                            val isOpen = openSymbols.contains(ticker.symbol)
-                            ScannedSignalCard(
-                                ticker = ticker,
-                                isOpen = isOpen,
-                                onClick = { onSelectCoin(ticker.symbol) },
-                                onOpenPosition = {
-                                    performWithPinCheck("mở vị thế ${ticker.symbol}") {
-                                        viewModel.executeBuy(ticker.symbol, isAuto = false)
-                                    }
-                                }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-
-        // 8. Filter Chips Row
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = uiState.filterMode == MarketFilter.ALL,
-                    onClick = { viewModel.setFilterMode(MarketFilter.ALL) },
-                    label = { Text("Tất Cả (${uiState.tickers.size})", fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = CryptoGold,
-                        selectedLabelColor = DarkBg,
-                        labelColor = TextSecondary
-                    )
-                )
-                FilterChip(
-                    selected = uiState.filterMode == MarketFilter.BULLISH_SIGNAL,
-                    onClick = { viewModel.setFilterMode(MarketFilter.BULLISH_SIGNAL) },
-                    label = {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("⚡ Tín Hiệu Tăng", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                            if (uiState.bullishCount > 0) {
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Surface(
-                                    color = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL) DarkBg else CryptoGreen,
-                                    shape = RoundedCornerShape(10.dp)
-                                ) {
-                                    Text(
-                                        text = "${uiState.bullishCount}",
-                                        color = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL) CryptoGreen else DarkBg,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                    )
-                                }
-                            } else {
-                                Text(" (0)", fontSize = 11.sp)
-                            }
-                        }
-                    },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = CryptoGreen,
-                        selectedLabelColor = DarkBg,
-                        labelColor = if (uiState.bullishCount > 0) CryptoGreen else TextSecondary
-                    )
-                )
-                FilterChip(
-                    selected = uiState.filterMode == MarketFilter.OPEN_POSITIONS,
-                    onClick = { viewModel.setFilterMode(MarketFilter.OPEN_POSITIONS) },
-                    label = { Text("Vị Thế Mở (${openPositions.size})", fontSize = 11.sp) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = CryptoGold,
-                        selectedLabelColor = DarkBg,
-                        labelColor = TextSecondary
-                    )
-                )
-            }
-        }
-
-        // 9. Search Feedback Header
-        if (uiState.searchQuery.trim().isNotEmpty()) {
-            item {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 2.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (uiState.isSearching) {
-                            "Đang tìm kiếm: \"${uiState.searchQuery.trim()}\"..."
-                        } else {
-                            "Kết quả: \"${uiState.searchQuery.trim()}\" (${displayList.size} hợp đồng)"
-                        },
-                        color = CryptoGold,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Text(
-                        text = "Bỏ lọc",
-                        color = TextSecondary,
-                        fontSize = 11.sp,
-                        modifier = Modifier.clickable { viewModel.setSearchQuery("") }
-                    )
-                }
-            }
-        }
-
-        // 10. Main Coin Tickers List (Part of the same LazyColumn!)
-        if (displayList.isEmpty()) {
-            item {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(32.dp),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(
-                            imageVector = Icons.Default.FilterList,
-                            contentDescription = null,
-                            tint = TextMuted,
-                            modifier = Modifier.size(48.dp)
-                        )
-                        Spacer(modifier = Modifier.height(12.dp))
-                        Text(
-                            text = if (uiState.isRefreshing) "Đang tải danh sách Binance Futures..." else "Không tìm thấy hợp đồng phù hợp",
-                            color = TextSecondary,
-                            fontSize = 14.sp
-                        )
-                    }
-                }
-            }
-        } else {
-            items(displayList, key = { it.symbol }) { ticker ->
-                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                    CoinCardItem(
-                        ticker = ticker,
-                        isOpenPosition = openSymbols.contains(ticker.symbol),
-                        isBullishSignal = viewModel.repository.getCachedSignal(ticker.symbol),
-                        settings = uiState.settings,
-                        onBuyClick = {
-                            performWithPinCheck("Mua ${ticker.symbol}") {
-                                viewModel.executeBuy(ticker.symbol)
-                            }
-                        },
-                        onClick = { onSelectCoin(ticker.symbol) }
-                    )
-                }
-            }
-        }
-    }
 }
 
 @Composable
-fun CoinCardItem(
+fun CoinItemCard(
     ticker: BinanceTicker,
-    isOpenPosition: Boolean,
-    isBullishSignal: Boolean?,
-    settings: com.example.model.TradeSettings,
-    onBuyClick: () -> Unit,
-    onClick: () -> Unit
+    onSelect: () -> Unit,
+    onBuyClick: () -> Unit
 ) {
-    val isProfit = ticker.priceChangePercent >= 0
-    val changeSign = if (isProfit) "+" else ""
+    val isUp = ticker.priceChangePercent >= 0
 
-    val isD1 = settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME
-    val isAboveSma20D1 = ticker.lastPrice >= ticker.sma20OpenD1
-    val isVol2x = ticker.volumeRatioD1 >= settings.volumeMultiplierThreshold
-    val isD1BreakoutBuy = isAboveSma20D1 && isVol2x
-
-    val borderColor = when {
-        isOpenPosition -> CryptoGold
-        isD1 && isD1BreakoutBuy -> CryptoGreen.copy(alpha = 0.6f)
-        !isD1 && isBullishSignal == true -> CryptoGreen.copy(alpha = 0.5f)
-        else -> DarkBorder
-    }
-
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .border(
-                width = 1.dp,
-                color = borderColor,
-                shape = RoundedCornerShape(12.dp)
-            ),
-        color = DarkSurface,
-        shape = RoundedCornerShape(12.dp)
+    Card(
+        modifier = Modifier.fillMaxWidth().clickable { onSelect() },
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+        border = BorderStroke(1.dp, DarkBorder)
     ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            // Row 1: Symbol & Status Badge on Left; Price & Change % on Right
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Left Column: Symbol & Status Badge
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = ticker.symbol.removeSuffix("USDT"),
-                        color = TextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "/USDT",
-                        color = TextSecondary,
-                        fontSize = 12.sp
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-
-                    // Signal indicator badge
-                    when {
-                        isOpenPosition -> {
-                            Surface(
-                                color = CryptoGold.copy(alpha = 0.2f),
-                                shape = RoundedCornerShape(4.dp)
-                            ) {
-                                Text(
-                                    text = "ĐANG MỞ LỆNH",
-                                    color = CryptoGold,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        isD1 -> {
-                            if (isD1BreakoutBuy) {
-                                Surface(
-                                    color = CryptoGreen.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "BUY (D1 BREAKOUT) 🔥",
-                                        color = CryptoGreen,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            } else if (!isAboveSma20D1) {
-                                Surface(
-                                    color = CryptoRed.copy(alpha = 0.15f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "DƯỚI SMA20 D1",
-                                        color = CryptoRed.copy(alpha = 0.85f),
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            } else {
-                                Surface(
-                                    color = DarkSurfaceHighlight,
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "VOL CHƯA ĐẠT 2X",
-                                        color = TextMuted,
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                        else -> {
-                            if (isBullishSignal == true) {
-                                Surface(
-                                    color = CryptoGreen.copy(alpha = 0.2f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "BUY (4H BULL)",
-                                        color = CryptoGreen,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            } else {
-                                Surface(
-                                    color = CryptoRed.copy(alpha = 0.12f),
-                                    shape = RoundedCornerShape(4.dp)
-                                ) {
-                                    Text(
-                                        text = "MA20 ≤ ST",
-                                        color = CryptoRed.copy(alpha = 0.8f),
-                                        fontSize = 10.sp,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Right Column: Price & 24h Change %
-                Column(horizontalAlignment = Alignment.End) {
-                    Text(
-                        text = "$${CryptoRepository.formatPrice(ticker.lastPrice)}",
-                        color = TextPrimary,
-                        fontSize = 15.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    Text(
-                        text = "$changeSign${String.format(Locale.US, "%.2f", ticker.priceChangePercent)}%",
-                        color = if (isProfit) CryptoGreen else CryptoRed,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Row 2: Comprehensive Signal Conditions Breakdown
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(DarkSurfaceHighlight)
-                    .padding(horizontal = 8.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (isD1) {
-                    // Condition 1: Giá vs SMA20 D1 (Open)
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "SMA20 Open: ",
-                                color = TextSecondary,
-                                fontSize = 10.sp
-                            )
-                            Text(
-                                text = "$${CryptoRepository.formatPrice(ticker.sma20OpenD1)}",
-                                color = if (isAboveSma20D1) CryptoGreen else CryptoRed,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                        val diffPercent = if (ticker.sma20OpenD1 > 0)
-                            ((ticker.lastPrice - ticker.sma20OpenD1) / ticker.sma20OpenD1) * 100.0
-                        else 0.0
-                        val diffSign = if (diffPercent >= 0) "+" else ""
-                        Text(
-                            text = if (isAboveSma20D1) "▲ $diffSign${String.format(Locale.US, "%.1f", diffPercent)}% (Đạt ✓)" else "▼ $diffSign${String.format(Locale.US, "%.1f", diffPercent)}% (Chưa)",
-                            color = if (isAboveSma20D1) CryptoGreen else CryptoRed,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    // Condition 2: Khối lượng D1 vs Ngưỡng 2x
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "KL D1: ",
-                                color = TextSecondary,
-                                fontSize = 10.sp
-                            )
-                            Text(
-                                text = "${String.format(Locale.US, "%.1f", ticker.volumeRatioD1)}x",
-                                color = if (isVol2x) CryptoGreen else TextPrimary,
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                        Text(
-                            text = if (isVol2x) "Đạt >= 2x 🔥" else "Chưa đạt 2x",
-                            color = if (isVol2x) CryptoGreen else TextMuted,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                    }
-                } else {
-                    // Strategy 4H: SuperTrend vs MA20
-                    Column {
-                        Text(text = "Chiến Lược 4H SuperTrend", color = TextSecondary, fontSize = 9.5.sp)
-                        Text(
-                            text = if (isBullishSignal == true) "MA20 vượt lên trên SuperTrend (Đạt ✓)" else "MA20 dưới SuperTrend (Chưa đạt)",
-                            color = if (isBullishSignal == true) CryptoGreen else TextSecondary,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-
-                // Action: Quick Buy button
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = CryptoGreen,
-                    modifier = Modifier.clickable { onBuyClick() }
-                ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                    ) {
-                        Text(
-                            text = "MUA",
-                            color = DarkBg,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun ScannedSignalCard(
-    ticker: BinanceTicker,
-    isOpen: Boolean = false,
-    onClick: () -> Unit,
-    onOpenPosition: (() -> Unit)? = null
-) {
-    val baseName = ticker.symbol.removeSuffix("USDT")
-    val isPositive = ticker.priceChangePercent >= 0.0
-
-    Surface(
-        modifier = Modifier
-            .width(185.dp)
-            .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onClick)
-            .testTag("scanned_signal_${ticker.symbol}"),
-        color = DarkSurfaceElevated,
-        border = BorderStroke(1.dp, if (isOpen) CryptoGreen else CryptoGreen.copy(alpha = 0.5f))
-    ) {
-        Column(modifier = Modifier.padding(10.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = baseName,
-                        color = TextPrimary,
-                        fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "/USDT",
-                        color = TextMuted,
-                        fontSize = 10.sp
-                    )
-                }
-                Surface(
-                    color = (if (isPositive) CryptoGreen else CryptoRed).copy(alpha = 0.15f),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(
-                        text = "${if (isPositive) "+" else ""}${String.format(Locale.US, "%.1f", ticker.priceChangePercent)}%",
-                        color = if (isPositive) CryptoGreen else CryptoRed,
-                        fontSize = 9.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Text(text = ticker.symbol, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 Text(
                     text = "$${CryptoRepository.formatPrice(ticker.lastPrice)}",
                     color = TextPrimary,
-                    fontSize = 13.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
-
-                if (isOpen) {
-                    Surface(
-                        color = CryptoGreen.copy(alpha = 0.18f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = "✓ Đang mở",
-                            color = CryptoGreen,
-                            fontSize = 8.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
-                        )
-                    }
-                }
-            }
-
-            Spacer(modifier = Modifier.height(4.dp))
-
-            // Specific Signal Numbers: SMA20 & Volume
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(DarkSurfaceHighlight)
-                    .padding(horizontal = 5.dp, vertical = 3.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = "SMA20: $${CryptoRepository.formatPrice(ticker.sma20OpenD1)}",
-                    color = CryptoGreen,
-                    fontSize = 9.sp,
+                    fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = if (isUp) CryptoGreen.copy(alpha = 0.2f) else CryptoRed.copy(alpha = 0.2f)
+            ) {
                 Text(
-                    text = "Vol: ${String.format(Locale.US, "%.1f", ticker.volumeRatioD1)}x 🔥",
-                    color = CryptoGold,
-                    fontSize = 9.sp,
+                    text = "${if (isUp) "+" else ""}${String.format(Locale.US, "%.2f", ticker.priceChangePercent)}%",
+                    color = if (isUp) CryptoGreen else CryptoRed,
+                    fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
-                    fontFamily = FontFamily.Monospace
+                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (!isOpen && onOpenPosition != null) {
-                    Surface(
-                        color = CryptoGreen,
-                        shape = RoundedCornerShape(6.dp),
-                        modifier = Modifier
-                            .testTag("open_position_${ticker.symbol}")
-                            .clickable { onOpenPosition() }
-                    ) {
-                        Text(
-                            text = "+ Mở vị thế",
-                            color = DarkBg,
-                            fontSize = 9.5.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.5.dp)
-                        )
-                    }
-                } else {
-                    Surface(
-                        color = CryptoGreen.copy(alpha = 0.18f),
-                        shape = RoundedCornerShape(4.dp)
-                    ) {
-                        Text(
-                            text = "TÍN HIỆU ĐẠT",
-                            color = CryptoGreen,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
-                        )
-                    }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                OutlinedButton(
+                    onClick = onBuyClick,
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    border = BorderStroke(1.dp, CryptoGreen)
+                ) {
+                    Text(text = "+ Mở vị thế", color = CryptoGreen, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
 
-                Surface(
-                    color = CryptoGold,
-                    shape = RoundedCornerShape(6.dp),
-                    modifier = Modifier.clickable { onClick() }
+                Button(
+                    onClick = onSelect,
+                    modifier = Modifier.height(28.dp),
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoGold)
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.5.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.ShowChart,
-                            contentDescription = null,
-                            tint = DarkBg,
-                            modifier = Modifier.size(10.dp)
-                        )
-                        Spacer(modifier = Modifier.width(2.dp))
-                        Text(
-                            text = "Biểu đồ",
-                            color = DarkBg,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
+                    Text(text = "Biểu đồ", color = Color.Black, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }

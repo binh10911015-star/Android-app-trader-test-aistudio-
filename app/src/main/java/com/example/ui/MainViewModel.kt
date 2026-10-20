@@ -21,34 +21,34 @@ import com.example.model.TradePosition
 import com.example.model.TradeSettings
 import com.example.network.BinanceClient
 import com.example.network.BinanceFuturesApiVerifier
+import com.example.repository.BacktestSummaryResult
 import com.example.repository.CryptoRepository
+import com.example.util.ScanScheduler
 import com.example.util.SecureApiKeyStorage
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
-import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-import com.example.util.ScanScheduler
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.async
-import kotlinx.coroutines.awaitAll
-
 enum class MarketFilter {
     ALL,
-    BULLISH_SIGNAL, // MA20 > SuperTrend
+    BULLISH_SIGNAL,
     OPEN_POSITIONS
 }
 
@@ -56,15 +56,15 @@ data class UiState(
     val tickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
     val filteredTickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
     val coinStateList: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
-    val scannedBullishTickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers().filter {
-        it.symbol in listOf("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "DOGEUSDT", "PEPEUSDT", "SUIUSDT", "AVAXUSDT", "NEARUSDT", "WIFUSDT", "AAVEUSDT", "ENAUSDT")
-    },
+    val scannedD1BreakoutTickers: List<BinanceTicker> = emptyList(),
+    val scannedSuperTrendTickers: List<BinanceTicker> = emptyList(),
+    val selectedSignalTab: Int = 0,
     val searchQuery: String = "",
     val debouncedSearchQuery: String = "",
     val isSearching: Boolean = false,
     val filterMode: MarketFilter = MarketFilter.ALL,
     val selectedSymbol: String = "BTCUSDT",
-    val selectedTimeframe: String = "4h", // "4h" or "1d"
+    val selectedTimeframe: String = "4h",
     val klineData: List<IndicatorData> = emptyList(),
     val isKlineLoading: Boolean = false,
     val isRefreshing: Boolean = false,
@@ -74,14 +74,17 @@ data class UiState(
     val alertHistory: List<TradeAlert> = emptyList(),
     val scanProgress: String = "",
     val scanPercent: Float = 0f,
-    val bullishCount: Int = 12,
+    val d1BullishCount: Int = 0,
+    val superTrendBullishCount: Int = 0,
     val nextScanTimestamp: Long = ScanScheduler.getNextScanTimestamp(),
     val countdownText: String = "",
     val lastScanTimestamp: Long = 0L,
     val totalScannedCount: Int = 0,
     val roiSortOrder: RoiSortOrder = RoiSortOrder.DEFAULT,
     val isOpeningPositions: Boolean = false,
-    val openingPositionsProgress: String = ""
+    val openingPositionsProgress: String = "",
+    val backtestResult: BacktestSummaryResult? = null,
+    val isBacktesting: Boolean = false
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -100,9 +103,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val isVerifyingApi: StateFlow<Boolean> = _isVerifyingApi.asStateFlow()
 
     private val _coinStateList = MutableStateFlow<List<BinanceTicker>>(com.example.data.DefaultCoinData.getSeedTickers())
-    /**
-     * Debounced coin state list updated only after 300ms of typing inactivity.
-     */
     val coinStateList: StateFlow<List<BinanceTicker>> = _coinStateList.asStateFlow()
 
     val openPositions: StateFlow<List<TradePosition>> = repository.getOpenPositions()
@@ -116,7 +116,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var tickerPollJob: Job? = null
     private var schedulerJob: Job? = null
 
-    // Debounced search query flow (triggers list update only after 300ms of typing inactivity)
     private val _searchQueryFlow = MutableStateFlow("")
 
     private val _binancePortfolio = MutableStateFlow(BinancePortfolio())
@@ -137,14 +136,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _isVerifyingOrder = MutableStateFlow(false)
     val isVerifyingOrder: StateFlow<Boolean> = _isVerifyingOrder.asStateFlow()
 
-    // Lưu các mốc TP/SL cấu hình cho từng cặp coin (symbol -> Pair(TP, SL))
     private val _livePositionsTpSl = MutableStateFlow<Map<String, Pair<Double?, Double?>>>(emptyMap())
     val livePositionsTpSl: StateFlow<Map<String, Pair<Double?, Double?>>> = _livePositionsTpSl.asStateFlow()
 
-init {
+    init {
         val loadedConfig = secureApiStorage.loadConfig()
-        
-        // Công tắc đồng bộ giá cho Testnet/Mainnet ngay khi mở app
         BinanceClient.isTestnet = loadedConfig.isTestnet 
 
         if (loadedConfig.isProxyEnabled) {
@@ -182,11 +178,6 @@ init {
         viewModelScope.launch {
             refreshTickers()
             loadKlineForSymbol(_uiState.value.selectedSymbol, _uiState.value.selectedTimeframe)
-            // Yêu cầu: Chỉ tự động quét, không tự động mở vị thế nếu chưa ấn nút Auto-trade
-            if (_uiState.value.settings.autoTradeEnabled) {
-                openAllScannedPositions(isAuto = true)
-            }
-            // Khởi chạy quét toàn bộ Binance Futures (chỉ quét tín hiệu, KHÔNG mở vị thế nếu chưa bật Auto-trade)
             scanAllFuturesCoins(isAutoScheduled = false)
         }
     }
@@ -194,7 +185,8 @@ init {
     fun selectSymbol(symbol: String, timeframe: String = "4h") {
         _uiState.value = _uiState.value.copy(
             selectedSymbol = symbol,
-            selectedTimeframe = timeframe
+            selectedTimeframe = timeframe,
+            backtestResult = null // xóa kết quả cũ của coin trước
         )
         loadKlineForSymbol(symbol, timeframe)
     }
@@ -206,18 +198,12 @@ init {
         }
     }
 
-    /**
-     * Updates the search query in the search bar. The text field updates immediately
-     * for responsive typing, while the coin state list updates through the debounced flow
-     * only after 300ms of inactivity.
-     */
     fun setSearchQuery(query: String) {
         val willDebounce = query.isNotBlank() && query != _uiState.value.debouncedSearchQuery
         _uiState.value = _uiState.value.copy(
             searchQuery = query,
             isSearching = willDebounce
         )
-        // If user clears query completely, reset immediately for instant snappy UX
         if (query.isEmpty()) {
             _searchQueryFlow.value = ""
             applyFilters("")
@@ -231,12 +217,25 @@ init {
         applyFilters(_searchQueryFlow.value)
     }
 
+    fun selectSignalTab(tabIndex: Int) {
+        _uiState.value = _uiState.value.copy(
+            selectedSignalTab = tabIndex,
+            filterMode = MarketFilter.BULLISH_SIGNAL
+        )
+        applyFilters(_searchQueryFlow.value)
+    }
+
     private fun applyFilters(query: String = _searchQueryFlow.value) {
         val current = _uiState.value
         val openSymbols = openPositions.value.map { it.symbol }.toSet()
-        // Strip common separators and trailing 'USDT' suffix from input string
         val cleanQuery = com.example.util.SearchUtils.stripUsdtSuffix(query).uppercase()
         val rawQuery = query.trim().uppercase()
+
+        val activeSignalSymbols = if (current.selectedSignalTab == 0) {
+            current.scannedD1BreakoutTickers.map { it.symbol }.toSet()
+        } else {
+            current.scannedSuperTrendTickers.map { it.symbol }.toSet()
+        }
 
         val listToFilter = current.tickers
 
@@ -246,7 +245,6 @@ init {
 
             val matchesQuery = if (cleanQuery.isEmpty()) {
                 if (rawQuery.isNotEmpty()) {
-                    // e.g. User specifically typed "USDT", show all USDT contracts
                     fullSymbol.endsWith("USDT", ignoreCase = true)
                 } else {
                     true
@@ -258,13 +256,12 @@ init {
                 (cleanQuery.startsWith("1000") && baseSymbol.contains(cleanQuery.removePrefix("1000"), ignoreCase = true))
             }
 
-            // When searching by coin name, prioritize finding the coin across the market
             val matchesFilter = if (cleanQuery.isNotEmpty() || rawQuery.isNotEmpty()) {
                 true
             } else {
                 when (current.filterMode) {
                     MarketFilter.ALL -> true
-                    MarketFilter.BULLISH_SIGNAL -> repository.getCachedSignal(ticker.symbol) == true
+                    MarketFilter.BULLISH_SIGNAL -> activeSignalSymbols.contains(ticker.symbol)
                     MarketFilter.OPEN_POSITIONS -> openSymbols.contains(ticker.symbol)
                 }
             }
@@ -274,32 +271,24 @@ init {
                 val baseA = a.symbol.removeSuffix("USDT")
                 val baseB = b.symbol.removeSuffix("USDT")
 
-                // 1. Exact match on coin base name (e.g. "BTC" == "BTC")
                 val exactA = baseA.equals(cleanQuery, ignoreCase = true)
                 val exactB = baseB.equals(cleanQuery, ignoreCase = true)
                 if (exactA != exactB) return@sortedWith if (exactA) -1 else 1
 
-                // 2. Starts with query (e.g. "SOL" startsWith "SO")
                 val startsA = baseA.startsWith(cleanQuery, ignoreCase = true)
                 val startsB = baseB.startsWith(cleanQuery, ignoreCase = true)
                 if (startsA != startsB) return@sortedWith if (startsA) -1 else 1
 
-                // 3. Higher volume first
                 (b.volume * b.lastPrice).compareTo(a.volume * a.lastPrice)
             } else {
-                // Default: higher volume first
                 (b.volume * b.lastPrice).compareTo(a.volume * a.lastPrice)
             }
         }
-
-        val scannedBullish = current.tickers.filter { repository.getCachedSignal(it.symbol) == true }
 
         _coinStateList.value = filtered
         _uiState.value = _uiState.value.copy(
             filteredTickers = filtered,
             coinStateList = filtered,
-            scannedBullishTickers = scannedBullish,
-            bullishCount = scannedBullish.size,
             debouncedSearchQuery = query,
             isSearching = false
         )
@@ -312,7 +301,6 @@ init {
                 _uiState.value = _uiState.value.copy(tickers = list, isRefreshing = false)
                 applyFilters()
 
-                // Update open positions with new prices and trigger TP/SL
                 val priceMap = list.associate { it.symbol to it.lastPrice }
                 val updateResult = repository.updatePositionsWithPrices(priceMap)
                 for (alert in updateResult.alerts) {
@@ -320,55 +308,55 @@ init {
                 }
                 var totalReturned = updateResult.totalReturnedCapital
 
-                // Kiểm tra Chốt Lời Toàn Danh Mục (Portfolio Take-Profit)
                 val targetTp = _uiState.value.settings.portfolioTakeProfitPercent
-                if (targetTp > 0.0) {
-                    val currentOpen = repository.getOpenPositionsList()
-                    var totalInvested = 0.0
-                    var totalCurrentValue = 0.0
+                val currentOpen = repository.getOpenPositionsList()
 
-                    for (pos in currentOpen) {
-                        val currentPrice = priceMap[pos.symbol] ?: pos.currentPrice
-                        val pnl = (currentPrice - pos.entryPrice) * pos.amount
-                        totalInvested += pos.investedUsdt
-                        totalCurrentValue += (pos.investedUsdt + pnl)
+                if (targetTp > 0.0 && currentOpen.isNotEmpty()) {
+                    val totalWallet = _binancePortfolio.value.totalWalletBalance
+                    val totalUnrealized = _binancePortfolio.value.totalUnrealizedProfit
+
+                    val currentPnlPercent = if (_apiConfig.value.isConnected && totalWallet > 0.0) {
+                        (totalUnrealized / totalWallet) * 100.0
+                    } else {
+                        var totalInvested = 0.0
+                        var totalCurrentValue = 0.0
+                        for (pos in currentOpen) {
+                            val currentPrice = priceMap[pos.symbol] ?: pos.currentPrice
+                            val pnl = (currentPrice - pos.entryPrice) * pos.amount
+                            totalInvested += pos.investedUsdt
+                            totalCurrentValue += (pos.investedUsdt + pnl)
+                        }
+                        if (totalInvested > 0.0) ((totalCurrentValue - totalInvested) / totalInvested) * 100.0 else 0.0
                     }
 
-                    if (totalInvested > 0.0) {
-                        val currentPnlPercent = ((totalCurrentValue - totalInvested) / totalInvested) * 100.0
-                        if (currentPnlPercent >= targetTp) {
-                            // 1. ĐÃ ĐẠT TARGET: Đóng toàn bộ lệnh Binance thật trước
-                            if (_apiConfig.value.isConnected) {
-                                val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                                for (pos in currentOpen.filter { it.isLiveBinanceOrder }) {
-                                    val price = priceMap[pos.symbol] ?: pos.currentPrice
-                                    BinanceFuturesApiVerifier.postMarketCloseOrder(
-                                        symbol = pos.symbol,
-                                        amount = pos.amount,
-                                        approxPrice = price,
-                                        apiKey = apiKey,
-                                        apiSecret = apiSecret,
-                                        isTestnet = isTestnet
-                                    )
-                                }
+                    if (currentPnlPercent >= targetTp) {
+                        if (_apiConfig.value.isConnected) {
+                            val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                            for (pos in currentOpen.filter { it.isLiveBinanceOrder }) {
+                                val price = priceMap[pos.symbol] ?: pos.currentPrice
+                                BinanceFuturesApiVerifier.postMarketCloseOrder(
+                                    symbol = pos.symbol,
+                                    amount = pos.amount,
+                                    approxPrice = price,
+                                    apiKey = apiKey,
+                                    apiSecret = apiSecret,
+                                    isTestnet = isTestnet
+                                )
                             }
-                            
-                            // 2. Sau đó mới đóng trên app mô phỏng và thông báo
-                            val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
-                            for (alert in ptpResult.alerts) {
-                                triggerAlert(alert)
-                            }
-                            totalReturned += ptpResult.totalReturnedCapital
-                            
-                            // 3. Tải lại danh mục Binance để app đồng bộ làm sạch 35 vị thế
-                            if (_apiConfig.value.isConnected) {
-                                refreshBinancePortfolio()
-                            }
+                        }
+                        
+                        val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
+                        for (alert in ptpResult.alerts) {
+                            triggerAlert(alert)
+                        }
+                        totalReturned += ptpResult.totalReturnedCapital
+                        
+                        if (_apiConfig.value.isConnected) {
+                            refreshBinancePortfolio()
                         }
                     }
                 }
 
-                // Cập nhật số dư mô phỏng khi lệnh chạm TP hoặc SL
                 if (totalReturned > 0.0) {
                     val newBal = _uiState.value.settings.simulatedBalanceUsdt + totalReturned
                     _uiState.value = _uiState.value.copy(
@@ -401,16 +389,18 @@ init {
         _uiState.value = _uiState.value.copy(settings = newSettings)
 
         if (enabled) {
+            val isD1 = _uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME
+            val strategyTitle = if (isD1) "D1 SMA20 Breakout & Bùng Nổ Khối Lượng" else "4H SuperTrend & MA20"
+
             triggerAlert(
                 TradeAlert(
                     symbol = "BOT",
-                    title = "ĐÃ BẬT TỰ ĐỘNG GIAO DỊCH (AUTO-TRADE)",
-                    message = "Auto-trade đã kích hoạt! Hệ thống bắt đầu tự động mở vị thế cho các coin có tín hiệu tăng (cách nhau 5 giây/lệnh, volume 0.5% số dư).",
+                    title = "ĐÃ BẬT AUTO-TRADE",
+                    message = "Hệ thống bắt đầu quét và giao dịch tự động theo chiến lược: $strategyTitle.",
                     type = AlertType.INFO
                 )
             )
-            // Khi người dùng ấn nút Auto-trade, mở vị thế tự động cho các coin đã quét có tín hiệu tăng
-            openAllScannedPositions(isAuto = true)
+
             startAutoTradeLoop()
         } else {
             autoTradeJob?.cancel()
@@ -424,12 +414,27 @@ init {
             triggerAlert(
                 TradeAlert(
                     symbol = "BOT",
-                    title = "ĐÃ TẮT TỰ ĐỘNG GIAO DỊCH (AUTO-TRADE)",
-                    message = "Hệ thống dừng mở lệnh mới. Chỉ tự động quét tín hiệu, KHÔNG tự động mở vị thế. Các vị thế đang mở vẫn được giám sát TP/SL.",
+                    title = "ĐÃ TẮT AUTO-TRADE",
+                    message = "Hệ thống dừng mở lệnh mới. Các vị thế đang mở vẫn được giám sát TP/SL.",
                     type = AlertType.INFO
                 )
             )
         }
+    }
+  
+    fun updatePortfolioTakeProfitPercent(targetPercent: Double) {
+        val clamped = targetPercent.coerceAtLeast(0.5)
+        val updatedSettings = _uiState.value.settings.copy(portfolioTakeProfitPercent = clamped)
+        _uiState.value = _uiState.value.copy(settings = updatedSettings)
+        
+        triggerAlert(
+            TradeAlert(
+                symbol = "PORTFOLIO",
+                title = "ĐÃ ĐỔI MỤC TIÊU CHỐT LỜI",
+                message = "Mục tiêu chốt lời toàn danh mục mới: +${String.format(Locale.US, "%.1f", clamped)}%. Hệ thống sẽ tự động đóng toàn bộ khi đạt mốc này.",
+                type = AlertType.INFO
+            )
+        )
     }
 
     fun updateSettings(newSettings: TradeSettings) {
@@ -440,16 +445,8 @@ init {
         _uiState.value = _uiState.value.copy(roiSortOrder = order)
     }
 
-    /**
-     * User or Bot buys coin.
-     * Volume mỗi vị thế = 0,5% số dư mô phỏng.
-     * Enforces: "Nếu danh sách vào lệnh đã có thì không tự động mở thêm lệnh mới cho coin đó."
-     */
     fun executeBuy(symbol: String, isAuto: Boolean = false) {
-        // Yêu cầu: Không tự động mở vị thế nếu chưa ấn nút Auto-trade
-        if (isAuto && !_uiState.value.settings.autoTradeEnabled) {
-            return
-        }
+        if (isAuto && !_uiState.value.settings.autoTradeEnabled) return
         viewModelScope.launch {
             val currentTicker = _uiState.value.tickers.find { it.symbol == symbol }
             val price = currentTicker?.lastPrice
@@ -457,19 +454,7 @@ init {
                 ?: return@launch
 
             val volume = _uiState.value.settings.calculatePositionVolume()
-            if (_uiState.value.settings.simulatedBalanceUsdt < volume || volume <= 0.0) {
-                if (!isAuto) {
-                    triggerAlert(
-                        TradeAlert(
-                            symbol = symbol,
-                            title = "SỐ DƯ KHÔNG ĐỦ",
-                            message = "Số dư mô phỏng ($${CryptoRepository.formatPrice(_uiState.value.settings.simulatedBalanceUsdt)} USDT) không đủ để mở vị thế ($${CryptoRepository.formatPrice(volume)} USDT).",
-                            type = AlertType.INFO
-                        )
-                    )
-                }
-                return@launch
-            }
+            if (_uiState.value.settings.simulatedBalanceUsdt < volume || volume <= 0.0) return@launch
 
             val isLive = _apiConfig.value.isConnected
 
@@ -513,17 +498,15 @@ init {
                         autoFixNote = orderResult.autoFixApplied
                     )
 
-                    if (alert != null) {
-                        triggerAlert(alert)
-                    }
+                    if (alert != null) triggerAlert(alert)
                     refreshBinancePortfolio()
                 } else {
-                    val fixNote = orderResult.autoFixApplied?.let { " (Hệ thống đã tự động thử: $it)" } ?: ""
+                    val fixNote = orderResult.autoFixApplied?.let { " ($it)" } ?: ""
                     triggerAlert(
                         TradeAlert(
                             symbol = symbol,
-                            title = "LỖI GỬI LỆNH LÊN BINANCE DEMO",
-                            message = "${orderResult.errorMessage ?: "Không thể kết nối"}$fixNote. Vui lòng kiểm tra lại quyền API.",
+                            title = "LỖI GỬI LỆNH LÊN BINANCE",
+                            message = "${orderResult.errorMessage ?: "Không thể kết nối"}$fixNote",
                             type = AlertType.INFO
                         )
                     )
@@ -531,7 +514,6 @@ init {
                 return@launch
             }
 
-            // Chế độ Paper Trading thuần túy (khi chưa kết nối API)
             val alert = repository.executeSimulatedBuy(
                 symbol = symbol,
                 currentPrice = price,
@@ -546,20 +528,9 @@ init {
 
             if (alert != null) {
                 triggerAlert(alert)
-                // Khấu trừ vốn đầu tư (volume 0.5% số dư) vào số dư mô phỏng
                 val newBal = _uiState.value.settings.simulatedBalanceUsdt - volume
                 _uiState.value = _uiState.value.copy(
                     settings = _uiState.value.settings.updateBalance(newBal)
-                )
-            } else if (!isAuto) {
-                // If manual click but already open
-                triggerAlert(
-                    TradeAlert(
-                        symbol = symbol,
-                        title = "VỊ THẾ ĐÃ TỒN TẠI",
-                        message = "Coin $symbol đã có trong danh sách vào lệnh. Không thể mở thêm lệnh trùng lặp!",
-                        type = AlertType.INFO
-                    )
                 )
             }
         }
@@ -570,7 +541,6 @@ init {
             val pos = openPositions.value.find { it.id == positionId } ?: return@launch
             val currentPrice = _uiState.value.tickers.find { it.symbol == pos.symbol }?.lastPrice ?: pos.currentPrice
 
-            // Nếu đây là lệnh Binance thực tế, gửi lệnh MARKET SELL (reduceOnly=true) lên Binance
             if (pos.isLiveBinanceOrder && _apiConfig.value.isConnected) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 BinanceFuturesApiVerifier.postMarketCloseOrder(
@@ -588,7 +558,6 @@ init {
             if (alert != null) {
                 triggerAlert(alert)
                 if (!pos.isLiveBinanceOrder) {
-                    // Hoàn lại vốn đầu tư + PnL thực nhận vào số dư mô phỏng
                     val pnl = (currentPrice - pos.entryPrice) * pos.amount
                     val returnedCapital = pos.investedUsdt + pnl
                     val newBal = _uiState.value.settings.simulatedBalanceUsdt + returnedCapital
@@ -600,16 +569,12 @@ init {
         }
     }
 
-    /**
-     * Đóng tất cả các vị thế đang mở và hoàn lại toàn bộ vốn + PnL vào số dư mô phỏng
-     */
     fun closeAllPositions() {
         viewModelScope.launch {
             val count = openPositions.value.size
             if (count == 0) return@launch
             val priceMap = _uiState.value.tickers.associate { it.symbol to it.lastPrice }
 
-            // Đóng các vị thế Binance trực tiếp nếu có
             if (_apiConfig.value.isConnected) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 for (pos in openPositions.value.filter { it.isLiveBinanceOrder }) {
@@ -644,16 +609,11 @@ init {
         }
     }
 
-    /**
-     * Chuyển đổi qua lại giữa [Chế Độ Mô Phỏng] và [LIVE MAINNET].
-     * Khi chuyển sang LIVE MAINNET: hiển thị cảnh báo rủi ro vốn thật và kích hoạt đăng nhập Mainnet.
-     */
     fun toggleTradingMode(toLiveMainnet: Boolean) {
         val current = _apiConfig.value
         val newTestnet = !toLiveMainnet
         val newLiveTrading = toLiveMainnet
 
-        // Tự động lật công tắc đổi luồng giá sang Testnet hoặc Mainnet
         BinanceClient.isTestnet = !toLiveMainnet
 
         val (apiKey, apiSecret) = if (toLiveMainnet) {
@@ -686,18 +646,14 @@ init {
             triggerAlert(
                 TradeAlert(
                     symbol = "SIMULATION",
-                    title = "🛡️ ĐÃ CHUYỂN VỀ CHẾ ĐỘ MÔ PHỎNG",
-                    message = "Đã chuyển sang chế độ mô phỏng Paper Trading an toàn.",
+                    title = "🛡️ ĐÃ CHUYỂN VỀ BINANCE DEMO",
+                    message = "Đã chuyển sang môi trường Binance Testnet Demo an toàn.",
                     type = AlertType.INFO
                 )
             )
         }
     }
 
-    /**
-     * Cài đặt Take Profit (Chốt lời) và Stop Loss (Cắt lỗ) thủ công cho vị thế.
-     * Hỗ trợ cả vị thế Binance Live và vị thế mô phỏng/Room DB.
-     */
     fun setPositionTpSl(
         symbol: String,
         isLong: Boolean,
@@ -710,17 +666,14 @@ init {
             var msg: String
             var success = true
 
-            // Cập nhật cho Room Database nếu có positionId
             if (positionId != null) {
                 repository.updatePositionTpSl(positionId, tpPrice, slPrice)
             }
 
-            // Lưu vào map TP/SL cho Binance Live
             val currentMap = _livePositionsTpSl.value.toMutableMap()
             currentMap[symbol] = Pair(tpPrice, slPrice)
             _livePositionsTpSl.value = currentMap
 
-            // Nếu đang kết nối Binance, gửi lệnh điều kiện lên Binance Futures
             if (_apiConfig.value.isConnected) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 val res = BinanceFuturesApiVerifier.setTakeProfitAndStopLoss(
@@ -756,9 +709,6 @@ init {
         }
     }
 
-    /**
-     * Đóng vị thế Binance Live trực tiếp trên sàn bằng lệnh MARKET đối ứng (reduceOnly = true)
-     */
     fun closeLiveBinancePosition(position: BinanceLivePosition) {
         viewModelScope.launch {
             if (!_apiConfig.value.isConnected) return@launch
@@ -798,9 +748,6 @@ init {
         }
     }
 
-    /**
-     * Đóng toàn bộ các vị thế đang chạy trên sàn Binance Futures
-     */
     fun closeAllLiveBinancePositions() {
         viewModelScope.launch {
             val livePositions = binancePortfolio.value.positions
@@ -834,9 +781,6 @@ init {
         }
     }
 
-    /**
-     * Cài đặt đòn bẩy giao dịch cho symbol
-     */
     fun updateLeverage(symbol: String, leverage: Int) {
         val clamped = leverage.coerceIn(1, 50)
         _uiState.value = _uiState.value.copy(
@@ -850,9 +794,6 @@ init {
         }
     }
 
-    /**
-     * Đặt lệnh Mua (LONG) hoặc Bán (SHORT) với cài đặt đòn bẩy tự động
-     */
     fun executeOrder(symbol: String, isLong: Boolean, customAmountUsdt: Double? = null) {
         viewModelScope.launch {
             val price = _uiState.value.tickers.find { it.symbol == symbol }?.lastPrice ?: 0.0
@@ -866,7 +807,6 @@ init {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
 
-                // Cài đặt đòn bẩy trước khi vào lệnh
                 BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
 
                 val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
@@ -907,7 +847,6 @@ init {
                     )
                 }
             } else {
-                // Mô phỏng
                 val alert = repository.executeSimulatedBuy(
                     symbol = symbol,
                     currentPrice = price,
@@ -926,14 +865,7 @@ init {
         }
     }
 
-    /**
-     * Mở toàn bộ vị thế sau khi quét thấy tín hiệu tăng (MA20 > SuperTrend 4H).
-     * Mở vị thế mô phỏng với volume = 0,5% số dư mô phỏng kèm TP/SL.
-     * Tự động bỏ qua các coin đã có trong danh sách vào lệnh để tránh lệnh trùng lặp.
-     * Yêu cầu: Mỗi vị thế được mở cách nhau 5 giây.
-     */
     fun openAllScannedPositions(isAuto: Boolean = false): Job {
-        // Yêu cầu: Chỉ tự động quét, không tự động mở vị thế nếu chưa ấn nút Auto-trade
         if (isAuto && !_uiState.value.settings.autoTradeEnabled) {
             val completed = Job()
             completed.complete()
@@ -955,14 +887,20 @@ init {
                 val currentTickers = _uiState.value.tickers.ifEmpty {
                     com.example.data.DefaultCoinData.getSeedTickers()
                 }
-                val bullishSymbols = repository.getAllBullishSymbols()
-                if (bullishSymbols.isEmpty()) {
+                
+                val symbolsToOpenSource = if (_uiState.value.selectedSignalTab == 0) {
+                    _uiState.value.scannedD1BreakoutTickers.map { it.symbol }
+                } else {
+                    _uiState.value.scannedSuperTrendTickers.map { it.symbol }
+                }
+
+                if (symbolsToOpenSource.isEmpty()) {
                     if (!isAuto) {
                         triggerAlert(
                             TradeAlert(
                                 symbol = "SCANNER",
-                                title = "CHƯA CÓ TÍN HIỆU TĂNG",
-                                message = "Chưa có coin nào đạt tín hiệu tăng MA20 > SuperTrend. Vui lòng bấm Quét để cập nhật tín hiệu mới!",
+                                title = "CHƯA CÓ TÍN HIỆU",
+                                message = "Chưa có coin nào đạt tín hiệu của chiến lược đang chọn. Vui lòng bấm Quét để cập nhật!",
                                 type = AlertType.INFO
                             )
                         )
@@ -971,7 +909,7 @@ init {
                 }
 
                 val openSymbols = repository.getOpenPositionSymbols()
-                val symbolsToOpen = bullishSymbols.filter { !openSymbols.contains(it) }
+                val symbolsToOpen = symbolsToOpenSource.filter { !openSymbols.contains(it) }
 
                 if (symbolsToOpen.isEmpty()) {
                     if (!isAuto) {
@@ -979,7 +917,7 @@ init {
                             TradeAlert(
                                 symbol = "POSITIONS",
                                 title = "TẤT CẢ VỊ THẾ ĐÃ ĐƯỢC MỞ",
-                                message = "Toàn bộ ${bullishSymbols.size} coin có tín hiệu tăng đã có vị thế trong danh sách vào lệnh!",
+                                message = "Toàn bộ coin đạt tín hiệu đã có vị thế trong danh sách vào lệnh!",
                                 type = AlertType.INFO
                             )
                         )
@@ -993,23 +931,17 @@ init {
 
                 for ((index, symbol) in symbolsToOpen.withIndex()) {
                     if (!isActive) break
-                    // Yêu cầu: Dừng ngay nếu là tự động mở mà người dùng đã tắt Auto-trade
-                    if (isAuto && !_uiState.value.settings.autoTradeEnabled) {
-                        break
-                    }
+                    if (isAuto && !_uiState.value.settings.autoTradeEnabled) break
 
-                    // Volume mỗi vị thế theo cấu hình: % số dư HOẶC volume cố định USDT/lệnh
                     val volume = _uiState.value.settings.calculatePositionVolume(balance)
-                    if (balance < volume || volume <= 0.0) {
-                        break // Số dư mô phỏng không đủ để mở thêm lệnh
-                    }
+                    if (balance < volume || volume <= 0.0) break
+                    
                     val tickerPrice = currentTickers.find { it.symbol == symbol }?.lastPrice
                     val klinePrice = if (symbol == _uiState.value.selectedSymbol) _uiState.value.klineData.lastOrNull()?.candle?.close else null
                     val price = tickerPrice ?: klinePrice ?: continue
 
                     if (price <= 0.0) continue
 
-                    // Yêu cầu: Mỗi vị thế được mở cách nhau 5 giây
                     if (newlyOpened > 0) {
                         _uiState.value = _uiState.value.copy(
                             openingPositionsProgress = "Đã mở $newlyOpened vị thế. Chờ 5s trước khi mở $symbol (${index + 1}/${symbolsToOpen.size})..."
@@ -1025,8 +957,6 @@ init {
                     val isLive = _apiConfig.value.isConnected
                     if (isLive) {
                         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-
-                        // Đảm bảo đòn bẩy được cấu hình trên Binance trước khi mở vị thế
                         BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
 
                         val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
@@ -1059,16 +989,6 @@ init {
                                 totalInvested += volume
                                 triggerAlert(alert)
                             }
-                        } else {
-                            val fixNote = orderResult.autoFixApplied?.let { " (Đã tự động thử sửa: $it)" } ?: ""
-                            triggerAlert(
-                                TradeAlert(
-                                    symbol = symbol,
-                                    title = "LỖI LỆNH BINANCE: $symbol",
-                                    message = "${orderResult.errorMessage ?: "Không thể kết nối sàn"}$fixNote",
-                                    type = AlertType.INFO
-                                )
-                            )
                         }
                     } else {
                         val alert = repository.executeSimulatedBuy(
@@ -1076,11 +996,7 @@ init {
                             currentPrice = price,
                             settings = _uiState.value.settings,
                             investedUsdt = volume,
-                            isAutoTriggered = isAuto,
-                            binanceOrderId = null,
-                            binanceClientOrderId = null,
-                            isLiveBinanceOrder = false,
-                            binanceStatus = null
+                            isAutoTriggered = isAuto
                         )
 
                         if (alert != null) {
@@ -1096,16 +1012,12 @@ init {
                 }
 
                 if (newlyOpened > 0) {
-                    if (_apiConfig.value.isConnected) {
-                        refreshBinancePortfolio()
-                    }
-                    val title = if (isAuto) "TỰ ĐỘNG MỞ TOÀN BỘ VỊ THẾ TĂNG" else "ĐÃ MỞ TOÀN BỘ VỊ THẾ TĂNG"
-                    val modeNote = if (_apiConfig.value.isConnected) " (Đã gửi thẳng lên Binance Demo)" else " (Paper Trading)"
+                    if (_apiConfig.value.isConnected) refreshBinancePortfolio()
                     triggerAlert(
                         TradeAlert(
                             symbol = "ALL_BULLISH",
-                            title = "$title$modeNote",
-                            message = "Đã khớp thành công $newlyOpened vị thế mới (mỗi vị thế cách nhau 5 giây, Volume 0.5% số dư mỗi vị thế, tổng vốn: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
+                            title = "ĐÃ MỞ TOÀN BỘ VỊ THẾ",
+                            message = "Đã khớp $newlyOpened vị thế mới (mỗi vị thế cách nhau 5 giây, tổng vốn: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
                             type = AlertType.AUTO_BUY_ORDER
                         )
                     )
@@ -1118,31 +1030,22 @@ init {
             }
         }
 
-        if (isAuto) {
-            openPositionsJob = job
-        }
+        if (isAuto) openPositionsJob = job
         return job
     }
 
-    /**
-     * Scans ALL coins in Binance Futures without limit using concurrent batched coroutines.
-     * Can be invoked manually by user or automatically every 4 hours (starting at 7:00 UTC+7).
-     * Mở toàn bộ vị thế sau khi quét thấy tín hiệu tăng.
-     */
     fun scanAllFuturesCoins(isAutoScheduled: Boolean = false) {
-        if (_uiState.value.isScanning) return // Already scanning
+        if (_uiState.value.isScanning) return
 
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isScanning = true,
-                scanProgress = "Đang tải và lọc danh sách USDT-M Perpetual từ Binance...",
+                scanProgress = "Đang quét danh sách USDT-M Perpetual từ Binance...",
                 scanPercent = 0f
             )
 
-            // Lọc bỏ triệt để các coin đã delist thông qua exchangeInfo
             BinanceClient.refreshValidPerpetualSymbols()
 
-            // Ensure tickers are loaded
             var currentTickers = _uiState.value.tickers
             if (currentTickers.isEmpty()) {
                 val tickersResult = repository.getTickers()
@@ -1154,103 +1057,101 @@ init {
 
             val allSymbols = currentTickers.map { it.symbol }
             if (allSymbols.isEmpty()) {
-                _uiState.value = _uiState.value.copy(
-                    isScanning = false,
-                    scanProgress = "",
-                    scanPercent = 0f
-                )
+                _uiState.value = _uiState.value.copy(isScanning = false, scanProgress = "", scanPercent = 0f)
                 return@launch
             }
 
             val totalCoins = allSymbols.size
             var scannedCount = 0
-            var newlyTriggeredOrders = 0
 
-            // Batched concurrent fetching (8 per batch) for fast scan without hitting rate limits
+            val d1Matches = mutableListOf<BinanceTicker>()
+            val superTrendMatches = mutableListOf<BinanceTicker>()
+
             val chunkSize = 8
             val chunks = allSymbols.chunked(chunkSize)
 
             for (chunk in chunks) {
                 if (!isActive) break
 
-                val deferredList = chunk.map { symbol ->
-                    async(Dispatchers.IO) {
-                        symbol to repository.getCandlesWithIndicators(symbol, _uiState.value.settings.timeframe)
-                    }
+                val d1Deferred = chunk.map { sym ->
+                    async(Dispatchers.IO) { sym to repository.getCandlesWithIndicators(sym, "1d") }
+                }
+                val h4Deferred = chunk.map { sym ->
+                    async(Dispatchers.IO) { sym to repository.getCandlesWithIndicators(sym, "4h") }
                 }
 
-                val results = deferredList.awaitAll()
+                val d1Results = d1Deferred.awaitAll().toMap()
+                val h4Results = h4Deferred.awaitAll().toMap()
 
-                for ((symbol, result) in results) {
+                for (sym in chunk) {
                     scannedCount++
-                    result.onSuccess { data ->
-                        val latest = data.lastOrNull()
-                        val isD1 = _uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME
-                        val isBullish = if (isD1) {
-                            val ticker = currentTickers.find { it.symbol == symbol }
-                            val price = ticker?.lastPrice ?: latest?.candle?.close ?: 0.0
-                            val sma20 = ticker?.sma20OpenD1 ?: (price * 0.99)
-                            val volRatio = ticker?.volumeRatioD1 ?: 1.0
-                            price >= sma20 && volRatio >= _uiState.value.settings.volumeMultiplierThreshold
-                        } else {
-                            latest?.isBullishSignal(_uiState.value.settings.useSuperTrendFilter) == true
+                    val ticker = currentTickers.find { it.symbol == sym }
+
+                    val d1Res = d1Results[sym]
+                    if (d1Res != null && d1Res.isSuccess) {
+                        val candles = d1Res.getOrNull() ?: emptyList()
+                        if (candles.size >= 21) {
+                            val currentCandle = candles.last()
+                            val previous20 = candles.dropLast(1).takeLast(20)
+
+                            val currentPrice = currentCandle.candle.close
+                            val currentVolD1 = currentCandle.candle.volume
+                            val sma20OpenD1 = previous20.map { it.candle.open }.average()
+                            val avgVol20D1 = previous20.map { it.candle.volume }.average()
+
+                            val threshold = _uiState.value.settings.volumeMultiplierThreshold
+                            val volRatio = if (avgVol20D1 > 0.0) currentVolD1 / avgVol20D1 else 0.0
+
+                            if (currentPrice >= sma20OpenD1 && volRatio >= threshold && ticker != null) {
+                                d1Matches.add(ticker)
+                            }
                         }
-                        if (isBullish) {
-                            repository.setCachedSignal(symbol, true)
+                    }
+
+                    val h4Res = h4Results[sym]
+                    if (h4Res != null && h4Res.isSuccess) {
+                        val latest4h = h4Res.getOrNull()?.lastOrNull()
+                        if (latest4h?.isBullishSignal(_uiState.value.settings.useSuperTrendFilter) == true && ticker != null) {
+                            superTrendMatches.add(ticker)
                         }
                     }
                 }
 
-                val currentBullish = repository.getBullishSignalsCount()
                 _uiState.value = _uiState.value.copy(
-                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (Tín hiệu tăng: $currentBullish)",
+                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (D1 Vol 2x: ${d1Matches.size} | 4H SuperTrend: ${superTrendMatches.size})",
                     scanPercent = scannedCount.toFloat() / totalCoins,
-                    bullishCount = currentBullish,
+                    d1BullishCount = d1Matches.size,
+                    superTrendBullishCount = superTrendMatches.size,
+                    scannedD1BreakoutTickers = d1Matches.toList(),
+                    scannedSuperTrendTickers = superTrendMatches.toList(),
                     totalScannedCount = scannedCount
                 )
                 applyFilters()
-                delay(60) // Short delay between batches
+                delay(60)
             }
 
-            val finalBullish = repository.getBullishSignalsCount()
             val now = System.currentTimeMillis()
-
-            // Yêu cầu: Chỉ tự động quét, không tự động mở vị thế nếu chưa ấn nút Auto-trade
-            if (_uiState.value.settings.autoTradeEnabled) {
-                openAllScannedPositions(isAuto = true)
-            }
 
             _uiState.value = _uiState.value.copy(
                 isScanning = false,
                 scanProgress = "",
                 scanPercent = 1f,
-                bullishCount = finalBullish,
                 lastScanTimestamp = now
             )
             applyFilters()
 
-            val title = if (isAutoScheduled) "QUÉT TỰ ĐỘNG 4H HOÀN TẤT (UTC+7)" else "HOÀN TẤT QUÉT TOÀN BỘ BINANCE FUTURES"
-            val autoTradeNote = if (_uiState.value.settings.autoTradeEnabled) {
-                " [Auto-trade BẬT]: Đang tự động mở vị thế cách nhau 5s cho các coin có tín hiệu tăng."
-            } else {
-                " [Auto-trade TẮT]: Hệ thống chỉ tự động quét tín hiệu, KHÔNG tự động mở vị thế. Bật nút Auto-trade hoặc bấm 'Mở toàn bộ' nếu muốn vào lệnh."
-            }
-
+            val title = if (isAutoScheduled) "QUÉT TỰ ĐỘNG HOÀN TẤT (UTC+7)" else "HOÀN TẤT QUÉT TOÀN THỊ TRƯỜNG"
             triggerAlert(
                 TradeAlert(
                     symbol = "SCANNER",
                     title = title,
-                    message = "Đã quét $totalCoins coin. Phát hiện $finalBullish coin có xu hướng tăng MA20 > SuperTrend(20,4).$autoTradeNote",
+                    message = "Đã quét $totalCoins coin. Phát hiện:\n• D1 Breakout & Vol >= 2x: ${d1Matches.size} coin\n• 4H SuperTrend: ${superTrendMatches.size} coin.",
                     type = AlertType.BULLISH_SIGNAL
                 )
             )
         }
     }
 
-    /**
-     * Automatic scheduler checking every second:
-     * Triggers full scan at 07:00, 11:00, 15:00, 19:00, 23:00, 03:00 (UTC+7).
-     */
     private fun startScanScheduler() {
         schedulerJob?.cancel()
         schedulerJob = viewModelScope.launch {
@@ -1260,7 +1161,6 @@ init {
                 val countdown = ScanScheduler.formatCountdown(target, now)
                 _uiState.value = _uiState.value.copy(countdownText = countdown)
 
-                // Trigger scan when scheduled time is reached
                 if (now >= target) {
                     val nextTarget = ScanScheduler.getNextScanTimestamp(now + 60000)
                     _uiState.value = _uiState.value.copy(nextScanTimestamp = nextTarget)
@@ -1290,38 +1190,47 @@ init {
         autoTradeJob = viewModelScope.launch {
             while (isActive && _uiState.value.settings.autoTradeEnabled) {
                 val candidateSymbols = _uiState.value.tickers
-                    .take(15)
                     .map { it.symbol }
-                    .ifEmpty { listOf("BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT") }
+                    .filter { it.endsWith("USDT") }
+
+                val currentStrategy = _uiState.value.settings.selectedStrategy
 
                 for (sym in candidateSymbols) {
                     if (!isActive || !_uiState.value.settings.autoTradeEnabled) break
 
-                    // Rule check first: If already open, skip!
-                    if (repository.hasOpenPositionForSymbol(sym)) {
-                        continue
-                    }
+                    if (repository.hasOpenPositionForSymbol(sym)) continue
 
-                    // Check technical indicator according to selectedStrategy
                     var tradeExecuted = false
-                    val ticker = _uiState.value.tickers.find { it.symbol == sym }
 
-                    if (_uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME) {
-                        val price = ticker?.lastPrice ?: 0.0
-                        val sma20 = ticker?.sma20OpenD1 ?: (price * 0.99)
-                        val volRatio = ticker?.volumeRatioD1 ?: 1.0
-                        val threshold = _uiState.value.settings.volumeMultiplierThreshold
-                        val isBuy = price >= sma20 && volRatio >= threshold
+                    if (currentStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME) {
+                        val klinesRes = repository.getCandlesWithIndicators(sym, "1d")
+                        klinesRes.onSuccess { data ->
+                            if (data.size >= 21) {
+                                val currentCandle = data.last()
+                                val previous20 = data.dropLast(1).takeLast(20)
 
-                        if (isBuy && price > 0.0) {
-                            val vol = _uiState.value.settings.calculatePositionVolume()
-                            if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
-                                executeBuy(sym, isAuto = true)
-                                tradeExecuted = true
+                                val currentPrice = currentCandle.candle.close
+                                val currentVolumeD1 = currentCandle.candle.volume
+
+                                val sma20OpenD1 = previous20.map { it.candle.open }.average()
+                                val avgVolume20D1 = previous20.map { it.candle.volume }.average()
+
+                                val threshold = _uiState.value.settings.volumeMultiplierThreshold
+                                val volRatio = if (avgVolume20D1 > 0.0) currentVolumeD1 / avgVolume20D1 else 0.0
+
+                                val isBreakout = currentPrice >= sma20OpenD1 && volRatio >= threshold
+
+                                if (isBreakout && currentPrice > 0.0) {
+                                    val vol = _uiState.value.settings.calculatePositionVolume()
+                                    if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
+                                        executeBuy(sym, isAuto = true)
+                                        tradeExecuted = true
+                                    }
+                                }
                             }
                         }
                     } else {
-                        val res = repository.getCandlesWithIndicators(sym, _uiState.value.settings.timeframe)
+                        val res = repository.getCandlesWithIndicators(sym, "4h")
                         res.onSuccess { data ->
                             val latest = data.lastOrNull()
                             if (latest != null && latest.isBullishSignal(_uiState.value.settings.useSuperTrendFilter)) {
@@ -1333,15 +1242,15 @@ init {
                             }
                         }
                     }
+
                     if (tradeExecuted) {
-                        // Yêu cầu: Mỗi vị thế được mở cách nhau 5 giây
                         delay(5000L)
                     } else {
-                        delay(300L) // gentle delay between symbol kline requests
+                        delay(150L)
                     }
                 }
 
-                delay(15000) // Wait 15s between scan rounds
+                delay(15000L)
             }
         }
     }
@@ -1375,15 +1284,59 @@ init {
         }
     }
 
-    /**
-     * Compute Daily PnL stats from closed positions
-     */
+    fun updateSimulatedBalance(customBalance: Double) {
+        val safeBalance = customBalance.coerceAtLeast(10.0)
+        viewModelScope.launch {
+            repository.clearHistory()
+            _uiState.value = _uiState.value.copy(
+                settings = _uiState.value.settings.copy(simulatedBalanceUsdt = safeBalance)
+            )
+            triggerAlert(
+                TradeAlert(
+                    symbol = "VÍ ẢO",
+                    title = "ĐÃ ĐỔI SỐ VỐN MÔ PHỎNG",
+                    message = "Số dư ví ảo mới: $${String.format(Locale.US, "%,.2f", safeBalance)} USDT. Bắt đầu phiên test mới.",
+                    type = AlertType.INFO
+                )
+            )
+        }
+    }
+
+    fun runBacktestForSelectedCoin(
+        candleLimit: Int = 180,
+        tpPercent: Double = 4.0,
+        slPercent: Double = 3.0,
+        volThreshold: Double = 2.0
+    ) {
+        val sym = _uiState.value.selectedSymbol
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBacktesting = true)
+            val result = withContext(Dispatchers.IO) {
+                repository.runD1BreakoutBacktest(
+                    symbol = sym,
+                    initialBalance = _uiState.value.settings.simulatedBalanceUsdt,
+                    riskPerTradePercent = 0.5,
+                    takeProfitPercent = tpPercent,
+                    stopLossPercent = slPercent,
+                    candleLimit = candleLimit,
+                    volumeThreshold = volThreshold
+                )
+            }
+            _uiState.value = _uiState.value.copy(
+                isBacktesting = false,
+                backtestResult = result
+            )
+        }
+    }
+
+    fun clearBacktestResult() {
+        _uiState.value = _uiState.value.copy(backtestResult = null)
+    }
+
     fun computeDailyPnL(closed: List<TradePosition>): List<PeriodPnL> {
         val dateFormat = SimpleDateFormat("dd/MM", Locale.getDefault())
-        // Group by day key
         val map = linkedMapOf<String, MutableList<TradePosition>>()
 
-        // Sort ascending by exitTime
         val sorted = closed.filter { it.exitTime != null }.sortedBy { it.exitTime }
         sorted.forEach { pos ->
             val dateKey = dateFormat.format(Date(pos.exitTime!!))
@@ -1403,9 +1356,6 @@ init {
         }
     }
 
-    /**
-     * Compute Weekly PnL stats from closed positions
-     */
     fun computeWeeklyPnL(closed: List<TradePosition>): List<PeriodPnL> {
         val calendar = Calendar.getInstance()
         val map = linkedMapOf<String, MutableList<TradePosition>>()
@@ -1434,37 +1384,19 @@ init {
     private val _isPinVerifiedInSession = MutableStateFlow(false)
     val isPinVerifiedInSession: StateFlow<Boolean> = _isPinVerifiedInSession.asStateFlow()
 
-    /**
-     * Checks if PIN verification is required before entering orders.
-     * QUY TẮC BẮT BUỘC: Luôn luôn hiển thị và bắt buộc người dùng nhập đúng mã PIN bảo mật
-     * trước khi cho phép bấm nút kích hoạt 'Auto Trade' hoặc thực thi bất kỳ thao tác đặt lệnh nào.
-     */
-    fun isPinRequired(): Boolean {
-        return true
-    }
+    fun isPinRequired(): Boolean = true
 
-    /**
-     * Authorizes user session with the entered PIN.
-     */
     fun authorizePin(pin: String): Boolean {
         val configured = _apiConfig.value.accessPin.ifBlank { "1234" }
         val ok = pin.trim() == configured
-        if (ok) {
-            _isPinVerifiedInSession.value = true
-        }
+        if (ok) _isPinVerifiedInSession.value = true
         return ok
     }
 
-    /**
-     * Resets session PIN authorization.
-     */
     fun lockPin() {
         _isPinVerifiedInSession.value = false
     }
 
-    /**
-     * Helper cung cấp API Key, Secret Key và chế độ Testnet/Mainnet chính xác
-     */
     fun getEffectiveApiCredentials(): Triple<String, String, Boolean> {
         val config = _apiConfig.value
         val isTestnet = config.isTestnet
@@ -1475,13 +1407,11 @@ init {
         return Triple(apiKey, apiSecret, isTestnet)
     }
 
-    /**
-     * Tự động đăng nhập vào Binance Futures Mainnet với thông tin API Key và Secret Key do người dùng cung cấp.
-     */
     fun autoLoginMainnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
         viewModelScope.launch {
             val (apiKey, apiSecret) = secureApiStorage.getMainnetCredentials()
             val isTestnet = false
+            BinanceClient.isTestnet = false
 
             _isVerifyingApi.value = true
             val result = BinanceFuturesApiVerifier.verifyAccount(apiKey, apiSecret, isTestnet)
@@ -1497,6 +1427,8 @@ init {
             val updated = secureApiStorage.loadConfig()
             _apiConfig.value = updated
             _isVerifyingApi.value = false
+
+            refreshTickers()
 
             if (result.isSuccess) {
                 refreshBinancePortfolio()
@@ -1504,16 +1436,7 @@ init {
                     TradeAlert(
                         symbol = "BINANCE_MAINNET",
                         title = "ĐÃ KẾT NỐI BINANCE MAINNET THỰC TẾ",
-                        message = "Đã kết nối tài khoản Binance Futures Mainnet thực tế! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT (Khả dụng: $${String.format(Locale.US, "%,.2f", result.availableBalance)} USDT). Cho phép gửi lệnh kiểm thử thực tế.",
-                        type = AlertType.INFO
-                    )
-                )
-            } else {
-                triggerAlert(
-                    TradeAlert(
-                        symbol = "BINANCE_MAINNET",
-                        title = "KẾT NỐI BINANCE MAINNET",
-                        message = "Đã cấu hình API Key & Secret Binance Mainnet. ${result.errorMessage ?: "Vui lòng kiểm tra lại kết nối mạng hoặc quyền truy cập IP/Futures trên Binance."}",
+                        message = "Đã kết nối tài khoản Binance Futures Mainnet thực tế! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
                         type = AlertType.INFO
                     )
                 )
@@ -1522,13 +1445,11 @@ init {
         }
     }
 
-    /**
-     * Tự động đăng nhập vào Binance Futures Testnet với thông tin API Key và Secret Key của người dùng.
-     */
     fun autoLoginTestnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
         viewModelScope.launch {
             val (apiKey, apiSecret) = secureApiStorage.getTestnetCredentials()
             val isTestnet = true
+            BinanceClient.isTestnet = true
 
             _isVerifyingApi.value = true
             val result = BinanceFuturesApiVerifier.verifyAccount(apiKey, apiSecret, isTestnet)
@@ -1545,22 +1466,15 @@ init {
             _apiConfig.value = updated
             _isVerifyingApi.value = false
 
+            refreshTickers()
+
             if (result.isSuccess) {
                 refreshBinancePortfolio()
                 triggerAlert(
                     TradeAlert(
                         symbol = "BINANCE_TESTNET",
                         title = "ĐÃ ĐĂNG NHẬP BINANCE TESTNET THÀNH CÔNG",
-                        message = "Tự động đăng nhập Binance Futures Testnet thành công! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT (Khả dụng: $${String.format(Locale.US, "%,.2f", result.availableBalance)} USDT).",
-                        type = AlertType.INFO
-                    )
-                )
-            } else {
-                triggerAlert(
-                    TradeAlert(
-                        symbol = "BINANCE_TESTNET",
-                        title = "KẾT NỐI BINANCE TESTNET",
-                        message = "Đã nhập API Key & Secret Testnet. ${result.errorMessage ?: "Vui lòng kiểm tra lại kết nối mạng"}",
+                        message = "Tự động đăng nhập Binance Futures Testnet thành công! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
                         type = AlertType.INFO
                     )
                 )
@@ -1569,9 +1483,6 @@ init {
         }
     }
 
-    /**
-     * Verifies Binance API credentials against Binance Futures server and securely saves if valid.
-     */
     fun saveAndVerifyApiCredentials(
         apiKey: String,
         apiSecret: String,
@@ -1582,6 +1493,7 @@ init {
     ) {
         viewModelScope.launch {
             _isVerifyingApi.value = true
+            BinanceClient.isTestnet = isTestnet
             val result = BinanceFuturesApiVerifier.verifyAccount(apiKey, apiSecret, isTestnet)
             if (result.isSuccess) {
                 secureApiStorage.saveCredentials(apiKey, apiSecret, accessPin, isTestnet, liveTradingEnabled)
@@ -1589,36 +1501,22 @@ init {
                 val updated = secureApiStorage.loadConfig()
                 _apiConfig.value = updated
                 refreshBinancePortfolio()
-                triggerAlert(
-                    TradeAlert(
-                        symbol = "BINANCE_API",
-                        title = "KẾT NỐI BINANCE THÀNH CÔNG",
-                        message = "Đã kết nối tài khoản Binance Futures (${if (isTestnet) "Testnet Demo" else "Mainnet"}). Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
-                        type = AlertType.INFO
-                    )
-                )
+                refreshTickers()
             } else {
                 secureApiStorage.updateVerificationResult(result)
                 _apiConfig.value = _apiConfig.value.copy(
                     isConnected = false,
                     lastErrorMessage = result.errorMessage
                 )
+                refreshTickers()
             }
             _isVerifyingApi.value = false
             onResult(result)
         }
     }
 
-    /**
-     * Verifies user's Binance Access PIN before executing orders.
-     */
-    fun verifyAccessPin(enteredPin: String): Boolean {
-        return _apiConfig.value.verifyPin(enteredPin)
-    }
+    fun verifyAccessPin(enteredPin: String): Boolean = _apiConfig.value.verifyPin(enteredPin)
 
-    /**
-     * Re-tests the current saved API configuration.
-     */
     fun testApiConnection(onResult: (BinanceAccountVerificationResult) -> Unit) {
         val current = _apiConfig.value
         if (!current.isConfigured) {
@@ -1632,24 +1530,15 @@ init {
         }
         viewModelScope.launch {
             _isVerifyingApi.value = true
-            val result = BinanceFuturesApiVerifier.verifyAccount(
-                current.apiKey,
-                current.apiSecret,
-                current.isTestnet
-            )
+            val result = BinanceFuturesApiVerifier.verifyAccount(current.apiKey, current.apiSecret, current.isTestnet)
             secureApiStorage.updateVerificationResult(result)
             _apiConfig.value = secureApiStorage.loadConfig()
-            if (result.isSuccess) {
-                refreshBinancePortfolio()
-            }
+            if (result.isSuccess) refreshBinancePortfolio()
             _isVerifyingApi.value = false
             onResult(result)
         }
     }
 
-    /**
-     * Tải địa chỉ IP công khai của thiết bị phục vụ cho IP Whitelist trên Binance Mainnet.
-     */
     fun fetchPublicIpAddress(forceRefresh: Boolean = false) {
         if (!forceRefresh && _publicIpAddress.value != null) return
         viewModelScope.launch {
@@ -1660,48 +1549,20 @@ init {
         }
     }
 
-    /**
-     * Cập nhật cấu hình Custom Proxy (HTTP/SOCKS5) nhằm vượt hạn chế vùng địa lý khi gọi Binance API.
-     */
     fun updateProxyConfig(host: String, port: Int, proxyType: String = "HTTP") {
         secureApiStorage.saveProxyConfig(host, port, proxyType)
         BinanceClient.updateProxy(host, port, proxyType.equals("SOCKS", ignoreCase = true))
         _apiConfig.value = secureApiStorage.loadConfig()
         fetchPublicIpAddress(forceRefresh = true)
-        triggerAlert(
-            TradeAlert(
-                symbol = "PROXY",
-                title = if (host.isNotBlank() && port > 0) "ĐÃ LƯU CẤU HÌNH PROXY" else "ĐÃ TẮT PROXY",
-                message = if (host.isNotBlank() && port > 0)
-                    "Đã lưu và kích hoạt Proxy $proxyType://${host.trim()}:$port. Các yêu cầu Binance Futures sẽ được định tuyến qua Proxy để vượt hạn chế vùng."
-                else
-                    "Đã tắt Proxy. Kết nối trực tiếp được khôi phục.",
-                type = AlertType.INFO
-            )
-        )
     }
 
-    /**
-     * Xóa cấu hình Proxy và khôi phục kết nối trực tiếp bình thường.
-     */
     fun clearProxyConfig() {
         secureApiStorage.clearProxyConfig()
         BinanceClient.updateProxy("", 0)
         _apiConfig.value = secureApiStorage.loadConfig()
         fetchPublicIpAddress(forceRefresh = true)
-        triggerAlert(
-            TradeAlert(
-                symbol = "PROXY",
-                title = "ĐÃ TẮT PROXY",
-                message = "Đã xóa cấu hình Proxy, quay lại kết nối trực tiếp bình thường.",
-                type = AlertType.INFO
-            )
-        )
     }
 
-    /**
-     * Tải toàn bộ danh mục từ Binance Futures (số dư các ví, vị thế mở, lệnh chờ).
-     */
     fun refreshBinancePortfolio() {
         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
         if (apiKey.isBlank() || apiSecret.isBlank()) return
@@ -1715,7 +1576,6 @@ init {
             )
             _binancePortfolio.value = portfolio
             if (portfolio.isLiveConnected) {
-                // Đồng bộ trực tiếp lệnh đang mở từ Binance Demo vào app
                 repository.syncWithBinanceLivePositions(portfolio.positions)
                 _apiConfig.value = _apiConfig.value.copy(
                     isConnected = true,
@@ -1727,12 +1587,8 @@ init {
         }
     }
 
-    /**
-     * Kiểm tra chính xác lệnh đã đưa lên Binance chưa qua API GET /fapi/v1/order.
-     */
     fun verifyOrderOnBinance(symbol: String, orderId: Long) {
         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-
         viewModelScope.launch {
             _isVerifyingOrder.value = true
             val detail = BinanceFuturesApiVerifier.checkOrderStatus(
@@ -1751,29 +1607,15 @@ init {
         _orderVerificationDetail.value = null
     }
 
-    /**
-     * Toggles live trading vs simulation mode.
-     */
     fun setLiveTradingEnabled(enabled: Boolean) {
         secureApiStorage.setLiveTradingEnabled(enabled)
         _apiConfig.value = _apiConfig.value.copy(liveTradingEnabled = enabled)
     }
 
-    /**
-     * Removes API credentials securely from device storage.
-     */
     fun clearApiCredentials() {
         secureApiStorage.clearCredentials()
         _apiConfig.value = BinanceApiConfig()
         _binancePortfolio.value = BinancePortfolio()
-        triggerAlert(
-            TradeAlert(
-                symbol = "BINANCE_API",
-                title = "ĐÃ XÓA KHÓA API",
-                message = "Đã xóa toàn bộ khóa API khỏi thiết bị. Ứng dụng đã chuyển về Chế độ Mô phỏng.",
-                type = AlertType.INFO
-            )
-        )
     }
 
     override fun onCleared() {
