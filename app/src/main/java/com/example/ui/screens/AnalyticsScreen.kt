@@ -3,43 +3,18 @@ package com.example.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Tune
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -50,67 +25,75 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BacktestConfig
+import com.example.model.BasketBacktestReport
+import com.example.model.BasketCycleResult
 import com.example.model.TradePosition
 import com.example.ui.MainViewModel
-import com.example.ui.theme.CryptoGold
-import com.example.ui.theme.CryptoGreen
-import com.example.ui.theme.CryptoRed
-import com.example.ui.theme.DarkBorder
-import com.example.ui.theme.DarkSurface
-import com.example.ui.theme.DarkSurfaceElevated
-import com.example.ui.theme.DarkSurfaceHighlight
-import com.example.ui.theme.TextMuted
+import com.example.ui.theme.*
 import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import java.util.*
 
 @Composable
 fun AnalyticsScreen(
     viewModel: MainViewModel,
-    closedPositions: List<TradePosition>,
+    closedPositions: List<TradePosition> = emptyList(),
     modifier: Modifier = Modifier
 ) {
     val uiState by viewModel.uiState.collectAsState()
-    var selectedDays by remember { mutableStateOf(180) }
+    val isRunning = uiState.isBasketBacktesting
+    val report = uiState.basketReport
 
-    // Các biến trạng thái lưu giá trị tùy chỉnh thủ công
-    var capitalInput by remember { mutableStateOf("10000") }
-    var perTradePctInput by remember { mutableStateOf("1.5") }
-    var maxAllocationPctInput by remember { mutableStateOf("60") }
-    var targetRoiPctInput by remember { mutableStateOf("1.0") }
+    // 1. Số ngày kiểm tra tùy chỉnh
+    var daysText by remember { mutableStateOf("180") }
 
-    val dateFormat = remember { SimpleDateFormat("dd/MM/yyyy", Locale.getDefault()) }
+    // 2. Các thông số cấu hình giỏ lệnh & quản trị vốn
+    var initialCapitalText by remember { mutableStateOf("10000") }
+    var perTradePctText by remember { mutableStateOf("1.5") }
+    var maxAllocationPctText by remember { mutableStateOf("60") }
+    var targetRoiPctText by remember { mutableStateOf("1.0") }
+
+    // 3. Hai thông số van an toàn & bộ lọc thanh khoản
+    var maxD1ChangePctText by remember { mutableStateOf("17.5") }
+    var minQuoteVolumeText by remember { mutableStateOf("5000000") }
 
     LazyColumn(
         modifier = modifier
             .fillMaxSize()
             .background(DarkSurface)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(bottom = 20.dp)
+            .padding(horizontal = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = 24.dp)
     ) {
-        // TIÊU ĐỀ
+        // --- TIÊU ĐỀ MÀN HÌNH ---
         item {
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CryptoGold))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "BACKTEST BASKET D1 MOMENTUM",
-                            color = Color.White,
-                            fontSize = 15.sp,
-                            fontWeight = FontWeight.Bold
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = CryptoGold.copy(alpha = 0.15f),
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Icon(
+                            imageVector = Icons.Default.AutoGraph,
+                            contentDescription = null,
+                            tint = CryptoGold,
+                            modifier = Modifier.size(20.dp)
                         )
                     }
+                }
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
                     Text(
-                        text = "Tùy chỉnh thông số quản trị vốn • Nến Binance Mainnet",
+                        text = "Backtest Basket D1 Momentum",
+                        color = Color.White,
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Quét 07:00 AM (UTC+7) • Long Cross 1x • Binance Mainnet",
                         color = TextMuted,
                         fontSize = 11.sp
                     )
@@ -118,336 +101,437 @@ fun AnalyticsScreen(
             }
         }
 
-        // BẢNG ĐIỀU CHỈNH THÔNG SỐ QUẢN TRỊ VỐN THỦ CÔNG
+        // --- BẢNG CẤU HÌNH THÔNG SỐ BACKTEST (6 THÔNG SỐ ĐẦY ĐỦ) ---
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-                border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f))
+                border = BorderStroke(1.dp, DarkBorder)
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(imageVector = Icons.Default.Tune, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(text = "Cấu Hình Quản Trị Vốn & Mở Giỏ Lệnh", color = CryptoGold, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    // HÀNG 1: VỐN BAN ĐẦU & KHUNG THỜI GIAN
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = capitalInput,
-                            onValueChange = { capitalInput = it },
-                            label = { Text("Vốn gốc (USDT)", fontSize = 10.sp) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedLabelColor = CryptoGold,
-                                unfocusedLabelColor = TextMuted
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Tune,
+                                contentDescription = null,
+                                tint = CryptoGold,
+                                modifier = Modifier.size(16.dp)
                             )
-                        )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Cấu Hình & Quản Trị Vốn",
+                                color = Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
 
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Khung ngày test", color = TextMuted, fontSize = 10.sp, modifier = Modifier.padding(bottom = 4.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                listOf(90, 180).forEach { days ->
-                                    Surface(
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(56.dp)
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { selectedDays = days },
-                                        color = if (selectedDays == days) CryptoGold else DarkSurfaceHighlight
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "$days ngày",
-                                                color = if (selectedDays == days) Color.Black else Color.White,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
+                        // HUY HIỆU XÁC NHẬN CHẾ ĐỘ AN TOÀN CROSS 1X
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = CryptoGreen.copy(alpha = 0.15f),
+                            border = BorderStroke(0.5.dp, CryptoGreen.copy(alpha = 0.4f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Security,
+                                    contentDescription = null,
+                                    tint = CryptoGreen,
+                                    modifier = Modifier.size(11.dp)
+                                )
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text(
+                                    text = "Margin: Cross | Leverage: 1x",
+                                    color = CryptoGreen,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    // HÀNG 2: 3 THÔNG SỐ VỐN/LỆNH - TRẦN GIẢI NGÂN - CHỐT LỜI
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // HÀNG 1: SỐ NGÀY BACKTEST TÙY CHỈNH & CÁC NÚT CHỌN NHANH
+                    Text(text = "Số ngày kiểm tra (Klines D1)", color = TextMuted, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         OutlinedTextField(
-                            value = perTradePctInput,
-                            onValueChange = { perTradePctInput = it },
-                            label = { Text("Vốn/lệnh (%)", fontSize = 10.sp) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedLabelColor = CryptoGold,
-                                unfocusedLabelColor = TextMuted
-                            )
-                        )
-
-                        OutlinedTextField(
-                            value = maxAllocationPctInput,
-                            onValueChange = { maxAllocationPctInput = it },
-                            label = { Text("Trần vốn (%)", fontSize = 10.sp) },
+                            value = daysText,
+                            onValueChange = { daysText = it.filter { char -> char.isDigit() } },
+                            modifier = Modifier.weight(1.2f).height(50.dp),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            modifier = Modifier.weight(1f),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = CryptoGold,
                                 unfocusedBorderColor = DarkBorder,
-                                focusedLabelColor = CryptoGold,
-                                unfocusedLabelColor = TextMuted
-                            )
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                         )
 
-                        OutlinedTextField(
-                            value = targetRoiPctInput,
-                            onValueChange = { targetRoiPctInput = it },
-                            label = { Text("Chốt giỏ (%)", fontSize = 10.sp) },
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            modifier = Modifier.weight(1f),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedLabelColor = CryptoGold,
-                                unfocusedLabelColor = TextMuted
-                            )
-                        )
+                        listOf("60", "90", "180", "360").forEach { d ->
+                            Surface(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { daysText = d },
+                                color = if (daysText == d) CryptoGold else DarkSurfaceHighlight,
+                                border = BorderStroke(0.5.dp, if (daysText == d) CryptoGold else DarkBorder)
+                            ) {
+                                Text(
+                                    text = "${d}d",
+                                    color = if (daysText == d) Color.Black else Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                )
+                            }
+                        }
                     }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
 
-                    // NÚT BẮT ĐẦU CHẠY BACKTEST THEO CONFIG TÙY CHỌN
+                    // HÀNG 2: VỐN BAN ĐẦU & TỶ LỆ VỐN/LỆNH
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Vốn ban đầu (USDT)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = initialCapitalText,
+                                onValueChange = { initialCapitalText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Vốn/Lệnh (%)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = perTradePctText,
+                                onValueChange = { perTradePctText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // HÀNG 3: TRẦN GIẢI NGÂN & MỤC TIÊU TP GIỎ
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Trần giải ngân (%)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = maxAllocationPctText,
+                                onValueChange = { maxAllocationPctText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Mục tiêu TP Giỏ (%)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = targetRoiPctText,
+                                onValueChange = { targetRoiPctText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    // HÀNG 4: NGƯỠNG CHẶN TRÊN NẾN D1 & LỌC THANH KHOẢN 24H
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Chặn trên nến D1 (%)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = maxD1ChangePctText,
+                                onValueChange = { maxD1ChangePctText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Lọc Vol 24h (USDT)", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = minQuoteVolumeText,
+                                onValueChange = { minQuoteVolumeText = it },
+                                modifier = Modifier.fillMaxWidth().height(50.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = CryptoGold,
+                                    unfocusedBorderColor = DarkBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(14.dp))
+
+                    // NÚT BẤM CHẠY BACKTEST
                     Button(
                         onClick = {
-                            val cap = capitalInput.replace(",", ".").toDoubleOrNull() ?: 10000.0
-                            val perTrade = (perTradePctInput.replace(",", ".").toDoubleOrNull() ?: 1.5) / 100.0
-                            val maxAlloc = (maxAllocationPctInput.replace(",", ".").toDoubleOrNull() ?: 60.0) / 100.0
-                            val targetRoi = (targetRoiPctInput.replace(",", ".").toDoubleOrNull() ?: 1.0) / 100.0
+                            val days = daysText.toIntOrNull() ?: 180
+                            val initCap = initialCapitalText.toDoubleOrNull() ?: 10000.0
+                            val perTrade = (perTradePctText.toDoubleOrNull() ?: 1.5) / 100.0
+                            val maxAlloc = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0
+                            val targetRoi = (targetRoiPctText.toDoubleOrNull() ?: 1.0) / 100.0
+                            val maxD1 = maxD1ChangePctText.toDoubleOrNull() ?: 17.5
+                            val minVol = minQuoteVolumeText.toDoubleOrNull() ?: 5000000.0
 
                             val customConfig = BacktestConfig(
-                                initialCapital = cap,
+                                initialCapital = initCap,
                                 perTradePct = perTrade,
                                 maxPortfolioAllocation = maxAlloc,
-                                targetPortfolioRoi = targetRoi
+                                targetPortfolioRoi = targetRoi,
+                                maxD1ChangePct = maxD1,
+                                minQuoteVolume24h = minVol
                             )
-                            viewModel.runBasketStrategyBacktest(days = selectedDays, config = customConfig)
+
+                            viewModel.runBasketStrategyBacktest(days = days, config = customConfig)
                         },
-                        enabled = !uiState.isBasketBacktesting,
-                        modifier = Modifier.fillMaxWidth().height(42.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = CryptoGold),
-                        shape = RoundedCornerShape(8.dp)
+                        enabled = !isRunning,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(44.dp),
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = CryptoGold,
+                            contentColor = Color.Black
+                        )
                     ) {
-                        if (uiState.isBasketBacktesting) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.Black, strokeWidth = 2.dp)
+                        if (isRunning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(18.dp),
+                                color = Color.Black,
+                                strokeWidth = 2.dp
+                            )
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = "Đang quét nến Mainnet...", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "Đang tải nến & tính toán...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         } else {
-                            Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black, modifier = Modifier.size(16.dp))
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = "Chạy Backtest Giỏ Lệnh ($selectedDays ngày)", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "Bắt Đầu Chạy Backtest", fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
             }
         }
 
-        // BÁO CÁO KẾT QUẢ ĐẦU RA (OUTPUT METRICS)
-        uiState.basketReport?.let { report ->
+        // --- KẾT QUẢ BÁO CÁO (NẾU CÓ) ---
+        if (report != null) {
             item {
-                if (report.errorMessage != null) {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-                        border = BorderStroke(1.dp, CryptoRed)
-                    ) {
-                        Text(
-                            text = report.errorMessage,
-                            color = CryptoRed,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(14.dp)
-                        )
-                    }
-                } else {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-                        border = BorderStroke(1.dp, CryptoGold)
-                    ) {
-                        Column(modifier = Modifier.padding(14.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "BÁO CÁO HIỆU SUẤT CHIẾN LƯỢC",
-                                    color = CryptoGold,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Vốn gốc: $${String.format(Locale.US, "%,.0f", report.initialCapital)}",
-                                    color = TextMuted,
-                                    fontSize = 11.sp,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
-                                    Text("Tổng Chu Kỳ (Cycles)", color = TextMuted, fontSize = 10.sp)
-                                    Text("${report.totalCycles} giỏ", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                    Text("Winrate Giỏ", color = TextMuted, fontSize = 10.sp)
-                                    Text("${report.winratePercent}%", color = CryptoGreen, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("Thời gian giữ TB", color = TextMuted, fontSize = 10.sp)
-                                    Text("${String.format(Locale.US, "%.1f", report.averageHoldingDays)} ngày", color = Color.White, fontSize = 15.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(10.dp))
-                            HorizontalDivider(color = DarkBorder)
-                            Spacer(modifier = Modifier.height(10.dp))
-
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Column {
-                                    Text("Lợi Nhuận Ròng (Net Profit)", color = TextMuted, fontSize = 10.sp)
-                                    Text(
-                                        text = "+$${String.format(Locale.US, "%.2f", report.netProfitUsdt)} (+${String.format(Locale.US, "%.2f", report.netProfitPercent)}%)",
-                                        color = CryptoGreen,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                                Column(horizontalAlignment = Alignment.End) {
-                                    Text("Max Drawdown", color = TextMuted, fontSize = 10.sp)
-                                    Text(
-                                        text = "-${String.format(Locale.US, "%.2f", report.maxDrawdownPercent)}%",
-                                        color = if (report.maxDrawdownPercent > 10.0) CryptoRed else CryptoGold,
-                                        fontSize = 14.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        fontFamily = FontFamily.Monospace
-                                    )
-                                }
-                            }
-
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = "Số dư ví kết thúc: $${String.format(Locale.US, "%.2f", report.finalEquity)} USDT",
-                                color = TextMuted,
-                                fontSize = 11.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    }
-                }
+                BasketReportOverviewCard(report = report)
             }
 
-            // LỊCH SỬ TỪNG GIỎ ĐÃ CHỐT
             if (report.cycles.isNotEmpty()) {
                 item {
                     Text(
-                        text = "LỊCH SỬ ${report.cycles.size} CHU KỲ GIỎ ĐÃ CHỐT THÀNH CÔNG",
-                        color = CryptoGold,
-                        fontSize = 12.sp,
+                        text = "Lịch Sử Chu Kỳ Giỏ Lệnh (${report.cycles.size} chu kỳ)",
+                        color = Color.White,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(top = 8.dp, bottom = 2.dp)
+                        modifier = Modifier.padding(top = 6.dp)
                     )
                 }
 
                 items(report.cycles, key = { it.cycleIndex }) { cycle ->
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(10.dp),
-                        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-                        border = BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.3f))
-                    ) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Surface(
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = CryptoGreen.copy(alpha = 0.2f)
-                                    ) {
-                                        Text(
-                                            text = "GIỎ #${cycle.cycleIndex}",
-                                            color = CryptoGreen,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold,
-                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "${cycle.coinsCount} coins",
-                                        color = Color.White,
-                                        fontSize = 12.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-
-                                Text(
-                                    text = "+$${String.format(Locale.US, "%.2f", cycle.realizedProfitUsdt)} (+${String.format(Locale.US, "%.1f", cycle.basketRoiPercent)}%)",
-                                    color = CryptoGreen,
-                                    fontSize = 13.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    fontFamily = FontFamily.Monospace
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(6.dp))
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                Text(
-                                    text = "${dateFormat.format(Date(cycle.openTime))} ➔ ${dateFormat.format(Date(cycle.closeTime))}",
-                                    color = TextMuted,
-                                    fontSize = 10.sp
-                                )
-                                Text(
-                                    text = "Giữ: ${String.format(Locale.US, "%.1f", cycle.holdingDays)} ngày",
-                                    color = CryptoGold,
-                                    fontSize = 10.sp
-                                )
-                            }
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            Text(
-                                text = "Danh sách: " + cycle.symbolsList.take(8).joinToString(", ") { it.removeSuffix("USDT") } + (if (cycle.symbolsList.size > 8) "..." else ""),
-                                color = TextMuted,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
+                    BasketCycleItemCard(cycle = cycle)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun BasketReportOverviewCard(report: BasketBacktestReport) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f))
+    ) {
+        Column(modifier = Modifier.padding(14.dp)) {
+            Text(
+                text = "KẾT QUẢ HIỆU SUẤT BACKTEST",
+                color = CryptoGold,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Tổng chu kỳ", color = TextMuted, fontSize = 10.sp)
+                    Text("${report.totalCycles} giỏ", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Tỷ lệ thắng", color = TextMuted, fontSize = 10.sp)
+                    Text("${String.format(Locale.US, "%.1f", report.winratePercent)}%", color = CryptoGreen, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Giữ trung bình", color = TextMuted, fontSize = 10.sp)
+                    Text("${String.format(Locale.US, "%.1f", report.averageHoldingDays)} ngày", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Column {
+                    Text("Lợi nhuận ròng", color = TextMuted, fontSize = 10.sp)
+                    val isProfit = report.netProfitUsdt >= 0
+                    Text(
+                        text = "${if (isProfit) "+" else ""}$${String.format(Locale.US, "%,.2f", report.netProfitUsdt)} (${if (isProfit) "+" else ""}${String.format(Locale.US, "%.1f", report.netProfitPercent)}%)",
+                        color = if (isProfit) CryptoGreen else CryptoRed,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("Max Drawdown", color = TextMuted, fontSize = 10.sp)
+                    Text(
+                        text = "-${String.format(Locale.US, "%.1f", report.maxDrawdownPercent)}%",
+                        color = CryptoRed,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun BasketCycleItemCard(cycle: BasketCycleResult) {
+    val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+    val openDateStr = sdf.format(Date(cycle.openTime))
+    val closeDateStr = sdf.format(Date(cycle.closeTime))
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        colors = CardDefaults.cardColors(containerColor = DarkSurfaceHighlight),
+        border = BorderStroke(0.5.dp, DarkBorder)
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Giỏ #${cycle.cycleIndex} • ${cycle.coinsCount} coins",
+                    color = Color.White,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "+$${String.format(Locale.US, "%.2f", cycle.realizedProfitUsdt)} (+${String.format(Locale.US, "%.1f", cycle.basketRoiPercent)}%)",
+                    color = CryptoGreen,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "$openDateStr ➔ $closeDateStr (${String.format(Locale.US, "%.1f", cycle.holdingDays)} ngày)",
+                    color = TextMuted,
+                    fontSize = 10.sp
+                )
+                Text(
+                    text = "Vốn: $${String.format(Locale.US, "%,.0f", cycle.totalInvested)}",
+                    color = Color.White,
+                    fontSize = 10.sp,
+                    fontFamily = FontFamily.Monospace
+                )
             }
         }
     }

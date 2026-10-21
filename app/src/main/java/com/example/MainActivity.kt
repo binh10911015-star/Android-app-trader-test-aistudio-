@@ -1,6 +1,17 @@
 package com.example
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import android.os.IBinder
+import android.os.PowerManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
@@ -8,7 +19,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,14 +32,13 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoGraph
-import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
-import androidx.compose.material.icons.filled.VpnKey
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -53,6 +62,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.app.NotificationCompat
 import com.example.ui.MainViewModel
 import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.TradeAlertBanner
@@ -65,21 +75,18 @@ import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
 import com.example.ui.theme.CryptoRed
 import com.example.ui.theme.DarkBg
-import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
-import com.example.ui.theme.DarkSurfaceHighlight
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TextMuted
-import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
 
 enum class NavScreen {
     MARKET,
-    DETAIL,
     POSITIONS,
     ANALYTICS,
-    API_CONFIG
+    API_CONFIG,
+    DETAIL
 }
 
 class MainActivity : ComponentActivity() {
@@ -89,6 +96,14 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        // Xin quyền hiển thị thông báo trên Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
+
         setContent {
             MyApplicationTheme {
                 MainApp(viewModel = viewModel)
@@ -111,8 +126,8 @@ fun MainApp(viewModel: MainViewModel) {
 
     var showMainnetPinDialog by remember { mutableStateOf(false) }
 
-    // Số lượng lệnh Paper Trade đang mở
-    val paperOpenCount = openPositions.count { !it.isLiveBinanceOrder }
+    // Số lượng lệnh đang mở
+    val openCount = if (apiConfig.isConnected) binancePortfolio.positions.size else openPositions.size
 
     if (showMainnetPinDialog) {
         PinVerificationDialog(
@@ -126,9 +141,9 @@ fun MainApp(viewModel: MainViewModel) {
         )
     }
 
-    // Handle back button on sub-screens
+    // Xử lý nút Back của Android khi đang ở màn hình phụ
     BackHandler(enabled = currentScreen != NavScreen.MARKET) {
-        currentScreen = previousScreen
+        currentScreen = if (currentScreen == NavScreen.DETAIL && previousScreen != NavScreen.DETAIL) previousScreen else NavScreen.MARKET
     }
 
     Scaffold(
@@ -137,12 +152,13 @@ fun MainApp(viewModel: MainViewModel) {
         contentWindowInsets = WindowInsets.safeDrawing,
         bottomBar = {
             NavigationBar(
-                containerColor = DarkSurface,
+                containerColor = DarkSurfaceElevated,
+                contentColor = Color.White,
                 modifier = Modifier
                     .windowInsetsPadding(WindowInsets.navigationBars)
                     .testTag("bottom_nav_bar")
             ) {
-                // 1. Thị Trường
+                // Tab 1: Thị Trường
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.MARKET,
                     onClick = {
@@ -159,13 +175,13 @@ fun MainApp(viewModel: MainViewModel) {
                         selectedIconColor = DarkBg,
                         selectedTextColor = CryptoGold,
                         indicatorColor = CryptoGold,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
                     ),
                     modifier = Modifier.testTag("nav_market")
                 )
 
-                // 2. Biểu Đồ (Nến & Chỉ Báo)
+                // Tab 2: Biểu Đồ
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.DETAIL,
                     onClick = {
@@ -182,13 +198,13 @@ fun MainApp(viewModel: MainViewModel) {
                         selectedIconColor = DarkBg,
                         selectedTextColor = CryptoGold,
                         indicatorColor = CryptoGold,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
                     ),
                     modifier = Modifier.testTag("nav_detail")
                 )
 
-                // 3. Paper Trade (Trước đây là Vị Thế)
+                // Tab 3: Vị Thế
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.POSITIONS,
                     onClick = {
@@ -198,33 +214,33 @@ fun MainApp(viewModel: MainViewModel) {
                     icon = {
                         BadgedBox(
                             badge = {
-                                if (paperOpenCount > 0) {
+                                if (openCount > 0) {
                                     Badge(
                                         containerColor = CryptoGold,
                                         contentColor = DarkBg
                                     ) {
-                                        Text("$paperOpenCount", fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                        Text("$openCount", fontSize = 10.sp, fontWeight = FontWeight.Bold)
                                     }
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Paper Trade")
+                            Icon(Icons.Default.AccountBalanceWallet, contentDescription = "Vị thế")
                         }
                     },
                     label = {
-                        Text("Paper Trade", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Vị thế", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = DarkBg,
                         selectedTextColor = CryptoGold,
                         indicatorColor = CryptoGold,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
                     ),
                     modifier = Modifier.testTag("nav_positions")
                 )
 
-                // 4. Thống Kê PnL
+                // Tab 3: Thống kê
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.ANALYTICS,
                     onClick = {
@@ -232,7 +248,7 @@ fun MainApp(viewModel: MainViewModel) {
                         currentScreen = NavScreen.ANALYTICS
                     },
                     icon = {
-                        Icon(Icons.Default.BarChart, contentDescription = "Thống kê")
+                        Icon(Icons.Default.Analytics, contentDescription = "Thống kê")
                     },
                     label = {
                         Text("Thống kê", fontSize = 11.sp, fontWeight = FontWeight.Medium)
@@ -241,13 +257,13 @@ fun MainApp(viewModel: MainViewModel) {
                         selectedIconColor = DarkBg,
                         selectedTextColor = CryptoGold,
                         indicatorColor = CryptoGold,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
                     ),
                     modifier = Modifier.testTag("nav_analytics")
                 )
 
-                // 5. Kết Nối API Binance
+                // Tab 4: Cài Đặt (API Config)
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.API_CONFIG,
                     onClick = {
@@ -267,20 +283,20 @@ fun MainApp(viewModel: MainViewModel) {
                                 }
                             }
                         ) {
-                            Icon(Icons.Default.VpnKey, contentDescription = "Khóa API")
+                            Icon(Icons.Default.Settings, contentDescription = "Cài đặt")
                         }
                     },
                     label = {
-                        Text("API Key", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Cài đặt", fontSize = 11.sp, fontWeight = FontWeight.Medium)
                     },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = DarkBg,
                         selectedTextColor = CryptoGold,
                         indicatorColor = CryptoGold,
-                        unselectedIconColor = TextSecondary,
-                        unselectedTextColor = TextSecondary
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
                     ),
-                    modifier = Modifier.testTag("nav_api_config")
+                    modifier = Modifier.testTag("nav_settings")
                 )
             }
         }
@@ -292,18 +308,18 @@ fun MainApp(viewModel: MainViewModel) {
         ) {
             val isLiveMainnet = !apiConfig.isTestnet && apiConfig.liveTradingEnabled
 
-            // Red warning risk badge when in LIVE MAINNET
+            // Cảnh báo màu đỏ khi giao dịch Live Mainnet
             if (isLiveMainnet) {
                 LiveMainnetRiskWarningBanner()
             }
 
-            // Live Floating Notification Banner for Auto-Trades / TP / SL
+            // Thanh thông báo lệnh nổi (Floating Alert Banner)
             TradeAlertBanner(
                 alert = uiState.activeAlert,
                 onDismiss = { viewModel.dismissAlert() }
             )
 
-            // Screen Content Crossfade
+            // Khung nội dung màn hình chính
             Box(modifier = Modifier.weight(1f)) {
                 Crossfade(targetState = currentScreen, label = "ScreenTransition") { screen ->
                     when (screen) {
@@ -323,17 +339,6 @@ fun MainApp(viewModel: MainViewModel) {
                                 onOpenApiConfig = {
                                     previousScreen = NavScreen.MARKET
                                     currentScreen = NavScreen.API_CONFIG
-                                }
-                            )
-                        }
-
-                        NavScreen.DETAIL -> {
-                            CoinDetailScreen(
-                                viewModel = viewModel,
-                                uiState = uiState,
-                                openPositions = openPositions,
-                                onBack = {
-                                    currentScreen = previousScreen
                                 }
                             )
                         }
@@ -368,7 +373,21 @@ fun MainApp(viewModel: MainViewModel) {
 
                         NavScreen.API_CONFIG -> {
                             ApiConfigScreen(
-                                viewModel = viewModel
+                                viewModel = viewModel,
+                                onBack = {
+                                    currentScreen = previousScreen
+                                }
+                            )
+                        }
+
+                        NavScreen.DETAIL -> {
+                            CoinDetailScreen(
+                                viewModel = viewModel,
+                                uiState = uiState,
+                                openPositions = openPositions,
+                                onBack = {
+                                    currentScreen = previousScreen
+                                }
                             )
                         }
                     }
@@ -379,7 +398,7 @@ fun MainApp(viewModel: MainViewModel) {
 }
 
 /**
- * Badge màu đỏ cảnh báo rủi ro vốn thật khi ở chế độ LIVE MAINNET
+ * Banner cảnh báo rủi ro vốn thật khi đang bật LIVE MAINNET
  */
 @Composable
 fun LiveMainnetRiskWarningBanner() {
@@ -413,11 +432,119 @@ fun LiveMainnetRiskWarningBanner() {
                     fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Mọi lệnh đóng/mở & TP/SL sẽ được gửi thẳng lên sàn Binance Mainnet qua Proxy an toàn.",
+                    text = "Mọi lệnh đóng/mở & TP/SL sẽ được gửi thẳng lên sàn Binance Mainnet.",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 9.sp
                 )
             }
         }
     }
+}
+
+/**
+ * Service chạy ngầm duy trì CPU & mạng liên tục 24/7 để quét nến 7h00 sáng và tính PnL 1s
+ */
+class TradingForegroundService : Service() {
+
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    companion object {
+        const val CHANNEL_ID = "trading_bot_channel"
+        const val NOTIFICATION_ID = 1001
+        const val ACTION_START = "ACTION_START_BOT"
+        const val ACTION_STOP = "ACTION_STOP_BOT"
+
+        fun startService(context: Context) {
+            val intent = Intent(context, TradingForegroundService::class.java).apply {
+                action = ACTION_START
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stopService(context: Context) {
+            val intent = Intent(context, TradingForegroundService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+    }
+
+    override fun onCreate() {
+        super.onCreate()
+        createNotificationChannel()
+
+        // Giữ CPU chạy liên tục khi tắt màn hình
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "CryptoTrader::BotWakeLock"
+        ).apply {
+            setReferenceCounted(false)
+            acquire(24 * 60 * 60 * 1000L) // Giữ wake lock 24 giờ
+        }
+    }
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        when (intent?.action) {
+            ACTION_STOP -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                } else {
+                    @Suppress("DEPRECATION")
+                    stopForeground(true)
+                }
+                stopSelf()
+            }
+            else -> {
+                val notification = buildNotification("Bot đang chạy ngầm • Giám sát PnL 1s & quét 7h00")
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        }
+        return START_STICKY // Tự động hồi sinh nếu hệ thống ép tắt do thiếu RAM
+    }
+
+    private fun buildNotification(contentText: String): Notification {
+        val pendingIntent = PendingIntent.getActivity(
+            this,
+            0,
+            Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("CryptoTrader Bot Active")
+            .setContentText(contentText)
+            .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                "Bot Trading Service",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Kênh thông báo duy trì bot chạy liên tục"
+            }
+            val manager = getSystemService(NotificationManager::class.java)
+            manager?.createNotificationChannel(channel)
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        wakeLock?.let {
+            if (it.isHeld) it.release()
+        }
+    }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }

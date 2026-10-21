@@ -295,7 +295,7 @@ data class TradeSettings(
     val useSuperTrendFilter: Boolean = true,
     val timeframe: String = "1d",
     val simulatedBalanceUsdt: Double = 10000.0,
-    val leverage: Int = 10
+    val leverage: Int = 1
 ) {
     fun calculatePositionVolume(customBalance: Double = simulatedBalanceUsdt): Double {
         return when (volumeType) {

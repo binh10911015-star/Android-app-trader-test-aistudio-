@@ -73,7 +73,7 @@ data class UiState(
     val isKlineLoading: Boolean = false,
     val isRefreshing: Boolean = false,
     val isScanning: Boolean = false,
-    val settings: TradeSettings = TradeSettings(),
+    val settings: TradeSettings = TradeSettings(leverage = 1),
     val activeAlert: TradeAlert? = null,
     val alertHistory: List<TradeAlert> = emptyList(),
     val scanProgress: String = "",
@@ -120,7 +120,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var autoTradeJob: Job? = null
     private var openPositionsJob: Job? = null
     private var tickerPollJob: Job? = null
+    private var klinePollJob: Job? = null
     private var schedulerJob: Job? = null
+    private var webSocketClient: com.example.network.BinanceWebSocketClient? = null
 
     private val _searchQueryFlow = MutableStateFlow("")
 
@@ -158,7 +160,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         setupDebouncedSearch()
         loadInitialData()
+        initWebSocket()
         startTickerPolling()
+        startKlinePolling()
         startScanScheduler()
         fetchPublicIpAddress()
         if (loadedConfig.isTestnet) {
@@ -300,6 +304,57 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    private fun initWebSocket() {
+        webSocketClient?.stop()
+        val isTestnet = _apiConfig.value.isTestnet
+        webSocketClient = com.example.network.BinanceWebSocketClient { updates ->
+            handleWebSocketTickers(updates)
+        }
+        webSocketClient?.start(isTestnet)
+    }
+
+    private fun handleWebSocketTickers(updates: List<com.example.network.MiniTickerUpdate>) {
+        if (updates.isEmpty()) return
+        val updateMap = updates.associateBy { it.symbol }
+
+        // Cập nhật giá nến và tickers trong bộ nhớ (0 REST weight)
+        val currentTickers = _uiState.value.tickers
+        if (currentTickers.isNotEmpty()) {
+            val updated = currentTickers.map { ticker ->
+                val u = updateMap[ticker.symbol]
+                if (u != null) {
+                    val changePct = if (u.openPrice > 0.0) ((u.closePrice - u.openPrice) / u.openPrice) * 100.0 else ticker.priceChangePercent
+                    ticker.copy(
+                        lastPrice = u.closePrice,
+                        highPrice = u.highPrice,
+                        lowPrice = u.lowPrice,
+                        volume = u.volume,
+                        priceChangePercent = changePct
+                    )
+                } else {
+                    ticker
+                }
+            }
+            _uiState.value = _uiState.value.copy(tickers = updated)
+            applyFilters()
+        }
+
+        // Cập nhật giá thời gian thực cho các vị thế mở để tính TP/SL tức thì
+        val priceMap = updates.associate { it.symbol to it.closePrice }
+        viewModelScope.launch(Dispatchers.IO) {
+            val res = repository.updatePositionsWithPrices(priceMap)
+            for (alert in res.alerts) {
+                triggerAlert(alert)
+            }
+            if (res.totalReturnedCapital > 0.0) {
+                val newBal = _uiState.value.settings.simulatedBalanceUsdt + res.totalReturnedCapital
+                _uiState.value = _uiState.value.copy(
+                    settings = _uiState.value.settings.updateBalance(newBal)
+                )
+            }
+        }
+    }
+
     fun refreshTickers() {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isRefreshing = true)
@@ -312,72 +367,94 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 for (alert in updateResult.alerts) {
                     triggerAlert(alert)
                 }
-                var totalReturned = updateResult.totalReturnedCapital
-
-                val targetTp = _uiState.value.settings.portfolioTakeProfitPercent
-                val currentOpen = repository.getOpenPositionsList()
-
-                if (targetTp > 0.0 && currentOpen.isNotEmpty()) {
-                    val totalWallet = _binancePortfolio.value.totalWalletBalance
-                    val totalUnrealized = _binancePortfolio.value.totalUnrealizedProfit
-
-                    val currentPnlPercent = if (_apiConfig.value.isConnected && totalWallet > 0.0) {
-                        (totalUnrealized / totalWallet) * 100.0
-                    } else {
-                        var totalInvested = 0.0
-                        var totalCurrentValue = 0.0
-                        for (pos in currentOpen) {
-                            val currentPrice = priceMap[pos.symbol] ?: pos.currentPrice
-                            val pnl = (currentPrice - pos.entryPrice) * pos.amount
-                            totalInvested += pos.investedUsdt
-                            totalCurrentValue += (pos.investedUsdt + pnl)
-                        }
-                        if (totalInvested > 0.0) ((totalCurrentValue - totalInvested) / totalInvested) * 100.0 else 0.0
-                    }
-
-                    if (currentPnlPercent >= targetTp) {
-                        if (_apiConfig.value.isConnected) {
-                            val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                            for (pos in currentOpen.filter { it.isLiveBinanceOrder }) {
-                                val price = priceMap[pos.symbol] ?: pos.currentPrice
-                                BinanceFuturesApiVerifier.postMarketCloseOrder(
-                                    symbol = pos.symbol,
-                                    amount = pos.amount,
-                                    approxPrice = price,
-                                    apiKey = apiKey,
-                                    apiSecret = apiSecret,
-                                    isTestnet = isTestnet
-                                )
-                            }
-                        }
-                        
-                        val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
-                        for (alert in ptpResult.alerts) {
-                            triggerAlert(alert)
-                        }
-                        totalReturned += ptpResult.totalReturnedCapital
-                        
-                        if (_apiConfig.value.isConnected) {
-                            refreshBinancePortfolio()
-                        }
-                    }
-                }
-
-                if (totalReturned > 0.0) {
-                    val newBal = _uiState.value.settings.simulatedBalanceUsdt + totalReturned
+                if (updateResult.totalReturnedCapital > 0.0) {
+                    val newBal = _uiState.value.settings.simulatedBalanceUsdt + updateResult.totalReturnedCapital
                     _uiState.value = _uiState.value.copy(
                         settings = _uiState.value.settings.updateBalance(newBal)
                     )
                 }
+                checkPortfolioTakeProfit(priceMap)
             }.onFailure {
                 _uiState.value = _uiState.value.copy(isRefreshing = false)
             }
         }
     }
 
-    fun loadKlineForSymbol(symbol: String, timeframe: String) {
+    private fun checkPortfolioTakeProfit(overridePriceMap: Map<String, Double>? = null) {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(isKlineLoading = true)
+            val priceMap = overridePriceMap ?: _uiState.value.tickers.associate { it.symbol to it.lastPrice }
+            val targetTp = _uiState.value.settings.portfolioTakeProfitPercent
+            val currentOpen = repository.getOpenPositionsList()
+            val livePositions = _binancePortfolio.value.positions
+
+            val isLiveConnected = _apiConfig.value.isConnected
+            val hasPositionsToMonitor = if (isLiveConnected) livePositions.isNotEmpty() else currentOpen.isNotEmpty()
+
+            if (targetTp > 0.0 && hasPositionsToMonitor) {
+                val currentPnlPercent = if (isLiveConnected) {
+                    val totalActiveMargin = livePositions.sumOf { pos ->
+                        if (pos.initialMargin > 0.0) {
+                            pos.initialMargin
+                        } else {
+                            (pos.absAmount * pos.entryPrice) / pos.leverage.coerceAtLeast(1)
+                        }
+                    }
+                    val totalUnrealized = _binancePortfolio.value.totalUnrealizedProfit
+                    if (totalActiveMargin > 0.0) (totalUnrealized / totalActiveMargin) * 100.0 else 0.0
+                } else {
+                    var totalInvested = 0.0
+                    var totalCurrentValue = 0.0
+                    for (pos in currentOpen) {
+                        val currentPrice = priceMap[pos.symbol] ?: pos.currentPrice
+                        val pnl = (currentPrice - pos.entryPrice) * pos.amount
+                        totalInvested += pos.investedUsdt
+                        totalCurrentValue += (pos.investedUsdt + pnl)
+                    }
+                    if (totalInvested > 0.0) ((totalCurrentValue - totalInvested) / totalInvested) * 100.0 else 0.0
+                }
+
+                if (currentPnlPercent >= targetTp) {
+                    if (isLiveConnected) {
+                        val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
+                        for (pos in livePositions) {
+                            val side = if (pos.isLong) "SELL" else "BUY"
+                            BinanceFuturesApiVerifier.postMarketCloseOrder(
+                                symbol = pos.symbol,
+                                amount = pos.absAmount,
+                                approxPrice = pos.markPrice,
+                                apiKey = apiKey,
+                                apiSecret = apiSecret,
+                                isTestnet = isTestnet,
+                                side = side
+                            )
+                        }
+                    }
+
+                    val ptpResult = repository.checkAndExecutePortfolioTakeProfit(priceMap, targetTp)
+                    for (alert in ptpResult.alerts) {
+                        triggerAlert(alert)
+                    }
+
+                    if (ptpResult.totalReturnedCapital > 0.0) {
+                        val newBal = _uiState.value.settings.simulatedBalanceUsdt + ptpResult.totalReturnedCapital
+                        _uiState.value = _uiState.value.copy(
+                            settings = _uiState.value.settings.updateBalance(newBal)
+                        )
+                    }
+
+                    if (isLiveConnected) {
+                        refreshBinancePortfolio()
+                    }
+                }
+            }
+        }
+    }
+
+    fun loadKlineForSymbol(symbol: String, timeframe: String, isBackground: Boolean = false) {
+        viewModelScope.launch {
+            if (!isBackground) {
+                _uiState.value = _uiState.value.copy(isKlineLoading = true)
+            }
             repository.getCandlesWithIndicators(symbol, timeframe).onSuccess { data ->
                 _uiState.value = _uiState.value.copy(
                     klineData = data,
@@ -385,30 +462,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 applyFilters()
             }.onFailure {
-                _uiState.value = _uiState.value.copy(isKlineLoading = false)
+                if (!isBackground) {
+                    _uiState.value = _uiState.value.copy(isKlineLoading = false)
+                }
             }
         }
     }
 
-    fun toggleAutoTrade(enabled: Boolean) {
-        val newSettings = _uiState.value.settings.copy(autoTradeEnabled = enabled)
+fun toggleAutoTrade(enabled: Boolean) {
+        val newSettings = _uiState.value.settings.copy(autoTradeEnabled = enabled, leverage = 1)
         _uiState.value = _uiState.value.copy(settings = newSettings)
 
+        val context = getApplication<Application>().applicationContext
+
         if (enabled) {
+            // Tự động khởi động Foreground Service chạy ngầm 24/7
+            com.example.TradingForegroundService.startService(context)
+
             val isD1 = _uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME
             val strategyTitle = if (isD1) "D1 SMA20 Breakout & Bùng Nổ Khối Lượng" else "4H SuperTrend & MA20"
 
             triggerAlert(
                 TradeAlert(
                     symbol = "BOT",
-                    title = "ĐÃ BẬT AUTO-TRADE",
-                    message = "Hệ thống bắt đầu quét và giao dịch tự động theo chiến lược: $strategyTitle.",
+                    title = "ĐÃ BẬT AUTO-TRADE (LONG 1X)",
+                    message = "Hệ thống bắt đầu quét và giao dịch tự động theo chiến lược: $strategyTitle (Mặc định Cross 1x, Foreground Service Active).",
                     type = AlertType.INFO
                 )
             )
 
             startAutoTradeLoop()
         } else {
+            // Tắt Foreground Service khi dừng Auto-Trade
+            com.example.TradingForegroundService.stopService(context)
+
             autoTradeJob?.cancel()
             autoTradeJob = null
             openPositionsJob?.cancel()
@@ -430,7 +517,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
   
     fun updatePortfolioTakeProfitPercent(targetPercent: Double) {
         val clamped = targetPercent.coerceAtLeast(0.5)
-        val updatedSettings = _uiState.value.settings.copy(portfolioTakeProfitPercent = clamped)
+        val updatedSettings = _uiState.value.settings.copy(portfolioTakeProfitPercent = clamped, leverage = 1)
         _uiState.value = _uiState.value.copy(settings = updatedSettings)
         
         triggerAlert(
@@ -444,13 +531,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateSettings(newSettings: TradeSettings) {
-        _uiState.value = _uiState.value.copy(settings = newSettings)
+        _uiState.value = _uiState.value.copy(settings = newSettings.copy(leverage = 1))
     }
 
     fun setRoiSortOrder(order: RoiSortOrder) {
         _uiState.value = _uiState.value.copy(roiSortOrder = order)
     }
 
+    /**
+     * Mua coin (Tự động hoặc Thủ công) - Ép cứng Cross Margin & Đòn bẩy 1x trên Binance
+     */
     fun executeBuy(symbol: String, isAuto: Boolean = false) {
         if (isAuto && !_uiState.value.settings.autoTradeEnabled) return
         viewModelScope.launch {
@@ -467,14 +557,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             if (isLive) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
+                val cleanSymbol = symbol.trim().uppercase()
 
                 _uiState.value = _uiState.value.copy(
                     isOpeningPositions = true,
-                    openingPositionsProgress = "Đang gửi lệnh MARKET $symbol lên Binance ($netLabel)..."
+                    openingPositionsProgress = "Đang cài đặt Cross 1x cho $cleanSymbol ($netLabel)..."
                 )
 
+                // 1. Chờ ép cài đặt Margin Type CROSSED và Leverage 1x lên sàn
+                withContext(Dispatchers.IO) {
+                    BinanceClient.setCrossMarginAndLeverage1x(cleanSymbol, apiKey, apiSecret, isTestnet)
+                    BinanceFuturesApiVerifier.setLeverage(cleanSymbol, 1, apiKey, apiSecret, isTestnet)
+                }
+
+                // Nghỉ 200ms để Binance cập nhật cấu hình đòn bẩy trên sổ lệnh sàn
+                delay(200L)
+
+                _uiState.value = _uiState.value.copy(
+                    openingPositionsProgress = "Đang gửi lệnh MARKET $cleanSymbol (1x)..."
+                )
+
+                // 2. Tiến hành đặt lệnh Market với đòn bẩy đã được chốt 1x
                 val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
-                    symbol = symbol,
+                    symbol = cleanSymbol,
                     side = "BUY",
                     targetUsdtAmount = volume,
                     approxPrice = price,
@@ -490,9 +595,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (orderResult.success) {
                     val alert = repository.executeSimulatedBuy(
-                        symbol = symbol,
+                        symbol = cleanSymbol,
                         currentPrice = price,
-                        settings = _uiState.value.settings,
+                        settings = _uiState.value.settings.copy(leverage = 1),
                         investedUsdt = volume,
                         isAutoTriggered = isAuto,
                         binanceOrderId = orderResult.orderId,
@@ -510,7 +615,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val fixNote = orderResult.autoFixApplied?.let { " ($it)" } ?: ""
                     triggerAlert(
                         TradeAlert(
-                            symbol = symbol,
+                            symbol = cleanSymbol,
                             title = "LỖI GỬI LỆNH LÊN BINANCE",
                             message = "${orderResult.errorMessage ?: "Không thể kết nối"}$fixNote",
                             type = AlertType.INFO
@@ -523,7 +628,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val alert = repository.executeSimulatedBuy(
                 symbol = symbol,
                 currentPrice = price,
-                settings = _uiState.value.settings,
+                settings = _uiState.value.settings.copy(leverage = 1),
                 investedUsdt = volume,
                 isAutoTriggered = isAuto,
                 binanceOrderId = null,
@@ -636,6 +741,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             liveTradingEnabled = newLiveTrading
         )
         _apiConfig.value = secureApiStorage.loadConfig()
+        webSocketClient?.start(isTestnet = newTestnet)
 
         if (toLiveMainnet) {
             autoLoginMainnet()
@@ -788,14 +894,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateLeverage(symbol: String, leverage: Int) {
-        val clamped = leverage.coerceIn(1, 50)
         _uiState.value = _uiState.value.copy(
-            settings = _uiState.value.settings.copy(leverage = clamped)
+            settings = _uiState.value.settings.copy(leverage = 1)
         )
         if (_apiConfig.value.isConnected) {
             viewModelScope.launch {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                BinanceFuturesApiVerifier.setLeverage(symbol, clamped, apiKey, apiSecret, isTestnet)
+                val cleanSymbol = symbol.trim().uppercase()
+                withContext(Dispatchers.IO) {
+                    BinanceClient.setCrossMarginAndLeverage1x(cleanSymbol, apiKey, apiSecret, isTestnet)
+                    BinanceFuturesApiVerifier.setLeverage(cleanSymbol, 1, apiKey, apiSecret, isTestnet)
+                }
             }
         }
     }
@@ -808,15 +917,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val volume = customAmountUsdt ?: _uiState.value.settings.calculatePositionVolume()
             val side = if (isLong) "BUY" else "SELL"
             val sideLabel = if (isLong) "LONG" else "SHORT"
+            val cleanSymbol = symbol.trim().uppercase()
 
             if (_apiConfig.value.isConnected) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
 
-                BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
+                // Ép cứng Cross Margin & Đòn bẩy 1x trước khi vào lệnh
+                withContext(Dispatchers.IO) {
+                    BinanceClient.setCrossMarginAndLeverage1x(cleanSymbol, apiKey, apiSecret, isTestnet)
+                    BinanceFuturesApiVerifier.setLeverage(cleanSymbol, 1, apiKey, apiSecret, isTestnet)
+                }
+                delay(200L)
 
                 val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
-                    symbol = symbol,
+                    symbol = cleanSymbol,
                     side = side,
                     targetUsdtAmount = volume,
                     approxPrice = price,
@@ -827,9 +941,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 if (orderResult.success) {
                     val alert = repository.executeSimulatedBuy(
-                        symbol = symbol,
+                        symbol = cleanSymbol,
                         currentPrice = price,
-                        settings = _uiState.value.settings,
+                        settings = _uiState.value.settings.copy(leverage = 1),
                         investedUsdt = volume,
                         isAutoTriggered = false,
                         binanceOrderId = orderResult.orderId,
@@ -840,13 +954,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
                         autoFixNote = orderResult.autoFixApplied
                     )
-
                     if (alert != null) triggerAlert(alert)
                     refreshBinancePortfolio()
                 } else {
                     triggerAlert(
                         TradeAlert(
-                            symbol = symbol,
+                            symbol = cleanSymbol,
                             title = "LỖI VÀO LỆNH $sideLabel",
                             message = "${orderResult.errorMessage ?: "Không thể kết nối"}. Vui lòng kiểm tra lại quyền API.",
                             type = AlertType.INFO
@@ -857,7 +970,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val alert = repository.executeSimulatedBuy(
                     symbol = symbol,
                     currentPrice = price,
-                    settings = _uiState.value.settings,
+                    settings = _uiState.value.settings.copy(leverage = 1),
                     investedUsdt = volume,
                     isAutoTriggered = false
                 )
@@ -949,25 +1062,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (price <= 0.0) continue
 
+                    val cleanSymbol = symbol.trim().uppercase()
+
                     if (newlyOpened > 0) {
                         _uiState.value = _uiState.value.copy(
-                            openingPositionsProgress = "Đã mở $newlyOpened vị thế. Chờ 5s trước khi mở $symbol (${index + 1}/${symbolsToOpen.size})..."
+                            openingPositionsProgress = "Đã mở $newlyOpened vị thế. Chờ 5s trước khi mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
                         )
                         delay(5000L)
                     }
                     if (!isActive || (isAuto && !_uiState.value.settings.autoTradeEnabled)) break
 
                     _uiState.value = _uiState.value.copy(
-                        openingPositionsProgress = "Đang mở vị thế $symbol (${index + 1}/${symbolsToOpen.size})..."
+                        openingPositionsProgress = "Đang mở vị thế Cross 1x $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
                     )
 
                     val isLive = _apiConfig.value.isConnected
                     if (isLive) {
                         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                        BinanceFuturesApiVerifier.setLeverage(symbol, _uiState.value.settings.leverage, apiKey, apiSecret, isTestnet)
+                        
+                        // Ép cứng Cross Margin & Đòn bẩy 1x trên sàn trước khi bắn lệnh
+                        withContext(Dispatchers.IO) {
+                            BinanceClient.setCrossMarginAndLeverage1x(cleanSymbol, apiKey, apiSecret, isTestnet)
+                            BinanceFuturesApiVerifier.setLeverage(cleanSymbol, 1, apiKey, apiSecret, isTestnet)
+                        }
+                        delay(200L)
 
                         val orderResult = BinanceFuturesApiVerifier.postMarketOrder(
-                            symbol = symbol,
+                            symbol = cleanSymbol,
                             side = "BUY",
                             targetUsdtAmount = volume,
                             approxPrice = price,
@@ -978,9 +1099,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                         if (orderResult.success) {
                             val alert = repository.executeSimulatedBuy(
-                                symbol = symbol,
+                                symbol = cleanSymbol,
                                 currentPrice = price,
-                                settings = _uiState.value.settings,
+                                settings = _uiState.value.settings.copy(leverage = 1),
                                 investedUsdt = volume,
                                 isAutoTriggered = isAuto,
                                 binanceOrderId = orderResult.orderId,
@@ -1001,7 +1122,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         val alert = repository.executeSimulatedBuy(
                             symbol = symbol,
                             currentPrice = price,
-                            settings = _uiState.value.settings,
+                            settings = _uiState.value.settings.copy(leverage = 1),
                             investedUsdt = volume,
                             isAutoTriggered = isAuto
                         )
@@ -1023,8 +1144,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     triggerAlert(
                         TradeAlert(
                             symbol = "ALL_BULLISH",
-                            title = "ĐÃ MỞ TOÀN BỘ VỊ THẾ",
-                            message = "Đã khớp $newlyOpened vị thế mới (mỗi vị thế cách nhau 5 giây, tổng vốn: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
+                            title = "ĐÃ MỞ TOÀN BỘ VỊ THẾ (LONG 1X)",
+                            message = "Đã khớp $newlyOpened vị thế mới với đòn bẩy 1x (mỗi vị thế cách nhau 5 giây, tổng vốn: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
                             type = AlertType.AUTO_BUY_ORDER
                         )
                     )
@@ -1179,14 +1300,47 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /**
+     * Vòng lặp giám sát vị thế và PnL danh mục mỗi 5s (tuân thủ nghiêm ngặt Rate Limit Binance)
+     * Kèm REST polling dự phòng mỗi 30s
+     */
     private fun startTickerPolling() {
         tickerPollJob?.cancel()
         tickerPollJob = viewModelScope.launch {
+            var restBackupCounter = 0
             while (isActive) {
-                delay(5000)
-                refreshTickers()
+                delay(5000L) // Kiểm tra vị thế lệnh & PnL danh mục mỗi 5 giây
+                
+                // Đồng bộ số dư ví và vị thế lệnh Binance Live mỗi 5s
                 if (_apiConfig.value.isConnected) {
                     refreshBinancePortfolio()
+                }
+
+                // Kiểm tra mục tiêu chốt lời toàn danh mục (Portfolio TP)
+                checkPortfolioTakeProfit()
+
+                // REST ticker polling làm backup định kỳ mỗi 30 giây (6 chu kỳ x 5s)
+                restBackupCounter++
+                if (restBackupCounter >= 6) {
+                    refreshTickers()
+                    restBackupCounter = 0
+                }
+            }
+        }
+    }
+
+    /**
+     * Cập nhật Klines định kỳ mỗi 25 giây (giữa 15s – 30s theo yêu cầu)
+     */
+    private fun startKlinePolling() {
+        klinePollJob?.cancel()
+        klinePollJob = viewModelScope.launch {
+            while (isActive) {
+                delay(25000L) // Chu kỳ an toàn 25 giây
+                val currentSym = _uiState.value.selectedSymbol
+                val currentTf = _uiState.value.selectedTimeframe
+                if (currentSym.isNotEmpty()) {
+                    loadKlineForSymbol(currentSym, currentTf, isBackground = true)
                 }
             }
         }
@@ -1278,7 +1432,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.clearHistory()
             _uiState.value = _uiState.value.copy(
-                settings = _uiState.value.settings.copy(simulatedBalanceUsdt = 10000.0)
+                settings = _uiState.value.settings.copy(simulatedBalanceUsdt = 10000.0, leverage = 1)
             )
             triggerAlert(
                 TradeAlert(
@@ -1296,7 +1450,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.clearHistory()
             _uiState.value = _uiState.value.copy(
-                settings = _uiState.value.settings.copy(simulatedBalanceUsdt = safeBalance)
+                settings = _uiState.value.settings.copy(simulatedBalanceUsdt = safeBalance, leverage = 1)
             )
             triggerAlert(
                 TradeAlert(
@@ -1340,9 +1494,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(backtestResult = null)
     }
 
-    /**
-     * Kích hoạt cỗ máy Backtest Basket D1 Momentum nhận đối tượng config động từ UI
-     */
     fun runBasketStrategyBacktest(
         days: Int = 180,
         config: BacktestConfig = BacktestConfig()
@@ -1659,8 +1810,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        webSocketClient?.stop()
         autoTradeJob?.cancel()
         tickerPollJob?.cancel()
+        klinePollJob?.cancel()
         schedulerJob?.cancel()
     }
 }

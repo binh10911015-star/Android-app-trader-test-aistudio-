@@ -442,14 +442,43 @@ object BinanceFuturesApiVerifier {
         return@withContext BinanceOrderPlacementResult(success = false, autoFixApplied = autoFixes.joinToString("; "), errorMessage = lastError)
     }
 
-    suspend fun setLeverage(symbol: String, leverage: Int, apiKey: String, apiSecret: String, isTestnet: Boolean): Result<Int> = withContext(Dispatchers.IO) {
-        val qs = "symbol=${symbol.uppercase()}&leverage=${leverage.coerceIn(1, 50)}&recvWindow=60000&timestamp=${getSyncedTimestamp()}"
-        val sig = try { signHmacSha256(qs, apiSecret.trim()) } catch (e: Exception) { return@withContext Result.failure(Exception("Lỗi ký")) }
+suspend fun setLeverage(
+        symbol: String,
+        leverage: Int = 1,
+        apiKey: String,
+        apiSecret: String,
+        isTestnet: Boolean = false
+    ): Result<Int> = withContext(Dispatchers.IO) {
+        val targetLeverage = leverage.coerceIn(1, 50)
+        val cleanSymbol = symbol.trim().uppercase()
+        val qs = "symbol=$cleanSymbol&leverage=$targetLeverage&recvWindow=60000&timestamp=${getSyncedTimestamp()}"
+        val sig = try {
+            signHmacSha256(qs, apiSecret.trim())
+        } catch (e: Exception) {
+            return@withContext Result.failure(Exception("Lỗi ký HMAC SHA256"))
+        }
+
         try {
-            val req = Request.Builder().url("${if (isTestnet) TESTNET_BASE_URL else MAINNET_BASE_URL}/fapi/v1/leverage?$qs&signature=$sig").header("X-MBX-APIKEY", apiKey.trim()).post(ByteArray(0).toRequestBody("application/x-www-form-urlencoded".toMediaType())).build()
+            val baseUrl = if (isTestnet) TESTNET_BASE_URL else MAINNET_BASE_URL
+            val req = Request.Builder()
+                .url("$baseUrl/fapi/v1/leverage?$qs&signature=$sig")
+                .header("X-MBX-APIKEY", apiKey.trim())
+                .post(ByteArray(0).toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                .build()
+
             val resp = BinanceClient.okHttpClient.newCall(req).execute()
-            if (resp.isSuccessful) Result.success(JSONObject(resp.body?.string() ?: "").optInt("leverage", leverage)) else Result.failure(Exception("Lỗi Binance set leverage"))
-        } catch (e: Exception) { Result.failure(e) }
+            resp.use { r ->
+                if (r.isSuccessful) {
+                    val bodyStr = r.body?.string() ?: ""
+                    val appliedLeverage = JSONObject(bodyStr).optInt("leverage", targetLeverage)
+                    Result.success(appliedLeverage)
+                } else {
+                    Result.failure(Exception("Lỗi Binance set leverage: HTTP ${r.code}"))
+                }
+            }
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
     }
 
     suspend fun setTakeProfitAndStopLoss(symbol: String, isLong: Boolean, takeProfitPrice: Double?, stopLossPrice: Double?, apiKey: String, apiSecret: String, isTestnet: Boolean): BinanceTpSlResult = withContext(Dispatchers.IO) {
