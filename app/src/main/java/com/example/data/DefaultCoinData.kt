@@ -50,7 +50,13 @@ object DefaultCoinData {
         "TRXUSDT" to 0.331,
         "HBARUSDT" to 0.082,
         "KAVAUSDT" to 0.070,
-        "GALAUSDT" to 0.0019
+        "GALAUSDT" to 0.0019,
+        "WLDUSDT" to 1.85,
+        "SANDUSDT" to 0.28,
+        "MANAUSDT" to 0.29,
+        "CRVUSDT" to 0.52,
+        "FTMUSDT" to 0.65,
+        "DYDXUSDT" to 0.88
     )
 
     fun getSeedTickers(): List<BinanceTicker> {

@@ -40,7 +40,7 @@ import com.example.model.BinanceApiConfig
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [34])
+@Config(sdk = [34], packageName = "com.example")
 class ExampleRobolectricTest {
 
     private val testDispatcher = StandardTestDispatcher()

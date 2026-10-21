@@ -48,6 +48,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.example.model.BacktestSummaryResult
+import com.example.model.BacktestTradeItem
 import com.example.model.TradePosition
 import com.example.repository.CryptoRepository
 import com.example.ui.MainViewModel
@@ -277,7 +279,7 @@ fun CoinDetailScreen(
             }
         }
 
-        // THẺ CHẠY BACKTEST LỊCH SỬ D1 & LỊCH SỬ LỆNH
+        // THẺ CHẠY BACKTEST LỊCH SỬ D1
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -330,10 +332,11 @@ fun CoinDetailScreen(
                     }
                 }
 
-                uiState.backtestResult?.let { res ->
+                val backtestResult: BacktestSummaryResult? = uiState.backtestResult
+                if (backtestResult != null) {
                     Spacer(modifier = Modifier.height(10.dp))
-                    if (res.errorMessage != null) {
-                        Text(text = res.errorMessage, color = CryptoRed, fontSize = 11.sp)
+                    if (backtestResult.errorMessage != null) {
+                        Text(text = backtestResult.errorMessage, color = CryptoRed, fontSize = 11.sp)
                     } else {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
@@ -342,8 +345,8 @@ fun CoinDetailScreen(
                             Column {
                                 Text(text = "Tỷ lệ thắng (Winrate)", color = TextSecondary, fontSize = 10.sp)
                                 Text(
-                                    text = "${String.format(Locale.US, "%.1f", res.winRatePercent)}% (${res.winTrades}/${res.totalTrades} lệnh)",
-                                    color = if (res.winRatePercent >= 50.0) CryptoGreen else CryptoRed,
+                                    text = "${String.format(Locale.US, "%.1f", backtestResult.winRatePercent)}% (${backtestResult.winTrades}/${backtestResult.totalTrades} lệnh)",
+                                    color = if (backtestResult.winRatePercent >= 50.0) CryptoGreen else CryptoRed,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -352,8 +355,8 @@ fun CoinDetailScreen(
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(text = "Lợi nhuận ròng", color = TextSecondary, fontSize = 10.sp)
                                 Text(
-                                    text = "${if (res.netProfitUsdt >= 0) "+" else ""}$${String.format(Locale.US, "%.2f", res.netProfitUsdt)} (${String.format(Locale.US, "%.1f", res.totalRoiPercent)}%)",
-                                    color = if (res.netProfitUsdt >= 0) CryptoGreen else CryptoRed,
+                                    text = "${if (backtestResult.netProfitUsdt >= 0) "+" else ""}$${String.format(Locale.US, "%.2f", backtestResult.netProfitUsdt)} (${String.format(Locale.US, "%.1f", backtestResult.totalRoiPercent)}%)",
+                                    color = if (backtestResult.netProfitUsdt >= 0) CryptoGreen else CryptoRed,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold,
                                     fontFamily = FontFamily.Monospace
@@ -368,18 +371,18 @@ fun CoinDetailScreen(
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Text(
-                                text = "Max Drawdown: -${String.format(Locale.US, "%.1f", res.maxDrawdownPercent)}%",
+                                text = "Max Drawdown: -${String.format(Locale.US, "%.1f", backtestResult.maxDrawdownPercent)}%",
                                 color = TextMuted,
                                 fontSize = 10.sp
                             )
                             Text(
-                                text = "Profit Factor: ${String.format(Locale.US, "%.2f", res.profitFactor)}",
+                                text = "Profit Factor: ${String.format(Locale.US, "%.2f", backtestResult.profitFactor)}",
                                 color = TextMuted,
                                 fontSize = 10.sp
                             )
                         }
 
-                        if (res.tradesHistory.isNotEmpty()) {
+                        if (backtestResult.tradesHistory.isNotEmpty()) {
                             Spacer(modifier = Modifier.height(8.dp))
                             HorizontalDivider(color = DarkBorder)
                             Spacer(modifier = Modifier.height(6.dp))
@@ -392,7 +395,7 @@ fun CoinDetailScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "Chi tiết ${res.tradesHistory.size} lệnh khớp lịch sử",
+                                    text = "Chi tiết ${backtestResult.tradesHistory.size} lệnh khớp lịch sử",
                                     color = CryptoGold,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -407,58 +410,12 @@ fun CoinDetailScreen(
                             if (showHistoryTrades) {
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    res.tradesHistory.forEachIndexed { idx, tr ->
-                                        Surface(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = DarkSurfaceHighlight,
-                                            border = BorderStroke(0.5.dp, if (tr.isWin) CryptoGreen.copy(alpha = 0.3f) else CryptoRed.copy(alpha = 0.3f))
-                                        ) {
-                                            Row(
-                                                modifier = Modifier
-                                                    .fillMaxWidth()
-                                                    .padding(8.dp),
-                                                horizontalArrangement = Arrangement.SpaceBetween,
-                                                verticalAlignment = Alignment.CenterVertically
-                                            ) {
-                                                Column {
-                                                    Row(verticalAlignment = Alignment.CenterVertically) {
-                                                        Text(
-                                                            text = "#${idx + 1} ",
-                                                            color = TextMuted,
-                                                            fontSize = 10.sp,
-                                                            fontFamily = FontFamily.Monospace
-                                                        )
-                                                        Text(
-                                                            text = dateFormat.format(Date(tr.entryTime)),
-                                                            color = TextPrimary,
-                                                            fontSize = 10.sp,
-                                                            fontWeight = FontWeight.Bold
-                                                        )
-                                                        Spacer(modifier = Modifier.width(4.dp))
-                                                        Text(
-                                                            text = "(${tr.exitReason})",
-                                                            color = TextMuted,
-                                                            fontSize = 9.sp
-                                                        )
-                                                    }
-                                                    Text(
-                                                        text = "Entry: $${CryptoRepository.formatPrice(tr.entryPrice)} ➔ Exit: $${CryptoRepository.formatPrice(tr.exitPrice)}",
-                                                        color = TextSecondary,
-                                                        fontSize = 9.sp,
-                                                        fontFamily = FontFamily.Monospace
-                                                    )
-                                                }
-
-                                                Text(
-                                                    text = "${if (tr.isWin) "+" else ""}$${String.format(Locale.US, "%.2f", tr.pnlUsdt)} (${String.format(Locale.US, "%.1f", tr.roiPercent)}%)",
-                                                    color = if (tr.isWin) CryptoGreen else CryptoRed,
-                                                    fontSize = 11.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    fontFamily = FontFamily.Monospace
-                                                )
-                                            }
-                                        }
+                                    backtestResult.tradesHistory.forEachIndexed { idx, tr ->
+                                        BacktestTradeRow(
+                                            index = idx + 1,
+                                            trade = tr,
+                                            dateFormat = dateFormat
+                                        )
                                     }
                                 }
                             }
@@ -551,5 +508,64 @@ fun CoinDetailScreen(
         }
 
         Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun BacktestTradeRow(
+    index: Int,
+    trade: BacktestTradeItem,
+    dateFormat: SimpleDateFormat
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(6.dp),
+        color = DarkSurfaceHighlight,
+        border = BorderStroke(0.5.dp, if (trade.isWin) CryptoGreen.copy(alpha = 0.3f) else CryptoRed.copy(alpha = 0.3f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "#$index ",
+                        color = TextMuted,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Text(
+                        text = dateFormat.format(Date(trade.entryTime)),
+                        color = TextPrimary,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "(${trade.exitReason})",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+                Text(
+                    text = "Entry: $${CryptoRepository.formatPrice(trade.entryPrice)} ➔ Exit: $${CryptoRepository.formatPrice(trade.exitPrice)}",
+                    color = TextSecondary,
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace
+                )
+            }
+
+            Text(
+                text = "${if (trade.isWin) "+" else ""}$${String.format(Locale.US, "%.2f", trade.pnlUsdt)} (${String.format(Locale.US, "%.1f", trade.roiPercent)}%)",
+                color = if (trade.isWin) CryptoGreen else CryptoRed,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
+            )
+        }
     }
 }

@@ -99,7 +99,13 @@ object BinanceClient {
             return activePerpetualSymbols.keys
         }
 
-        for (baseUrl in MAINNET_PUBLIC_URLS) {
+        val urlsToTry = if (isTestnet) {
+            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
+        } else {
+            MAINNET_PUBLIC_URLS
+        }
+
+        for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/exchangeInfo").build()
                 okHttpClient.newCall(request).execute().use { res ->
@@ -116,6 +122,7 @@ object BinanceClient {
                                 val contractType = sObj.optString("contractType", "")
                                 val quoteAsset = sObj.optString("quoteAsset", "")
 
+                                // Chỉ tập trung vào hợp đồng vĩnh cửu USDT-M Perpetual đang giao dịch
                                 if (status.equals("TRADING", ignoreCase = true) &&
                                     contractType.equals("PERPETUAL", ignoreCase = true) &&
                                     quoteAsset.equals("USDT", ignoreCase = true)
@@ -180,7 +187,12 @@ object BinanceClient {
     }
 
     fun fetchTickersWithFallback(): List<BinanceTicker> {
-        for (baseUrl in MAINNET_PUBLIC_URLS) {
+        val urlsToTry = if (isTestnet) {
+            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
+        } else {
+            MAINNET_PUBLIC_URLS
+        }
+        for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/ticker/24hr").build()
                 okHttpClient.newCall(request).execute().use { res ->
@@ -198,7 +210,12 @@ object BinanceClient {
     }
 
     fun fetchMarkPricesWithFallback(): Map<String, Double> {
-        for (baseUrl in MAINNET_PUBLIC_URLS) {
+        val urlsToTry = if (isTestnet) {
+            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
+        } else {
+            MAINNET_PUBLIC_URLS
+        }
+        for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/premiumIndex").build()
                 okHttpClient.newCall(request).execute().use { res ->
@@ -256,7 +273,9 @@ object BinanceClient {
             for (i in 0 until jsonArray.length()) {
                 val item = jsonArray.getJSONObject(i)
                 val symbol = item.optString("symbol", "")
-                if (symbol.endsWith("USDT") && !symbol.contains("_")) {
+                // Chỉ tập trung vào các cặp hợp đồng vĩnh cửu USDT-M Perpetual (loại trừ hợp đồng kỳ hạn chứa '_')
+                val isUsdtPerpetual = symbol.endsWith("USDT") && !symbol.contains("_")
+                if (isUsdtPerpetual) {
                     val lastPrice = item.optString("lastPrice", "0").toDoubleOrNull() ?: 0.0
                     val priceChangePercent = item.optString("priceChangePercent", "0").toDoubleOrNull() ?: 0.0
                     val volume = item.optString("volume", "0").toDoubleOrNull() ?: 0.0

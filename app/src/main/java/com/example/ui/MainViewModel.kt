@@ -5,6 +5,9 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.model.AlertType
+import com.example.model.BacktestConfig
+import com.example.model.BacktestSummaryResult
+import com.example.model.BasketBacktestReport
 import com.example.model.BinanceAccountVerificationResult
 import com.example.model.BinanceApiConfig
 import com.example.model.BinanceAssetBalance
@@ -21,7 +24,6 @@ import com.example.model.TradePosition
 import com.example.model.TradeSettings
 import com.example.network.BinanceClient
 import com.example.network.BinanceFuturesApiVerifier
-import com.example.repository.BacktestSummaryResult
 import com.example.repository.CryptoRepository
 import com.example.util.ScanScheduler
 import com.example.util.SecureApiKeyStorage
@@ -58,6 +60,8 @@ data class UiState(
     val coinStateList: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
     val scannedD1BreakoutTickers: List<BinanceTicker> = emptyList(),
     val scannedSuperTrendTickers: List<BinanceTicker> = emptyList(),
+    val scannedBullishTickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers().take(3),
+    val bullishCount: Int = 3,
     val selectedSignalTab: Int = 0,
     val searchQuery: String = "",
     val debouncedSearchQuery: String = "",
@@ -84,7 +88,9 @@ data class UiState(
     val isOpeningPositions: Boolean = false,
     val openingPositionsProgress: String = "",
     val backtestResult: BacktestSummaryResult? = null,
-    val isBacktesting: Boolean = false
+    val isBacktesting: Boolean = false,
+    val basketReport: BasketBacktestReport? = null,
+    val isBasketBacktesting: Boolean = false
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -186,7 +192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.value = _uiState.value.copy(
             selectedSymbol = symbol,
             selectedTimeframe = timeframe,
-            backtestResult = null // xóa kết quả cũ của coin trước
+            backtestResult = null
         )
         loadKlineForSymbol(symbol, timeframe)
     }
@@ -431,7 +437,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             TradeAlert(
                 symbol = "PORTFOLIO",
                 title = "ĐÃ ĐỔI MỤC TIÊU CHỐT LỜI",
-                message = "Mục tiêu chốt lời toàn danh mục mới: +${String.format(Locale.US, "%.1f", clamped)}%. Hệ thống sẽ tự động đóng toàn bộ khi đạt mốc này.",
+                message = "Mục tiêu chốt lời toàn danh mục mới: +${String.format(Locale.US, "%.1f", clamped)}%.",
                 type = AlertType.INFO
             )
         )
@@ -834,6 +840,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
                         autoFixNote = orderResult.autoFixApplied
                     )
+
                     if (alert != null) triggerAlert(alert)
                     refreshBinancePortfolio()
                 } else {
@@ -1305,7 +1312,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runBacktestForSelectedCoin(
         candleLimit: Int = 180,
         tpPercent: Double = 4.0,
-        slPercent: Double = 3.0,
+        slPercent: Double = 0.0,
         volThreshold: Double = 2.0
     ) {
         val sym = _uiState.value.selectedSymbol
@@ -1331,6 +1338,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearBacktestResult() {
         _uiState.value = _uiState.value.copy(backtestResult = null)
+    }
+
+    /**
+     * Kích hoạt cỗ máy Backtest Basket D1 Momentum nhận đối tượng config động từ UI
+     */
+    fun runBasketStrategyBacktest(
+        days: Int = 180,
+        config: BacktestConfig = BacktestConfig()
+    ) {
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isBasketBacktesting = true)
+            val report = withContext(Dispatchers.IO) {
+                repository.runBasketD1MomentumBacktest(daysToTest = days, config = config)
+            }
+            _uiState.value = _uiState.value.copy(
+                isBasketBacktesting = false,
+                basketReport = report
+            )
+        }
+    }
+
+    fun clearBasketReport() {
+        _uiState.value = _uiState.value.copy(basketReport = null)
     }
 
     fun computeDailyPnL(closed: List<TradePosition>): List<PeriodPnL> {
@@ -1475,6 +1505,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         symbol = "BINANCE_TESTNET",
                         title = "ĐÃ ĐĂNG NHẬP BINANCE TESTNET THÀNH CÔNG",
                         message = "Tự động đăng nhập Binance Futures Testnet thành công! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
+                        type = AlertType.INFO
+                    )
+                )
+            } else {
+                triggerAlert(
+                    TradeAlert(
+                        symbol = "BINANCE_TESTNET",
+                        title = "KẾT NỐI BINANCE TESTNET",
+                        message = "Đã nhập API Key & Secret Testnet. ${result.errorMessage ?: "Vui lòng kiểm tra lại kết nối mạng"}",
                         type = AlertType.INFO
                     )
                 )

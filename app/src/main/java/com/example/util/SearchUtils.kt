@@ -1,12 +1,14 @@
 package com.example.util
 
 object SearchUtils {
-
-    fun stripUsdtSuffix(input: String): String {
-        var text = input.trim()
-        val regex = Regex("(?i)[/\\s_-]?usdt$")
-        text = text.replace(regex, "")
-        if (text.equals("usdt", ignoreCase = true)) return ""
-        return text.trim()
+    /**
+     * Loại bỏ hậu tố USDT và các ký tự phân cách (/ , - , _ , space) ở cuối từ khóa tìm kiếm.
+     * Ví dụ: "BTCUSDT" -> "BTC", "ETH/USDT" -> "ETH", "doge_usdt" -> "doge", "USDT" -> ""
+     */
+    fun stripUsdtSuffix(query: String): String {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) return ""
+        val regex = Regex("""[\s/_\-]*usdt$""", RegexOption.IGNORE_CASE)
+        return trimmed.replace(regex, "").trim().uppercase()
     }
 }

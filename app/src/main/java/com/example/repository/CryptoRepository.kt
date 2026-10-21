@@ -3,11 +3,18 @@ package com.example.repository
 import com.example.data.TradeDao
 import com.example.indicators.TechnicalAnalysis
 import com.example.model.AlertType
+import com.example.model.BacktestConfig
+import com.example.model.BacktestSummaryResult
+import com.example.model.BacktestTradeItem
+import com.example.model.BasketBacktestReport
+import com.example.model.BasketCycleResult
+import com.example.model.BasketPosition
 import com.example.model.BinanceTicker
 import com.example.model.Candle
 import com.example.model.IndicatorData
 import com.example.model.PeriodPnL
 import com.example.model.PositionUpdateResult
+import com.example.model.ScoredCoin
 import com.example.model.TradeAlert
 import com.example.model.TradePosition
 import com.example.model.TradeSettings
@@ -15,14 +22,14 @@ import com.example.network.BinanceClient
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.withContext
-import java.text.SimpleDateFormat
-import java.util.Calendar
-import java.util.Date
+import org.json.JSONArray
+import java.net.URL
 import java.util.Locale
+import kotlin.math.floor
+import kotlin.math.max
 
 class CryptoRepository(private val tradeDao: TradeDao) {
 
-    // Thread-safe in-memory cache of scanned signal status for coins: symbol -> isBullish
     private val signalCache = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     init {
@@ -60,21 +67,15 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         }
     }
 
-    fun getCachedSignal(symbol: String): Boolean? {
-        return signalCache[symbol]
-    }
+    fun getCachedSignal(symbol: String): Boolean? = signalCache[symbol]
 
     fun setCachedSignal(symbol: String, isBullish: Boolean) {
         signalCache[symbol] = isBullish
     }
 
-    fun getBullishSignalsCount(): Int {
-        return signalCache.values.count { it }
-    }
+    fun getBullishSignalsCount(): Int = signalCache.values.count { it }
 
-    fun getAllBullishSymbols(): Set<String> {
-        return signalCache.filterValues { it }.keys.toSet()
-    }
+    fun getAllBullishSymbols(): Set<String> = signalCache.filterValues { it }.keys.toSet()
 
     fun getOpenPositions(): Flow<List<TradePosition>> = tradeDao.getOpenPositions()
 
@@ -115,14 +116,11 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val effectiveEntryPrice = if (exactEntryPrice != null && exactEntryPrice > 0.0) exactEntryPrice else currentPrice
         if (effectiveEntryPrice <= 0.0) return@withContext null
 
-        if (tradeDao.countOpenForSymbol(symbol) > 0) {
-            return@withContext null
-        }
+        if (tradeDao.countOpenForSymbol(symbol) > 0) return@withContext null
 
         val invested = investedUsdt ?: settings.calculatePositionVolume()
         val amount = exactAmount ?: (invested / effectiveEntryPrice)
         val tpPrice = settings.takeProfitPercent?.let { effectiveEntryPrice * (1.0 + it / 100.0) }
-        val slPrice = settings.stopLossPercent?.let { effectiveEntryPrice * (1.0 - it / 100.0) }
 
         val position = TradePosition(
             symbol = symbol,
@@ -131,7 +129,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             amount = amount,
             investedUsdt = invested,
             takeProfitPrice = tpPrice,
-            stopLossPrice = slPrice,
+            stopLossPrice = null,
             entryTime = System.currentTimeMillis(),
             status = TradePosition.STATUS_OPEN,
             timeframe = settings.timeframe,
@@ -150,11 +148,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         } else {
             "Không thiết lập"
         }
-        val slStr = if (slPrice != null && settings.stopLossPercent != null) {
-            "$$${formatPrice(slPrice)} (-${settings.stopLossPercent}%)"
-        } else {
-            "Không thiết lập"
-        }
 
         val volStr = if (invested % 1.0 == 0.0) "${invested.toInt()} USDT" else "${String.format(Locale.US, "%.1f", invested)} USDT"
         val fixPrefix = if (!autoFixNote.isNullOrBlank()) "[$autoFixNote] " else ""
@@ -168,7 +161,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val message = if (isLiveBinanceOrder) {
             "${fixPrefix}Lệnh #$binanceOrderId đã khớp trực tiếp trên sàn Binance! Giá khớp: $$priceStr, KL: ${String.format(Locale.US, "%.4f", amount)} (Vốn: $volStr). TP: $tpStr"
         } else {
-            "Đã mua $symbol tại $$priceStr (Vốn: $volStr). TP: $tpStr, SL: $slStr"
+            "Đã mua $symbol tại $$priceStr (Vốn: $volStr). TP: $tpStr"
         }
 
         TradeAlert(
@@ -273,7 +266,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         TradeAlert(
             symbol = pos.symbol,
             title = "ĐÃ ĐÓNG LỆNH THỦ CÔNG",
-            message = "Đã đóng ${pos.symbol} tại $${formatPrice(exitPrice)}. PnL: $sign$${String.format(Locale.US, "%.2f", pnlUsdt)} ($sign$${String.format(Locale.US, "%.2f", pnlPercent)}%)",
+            message = "Đã đóng ${pos.symbol} tại $${formatPrice(exitPrice)}. PnL: $sign$${String.format(Locale.US, "%.2f", pnlUsdt)} ($sign${String.format(Locale.US, "%.2f", pnlPercent)}%)",
             type = AlertType.MANUAL_CLOSE
         )
     }
@@ -429,7 +422,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
     }
 
     // ==========================================
-    // BACKTEST ENGINE - GIAI ĐOẠN 3
+    // MODULE BACKTEST 1: ĐƠN LẺ D1 BREAKOUT
     // ==========================================
 
     fun runD1BreakoutBacktest(
@@ -437,7 +430,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         initialBalance: Double = 1000.0,
         riskPerTradePercent: Double = 0.5,
         takeProfitPercent: Double = 4.0,
-        stopLossPercent: Double = 3.0,
+        stopLossPercent: Double = 0.0,
         candleLimit: Int = 180,
         volumeThreshold: Double = 2.0
     ): BacktestSummaryResult {
@@ -446,7 +439,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             return BacktestSummaryResult(
                 symbol = symbol,
                 timeframe = "1d",
-                errorMessage = "Không đủ nến Mainnet để backtest (cần tối thiểu 25 nến D1)."
+                errorMessage = "Chưa đủ 25 nến D1 từ Binance để thực hiện Backtest."
             )
         }
 
@@ -458,7 +451,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         var totalProfit = 0.0
         var totalLoss = 0.0
 
-        var i = 21
+        var i = 20
         while (i < candles.size - 1) {
             val currentCandle = candles[i]
             val previous20 = candles.subList(i - 20, i)
@@ -485,16 +478,6 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 for (j in (i + 1) until candles.size) {
                     val futureCandle = candles[j]
                     val highRoi = ((futureCandle.high - entryPrice) / entryPrice) * 100.0
-                    val lowRoi = ((futureCandle.low - entryPrice) / entryPrice) * 100.0
-
-                    if (lowRoi <= -stopLossPercent) {
-                        exitPrice = entryPrice * (1.0 - stopLossPercent / 100.0)
-                        exitTime = futureCandle.openTime
-                        exitReason = "SL (-${stopLossPercent}%)"
-                        closed = true
-                        i = j
-                        break
-                    }
 
                     if (highRoi >= takeProfitPercent) {
                         exitPrice = entryPrice * (1.0 + takeProfitPercent / 100.0)
@@ -572,6 +555,197 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         )
     }
 
+    // ==========================================
+    // MODULE BACKTEST 2: ENGINE BASKET D1 MOMENTUM (V2.0)
+    // ==========================================
+
+    private fun fetchHighLiquiditySymbolsFromMainnet(config: BacktestConfig): List<String> {
+        val tickers = BinanceClient.fetchTickersWithFallback()
+        val list = tickers.filter {
+            val volumeUsdt = it.volume * it.lastPrice
+            it.symbol.endsWith("USDT") && !it.symbol.contains("_") && (config.minQuoteVolume24h <= 0.0 || volumeUsdt >= config.minQuoteVolume24h)
+        }.map { it.symbol }
+
+        return if (list.isNotEmpty()) list else tickers.map { it.symbol }.filter { it.endsWith("USDT") && !it.contains("_") }
+    }
+
+    suspend fun runBasketD1MomentumBacktest(
+        daysToTest: Int = 180,
+        config: BacktestConfig = BacktestConfig(),
+        symbolsPool: List<String> = emptyList()
+    ): BasketBacktestReport = withContext(Dispatchers.IO) {
+        // 1. Quét toàn bộ thị trường, không giới hạn take(50)
+        val activeSymbols = if (symbolsPool.isNotEmpty()) symbolsPool else fetchHighLiquiditySymbolsFromMainnet(config)
+        if (activeSymbols.isEmpty()) {
+            return@withContext BasketBacktestReport(errorMessage = "Không tải được danh sách coin từ Binance Mainnet.")
+        }
+
+        // 2. Tải Klines D1 từ Binance Mainnet
+        val klinesMap = mutableMapOf<String, List<Candle>>()
+        activeSymbols.forEach { sym ->
+            val candles = BinanceClient.fetchKlinesWithFallback(sym, interval = "1d", limit = daysToTest + 25)
+            if (candles.size >= 25) {
+                klinesMap[sym] = candles
+            }
+        }
+
+        // Lấy chuỗi thời gian tham chiếu chuẩn từ BTCUSDT (hoặc cặp coin có lịch sử dài nhất)
+        val referenceCandles = klinesMap["BTCUSDT"] ?: klinesMap.values.maxByOrNull { it.size }
+        if (referenceCandles == null || referenceCandles.size < 25) {
+            return@withContext BasketBacktestReport(errorMessage = "Không đủ nến lịch sử D1 từ Binance Mainnet.")
+        }
+
+        var currentEquity = config.initialCapital
+        var peakEquity = currentEquity
+        var maxDrawdown = 0.0
+
+        var isBasketActive = false
+        val activePositions = mutableListOf<BasketPosition>()
+        var basketOpenTime = 0L
+        var basketCycleIndex = 0
+        val cyclesHistory = mutableListOf<BasketCycleResult>()
+        val equityCurve = mutableListOf<Pair<Long, Double>>()
+
+        val startIndex = 21
+        equityCurve.add(Pair(referenceCandles[startIndex].openTime, currentEquity))
+
+        // Duyệt từng ngày theo trục thời gian chuẩn
+        for (dayIdx in startIndex until referenceCandles.size) {
+            val currentTime = referenceCandles[dayIdx].openTime
+
+            // A. NẾU GIỎ ĐANG CHẠY: Định giá PnL đồng thời tại cùng thời điểm
+            if (isBasketActive && activePositions.isNotEmpty()) {
+                val totalInvested = activePositions.sumOf { it.marginAllocated }
+                var totalPnLToday = 0.0
+
+                for (pos in activePositions) {
+                    val candleToday = klinesMap[pos.symbol]?.find { it.openTime == currentTime }
+                    if (candleToday != null) {
+                        // Dùng giá Close của nến ngày hôm đó để đảm bảo định giá cùng một thời điểm (chống look-ahead bias)
+                        totalPnLToday += (candleToday.close - pos.entryPrice) * pos.quantity
+                    }
+                }
+
+                val currentRoi = if (totalInvested > 0) totalPnLToday / totalInvested else 0.0
+
+                // Kiểm tra điều kiện chốt lời danh mục
+                if (currentRoi >= config.targetPortfolioRoi) {
+                    val grossProfit = totalInvested * currentRoi
+                    val takerFee = totalInvested * 0.0008 // Phí giao dịch 2 chiều
+                    val realizedProfit = grossProfit - takerFee
+
+                    currentEquity += realizedProfit
+                    peakEquity = max(peakEquity, currentEquity)
+
+                    val holdingDays = max(1.0, (currentTime - basketOpenTime) / 86400000.0)
+                    cyclesHistory.add(
+                        BasketCycleResult(
+                            cycleIndex = ++basketCycleIndex,
+                            openTime = basketOpenTime,
+                            closeTime = currentTime,
+                            holdingDays = holdingDays,
+                            totalInvested = totalInvested,
+                            realizedProfitUsdt = realizedProfit,
+                            basketRoiPercent = currentRoi * 100.0,
+                            equityAfterClose = currentEquity,
+                            coinsCount = activePositions.size,
+                            symbolsList = activePositions.map { it.symbol }
+                        )
+                    )
+
+                    activePositions.clear()
+                    isBasketActive = false
+                    equityCurve.add(Pair(currentTime, currentEquity))
+                    continue
+                } else {
+                    // Giữ qua đêm, ghi nhận Drawdown
+                    val tempEquity = currentEquity + totalPnLToday
+                    val dd = if (peakEquity > 0) ((peakEquity - tempEquity) / peakEquity) * 100.0 else 0.0
+                    if (dd > maxDrawdown) maxDrawdown = dd
+                    continue
+                }
+            }
+
+            // B. NẾU ĐANG CẦM TIỀN MẶT: Quét & chấm điểm mở giỏ mới lúc 7h00 sáng
+            if (!isBasketActive) {
+                val candidates = mutableListOf<ScoredCoin>()
+
+                for ((sym, candles) in klinesMap) {
+                    val currentCandleIdx = candles.indexOfFirst { it.openTime == currentTime }
+                    if (currentCandleIdx < 21) continue // Bỏ qua nếu coin chưa đủ 21 nến tại thời điểm này
+
+                    val kline1 = candles[currentCandleIdx - 1] // Nến hôm qua vừa đóng lúc 7h00 sáng
+                    val kline2 = candles[currentCandleIdx - 2]
+                    val prev20 = candles.subList(currentCandleIdx - 21, currentCandleIdx - 1)
+
+                    val sma20 = prev20.map { it.close }.average()
+                    val priceBreakout = kline1.close > sma20
+                    val volExplosion = kline1.volume >= config.minVolRatio * kline2.volume
+                    val priceChangePct = if (kline1.open > 0) ((kline1.close - kline1.open) / kline1.open) * 100.0 else 0.0
+                    val changeValid = priceChangePct in config.minD1ChangePct..config.maxD1ChangePct
+
+                    if (priceBreakout && volExplosion && changeValid) {
+                        val candleRange = max(1e-8, kline1.high - kline1.low)
+                        val candleBody = kline1.close - kline1.open
+                        val volRatio = if (kline2.volume > 0) kline1.volume / kline2.volume else 1.0
+
+                        val score = volRatio * (1.0 + (candleBody / candleRange))
+                        val entryPrice = candles[currentCandleIdx].open // Giá Open lúc 7h00 sáng
+                        candidates.add(ScoredCoin(sym, score, entryPrice, volRatio, priceChangePct))
+                    }
+                }
+
+                if (candidates.isNotEmpty()) {
+                    val sorted = candidates.sortedByDescending { it.score }
+
+                    val perTradeUsdt = currentEquity * config.perTradePct
+                    val maxBudget = currentEquity * config.maxPortfolioAllocation
+                    val maxSlots = floor(maxBudget / perTradeUsdt).toInt().coerceAtLeast(1)
+
+                    val selectedCoins = sorted.take(maxSlots)
+                    activePositions.clear()
+
+                    for (coin in selectedCoins) {
+                        if (coin.entryPrice > 0) {
+                            val qty = perTradeUsdt / coin.entryPrice
+                            activePositions.add(
+                                BasketPosition(
+                                    symbol = coin.symbol,
+                                    entryPrice = coin.entryPrice,
+                                    quantity = qty,
+                                    marginAllocated = perTradeUsdt
+                                )
+                            )
+                        }
+                    }
+
+                    if (activePositions.isNotEmpty()) {
+                        isBasketActive = true
+                        basketOpenTime = currentTime
+                    }
+                }
+            }
+        }
+
+        val totalCycles = cyclesHistory.size
+        val avgHolding = if (totalCycles > 0) cyclesHistory.map { it.holdingDays }.average() else 0.0
+        val netProfit = currentEquity - config.initialCapital
+        val netProfitPct = (netProfit / config.initialCapital) * 100.0
+
+        return@withContext BasketBacktestReport(
+            totalCycles = totalCycles,
+            winratePercent = if (totalCycles > 0) 100.0 else 0.0,
+            averageHoldingDays = avgHolding,
+            maxDrawdownPercent = maxDrawdown,
+            initialCapital = config.initialCapital,
+            finalEquity = currentEquity,
+            netProfitUsdt = netProfit,
+            netProfitPercent = netProfitPct,
+            cycles = cyclesHistory.reversed(),
+            equityCurve = equityCurve
+        )
+    }
+
     companion object {
         fun formatPrice(price: Double): String {
             return when {
@@ -583,34 +757,3 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         }
     }
 }
-
-// ==========================================
-// ĐỊNH NGHĨA DATA MODEL CHO BACKTEST
-// ==========================================
-
-data class BacktestTradeItem(
-    val entryTime: Long,
-    val exitTime: Long,
-    val symbol: String,
-    val entryPrice: Double,
-    val exitPrice: Double,
-    val pnlUsdt: Double,
-    val roiPercent: Double,
-    val isWin: Boolean,
-    val exitReason: String
-)
-
-data class BacktestSummaryResult(
-    val symbol: String,
-    val timeframe: String,
-    val totalTrades: Int = 0,
-    val winTrades: Int = 0,
-    val lossTrades: Int = 0,
-    val winRatePercent: Double = 0.0,
-    val netProfitUsdt: Double = 0.0,
-    val totalRoiPercent: Double = 0.0,
-    val maxDrawdownPercent: Double = 0.0,
-    val profitFactor: Double = 0.0,
-    val tradesHistory: List<BacktestTradeItem> = emptyList(),
-    val errorMessage: String? = null
-)

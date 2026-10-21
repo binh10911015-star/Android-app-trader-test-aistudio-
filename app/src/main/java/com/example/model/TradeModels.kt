@@ -217,10 +217,7 @@ data class BinanceOpenOrderItem(
     val side: String = "BUY",
     val updateTime: Long = 0L,
     val avgPrice: Double = 0.0
-) {
-    val isFilled: Boolean get() = status == "FILLED"
-    val isPartiallyFilled: Boolean get() = status == "PARTIALLY_FILLED"
-}
+)
 
 data class BinanceAssetBalance(
     val asset: String,
@@ -375,20 +372,92 @@ data class SymbolExchangeFilter(
     val minQty: Double = 0.001,
     val tickSize: Double = 0.01,
     val minNotional: Double = 5.0
-) {
-    fun formatQuantity(rawQty: Double): Double {
-        if (stepSize <= 0.0) return rawQty
-        val stepBd = BigDecimal(stepSize.toString())
-        val rawBd = BigDecimal(rawQty.toString())
-        val rounded = (rawBd.divide(stepBd, 0, RoundingMode.FLOOR)).multiply(stepBd)
-        return rounded.toDouble().coerceAtLeast(minQty)
-    }
+)
 
-    fun formatPrice(rawPrice: Double): Double {
-        if (tickSize <= 0.0) return rawPrice
-        val tickBd = BigDecimal(tickSize.toString())
-        val rawBd = BigDecimal(rawPrice.toString())
-        val rounded = (rawBd.divide(tickBd, 0, RoundingMode.HALF_UP)).multiply(tickBd)
-        return rounded.toDouble()
+// ==========================================
+// DATA MODELS CHO BACKTEST & BASKET STRATEGY
+// ==========================================
+
+data class BacktestConfig(
+    val initialCapital: Double = 10_000.0,
+    val perTradePct: Double = 0.015,
+    val maxPortfolioAllocation: Double = 0.60,
+    val targetPortfolioRoi: Double = 0.01,
+    val minQuoteVolume24h: Double = 0.0, // ĐÃ ĐỔI: 0.0 để quét cả coin dưới 5M USDT
+    val minVolRatio: Double = 2.0,
+    val minD1ChangePct: Double = 2.0,
+    val maxD1ChangePct: Double = 17.5
+) {
+    companion object {
+        const val BASE_MAINNET_URL = "https://fapi.binance.com"
     }
 }
+
+data class BacktestTradeItem(
+    val entryTime: Long,
+    val exitTime: Long,
+    val symbol: String,
+    val entryPrice: Double,
+    val exitPrice: Double,
+    val pnlUsdt: Double,
+    val roiPercent: Double,
+    val isWin: Boolean,
+    val exitReason: String
+)
+
+data class BacktestSummaryResult(
+    val symbol: String,
+    val timeframe: String,
+    val totalTrades: Int = 0,
+    val winTrades: Int = 0,
+    val lossTrades: Int = 0,
+    val winRatePercent: Double = 0.0,
+    val netProfitUsdt: Double = 0.0,
+    val totalRoiPercent: Double = 0.0,
+    val maxDrawdownPercent: Double = 0.0,
+    val profitFactor: Double = 0.0,
+    val tradesHistory: List<BacktestTradeItem> = emptyList(),
+    val errorMessage: String? = null
+)
+
+data class ScoredCoin(
+    val symbol: String,
+    val score: Double,
+    val entryPrice: Double,
+    val volRatio: Double,
+    val d1ChangePct: Double
+)
+
+data class BasketPosition(
+    val symbol: String,
+    val entryPrice: Double,
+    val quantity: Double,
+    val marginAllocated: Double
+)
+
+data class BasketCycleResult(
+    val cycleIndex: Int,
+    val openTime: Long,
+    val closeTime: Long,
+    val holdingDays: Double,
+    val totalInvested: Double,
+    val realizedProfitUsdt: Double,
+    val basketRoiPercent: Double,
+    val equityAfterClose: Double,
+    val coinsCount: Int,
+    val symbolsList: List<String>
+)
+
+data class BasketBacktestReport(
+    val totalCycles: Int = 0,
+    val winratePercent: Double = 0.0,
+    val averageHoldingDays: Double = 0.0,
+    val maxDrawdownPercent: Double = 0.0,
+    val initialCapital: Double = 10_000.0,
+    val finalEquity: Double = 10_000.0,
+    val netProfitUsdt: Double = 0.0,
+    val netProfitPercent: Double = 0.0,
+    val cycles: List<BasketCycleResult> = emptyList(),
+    val equityCurve: List<Pair<Long, Double>> = emptyList(),
+    val errorMessage: String? = null
+)

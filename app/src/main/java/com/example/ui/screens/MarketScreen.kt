@@ -34,8 +34,6 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -105,7 +103,7 @@ fun MarketScreen(
                     Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CryptoGreen))
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Binance Futures",
+                        text = "Binance Futures USDT-M",
                         color = TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
@@ -148,71 +146,7 @@ fun MarketScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(4.dp))
-
-        // THẺ SỐ DƯ & CÔNG TẮC AUTO-TRADE
-        Card(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-            border = BorderStroke(1.dp, DarkBorder)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(horizontal = 14.dp, vertical = 10.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(text = "Số Dư Binance Futures", color = TextSecondary, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = if (apiConfig.isTestnet) CryptoGold.copy(alpha = 0.2f) else CryptoGreen.copy(alpha = 0.2f)
-                        ) {
-                            Text(
-                                text = if (apiConfig.isTestnet) "Binance Demo" else "Mainnet",
-                                color = if (apiConfig.isTestnet) CryptoGold else CryptoGreen,
-                                fontSize = 9.sp,
-                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
-                            )
-                        }
-                    }
-                    Text(
-                        text = "$${String.format(Locale.US, "%,.2f", binancePortfolio.totalWalletBalance)} USDT",
-                        color = TextPrimary,
-                        fontSize = 17.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            text = if (uiState.settings.autoTradeEnabled) "AUTO-TRADE: BẬT" else "AUTO-TRADE: TẮT",
-                            color = if (uiState.settings.autoTradeEnabled) CryptoGreen else TextMuted,
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(text = "Volume 0.5%/lệnh", color = TextMuted, fontSize = 9.sp)
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Switch(
-                        checked = uiState.settings.autoTradeEnabled,
-                        onCheckedChange = { checked ->
-                            onPerformWithPinCheck {
-                                viewModel.toggleAutoTrade(checked)
-                            }
-                        },
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = CryptoGreen,
-                            checkedTrackColor = CryptoGreen.copy(alpha = 0.3f)
-                        )
-                    )
-                }
-            }
-        }
+        Spacer(modifier = Modifier.height(6.dp))
 
         // HÀNG QUÉT TOÀN BỘ SÀN
         Row(
