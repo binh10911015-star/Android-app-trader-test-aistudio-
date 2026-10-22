@@ -2,6 +2,7 @@ package com.example.repository
 
 import com.example.data.TradeDao
 import com.example.indicators.TechnicalAnalysis
+import com.example.model.ActiveBasket
 import com.example.model.AlertType
 import com.example.model.BacktestConfig
 import com.example.model.BacktestSummaryResult
@@ -9,6 +10,8 @@ import com.example.model.BacktestTradeItem
 import com.example.model.BasketBacktestReport
 import com.example.model.BasketCycleResult
 import com.example.model.BasketPosition
+import com.example.model.BasketSlotId
+import com.example.model.BasketStatus
 import com.example.model.BinanceTicker
 import com.example.model.Candle
 import com.example.model.IndicatorData
@@ -59,7 +62,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             val indicatorData = TechnicalAnalysis.computeIndicators(candles)
             if (indicatorData.isNotEmpty()) {
                 val lastItem = indicatorData.last()
-                signalCache[symbol] = lastItem.isMaAboveSuperTrend
+                signalCache[symbol] = lastItem.isPriceAboveSma20
             }
             Result.success(indicatorData)
         } catch (e: Exception) {
@@ -574,173 +577,213 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         config: BacktestConfig = BacktestConfig(),
         symbolsPool: List<String> = emptyList()
     ): BasketBacktestReport = withContext(Dispatchers.IO) {
-        // 1. Quét toàn bộ thị trường, không giới hạn take(50)
+        // 1. Quét toàn bộ thị trường từ Binance Mainnet, không giới hạn take(50)
         val activeSymbols = if (symbolsPool.isNotEmpty()) symbolsPool else fetchHighLiquiditySymbolsFromMainnet(config)
         if (activeSymbols.isEmpty()) {
-            return@withContext BasketBacktestReport(errorMessage = "Không tải được danh sách coin từ Binance Mainnet.")
+            return@withContext BasketBacktestReport(errorMessage = "Không tải được danh sách cặp coin từ Binance Mainnet.")
         }
 
-        // 2. Tải Klines D1 từ Binance Mainnet
+        // 2. Tải Klines D1 từ máy chủ Binance Mainnet
         val klinesMap = mutableMapOf<String, List<Candle>>()
         activeSymbols.forEach { sym ->
-            val candles = BinanceClient.fetchKlinesWithFallback(sym, interval = "1d", limit = daysToTest + 25)
-            if (candles.size >= 25) {
-                klinesMap[sym] = candles
-            }
+            val candles = BinanceClient.fetchKlinesWithFallback(sym, interval = "1d", limit = daysToTest + 30)
+            if (candles.size >= 30) klinesMap[sym] = candles
         }
 
-        // Lấy chuỗi thời gian tham chiếu chuẩn từ BTCUSDT (hoặc cặp coin có lịch sử dài nhất)
-        val referenceCandles = klinesMap["BTCUSDT"] ?: klinesMap.values.maxByOrNull { it.size }
-        if (referenceCandles == null || referenceCandles.size < 25) {
-            return@withContext BasketBacktestReport(errorMessage = "Không đủ nến lịch sử D1 từ Binance Mainnet.")
-        }
+        val btcCandles = klinesMap["BTCUSDT"] ?: return@withContext BasketBacktestReport(errorMessage = "Thiếu dữ liệu nến BTCUSDT để kiểm tra Regime.")
 
         var currentEquity = config.initialCapital
         var peakEquity = currentEquity
         var maxDrawdown = 0.0
 
-        var isBasketActive = false
-        val activePositions = mutableListOf<BasketPosition>()
-        var basketOpenTime = 0L
-        var basketCycleIndex = 0
+        // Quản lý chính xác 2 Slot giỏ lệnh độc lập
+        var primaryBasket: ActiveBasket? = null
+        var secondaryBasket: ActiveBasket? = null
+        var basketCycleCounter = 0
         val cyclesHistory = mutableListOf<BasketCycleResult>()
         val equityCurve = mutableListOf<Pair<Long, Double>>()
 
-        val startIndex = 21
-        equityCurve.add(Pair(referenceCandles[startIndex].openTime, currentEquity))
+        val startIndex = 25
+        equityCurve.add(Pair(btcCandles[startIndex].openTime, currentEquity))
 
-        // Duyệt từng ngày theo trục thời gian chuẩn
-        for (dayIdx in startIndex until referenceCandles.size) {
-            val currentTime = referenceCandles[dayIdx].openTime
+        for (dayIdx in startIndex until btcCandles.size) {
+            val currentTime = btcCandles[dayIdx].openTime
+            val currentBtc = btcCandles[dayIdx - 1] // Nến D1 hôm qua vừa đóng lúc 07:00 AM
 
-            // A. NẾU GIỎ ĐANG CHẠY: Định giá PnL đồng thời tại cùng thời điểm
-            if (isBasketActive && activePositions.isNotEmpty()) {
-                val totalInvested = activePositions.sumOf { it.marginAllocated }
-                var totalPnLToday = 0.0
+            // BƯỚC 1: ĐỊNH GIÁ & KIỂM TRA THOÁT LỆNH ĐỘC LẬP TỪNG SLOT (TRÁNH LOOK-AHEAD BIAS)
+            fun evaluateBasketExit(basket: ActiveBasket?): ActiveBasket? {
+                if (basket == null || basket.status == BasketStatus.CLOSED) return null
 
-                for (pos in activePositions) {
+                var unrealizedPnL = 0.0
+                for (pos in basket.positions) {
                     val candleToday = klinesMap[pos.symbol]?.find { it.openTime == currentTime }
                     if (candleToday != null) {
-                        // Dùng giá Close của nến ngày hôm đó để đảm bảo định giá cùng một thời điểm (chống look-ahead bias)
-                        totalPnLToday += (candleToday.close - pos.entryPrice) * pos.quantity
+                        unrealizedPnL += (candleToday.close - pos.entryPrice) * pos.quantity
                     }
                 }
 
-                val currentRoi = if (totalInvested > 0) totalPnLToday / totalInvested else 0.0
+                val currentRoi = if (basket.totalInvested > 0) unrealizedPnL / basket.totalInvested else 0.0
+                val isTimedOut = (currentTime - basket.openTime) >= basket.maxHoldingMillis
 
-                // Kiểm tra điều kiện chốt lời danh mục
-                if (currentRoi >= config.targetPortfolioRoi) {
-                    val grossProfit = totalInvested * currentRoi
-                    val takerFee = totalInvested * 0.0008 // Phí giao dịch 2 chiều
-                    val realizedProfit = grossProfit - takerFee
+                var exitReason: String? = null
 
-                    currentEquity += realizedProfit
-                    peakEquity = max(peakEquity, currentEquity)
+                when (basket.status) {
+                    BasketStatus.OPEN -> {
+                        when {
+                            currentRoi >= basket.activationRoi -> {
+                                basket.status = BasketStatus.TRAILING_ACTIVE
+                                basket.peakRoi = currentRoi
+                                basket.currentTrailingStopRoi = maxOf(basket.floorLockRoi, currentRoi - basket.trailStepRoi)
+                            }
+                            currentRoi <= basket.initialStopLossRoi -> exitReason = "SL_HIT"
+                            isTimedOut -> exitReason = "TIMEOUT_72H"
+                        }
+                    }
+                    BasketStatus.TRAILING_ACTIVE -> {
+                        if (currentRoi > basket.peakRoi) {
+                            basket.peakRoi = currentRoi
+                            val newStop = maxOf(basket.floorLockRoi, basket.peakRoi - basket.trailStepRoi)
+                            if (newStop > basket.currentTrailingStopRoi) basket.currentTrailingStopRoi = newStop
+                        }
+                        if (currentRoi <= basket.currentTrailingStopRoi) exitReason = "TRAILING_STOP_HIT"
+                        else if (isTimedOut) exitReason = "TIMEOUT_IN_TRAIL"
+                    }
+                    else -> Unit
+                }
 
-                    val holdingDays = max(1.0, (currentTime - basketOpenTime) / 86400000.0)
+                if (exitReason != null) {
+                    val grossProfit = basket.totalInvested * currentRoi
+                    val takerFee = basket.totalInvested * 0.0008 // Phí giao dịch 2 chiều 0.08%
+                    val netProfit = grossProfit - takerFee
+                    currentEquity += netProfit
+                    peakEquity = maxOf(peakEquity, currentEquity)
+
                     cyclesHistory.add(
                         BasketCycleResult(
-                            cycleIndex = ++basketCycleIndex,
-                            openTime = basketOpenTime,
+                            cycleIndex = ++basketCycleCounter,
+                            slotId = basket.slotId,
+                            openTime = basket.openTime,
                             closeTime = currentTime,
-                            holdingDays = holdingDays,
-                            totalInvested = totalInvested,
-                            realizedProfitUsdt = realizedProfit,
+                            holdingDays = maxOf(1.0, (currentTime - basket.openTime) / 86400000.0),
+                            totalInvested = basket.totalInvested,
+                            realizedProfitUsdt = netProfit,
                             basketRoiPercent = currentRoi * 100.0,
                             equityAfterClose = currentEquity,
-                            coinsCount = activePositions.size,
-                            symbolsList = activePositions.map { it.symbol }
+                            coinsCount = basket.positions.size,
+                            symbolsList = basket.positions.map { it.symbol },
+                            exitReason = exitReason
                         )
                     )
-
-                    activePositions.clear()
-                    isBasketActive = false
-                    equityCurve.add(Pair(currentTime, currentEquity))
-                    continue
-                } else {
-                    // Giữ qua đêm, ghi nhận Drawdown
-                    val tempEquity = currentEquity + totalPnLToday
-                    val dd = if (peakEquity > 0) ((peakEquity - tempEquity) / peakEquity) * 100.0 else 0.0
-                    if (dd > maxDrawdown) maxDrawdown = dd
-                    continue
+                    return null // Giải phóng slot
                 }
+
+                // Ghi nhận Drawdown danh mục
+                val tempEquity = currentEquity + unrealizedPnL
+                val dd = if (peakEquity > 0) ((peakEquity - tempEquity) / peakEquity) * 100.0 else 0.0
+                if (dd > maxDrawdown) maxDrawdown = dd
+                return basket
             }
 
-            // B. NẾU ĐANG CẦM TIỀN MẶT: Quét & chấm điểm mở giỏ mới lúc 7h00 sáng
-            if (!isBasketActive) {
-                val candidates = mutableListOf<ScoredCoin>()
+            primaryBasket = evaluateBasketExit(primaryBasket)
+            secondaryBasket = evaluateBasketExit(secondaryBasket)
 
-                for ((sym, candles) in klinesMap) {
-                    val currentCandleIdx = candles.indexOfFirst { it.openTime == currentTime }
-                    if (currentCandleIdx < 21) continue // Bỏ qua nếu coin chưa đủ 21 nến tại thời điểm này
+            // BƯỚC 2: KIỂM TRA MỞ GIỎ MỚI NẾU CÒN SLOT TRỐNG
+            val hasAvailableSlot = (primaryBasket == null || secondaryBasket == null)
+            val runningSymbols = mutableSetOf<String>().apply {
+                primaryBasket?.positions?.forEach { add(it.symbol) }
+                secondaryBasket?.positions?.forEach { add(it.symbol) }
+            }
 
-                    val kline1 = candles[currentCandleIdx - 1] // Nến hôm qua vừa đóng lúc 7h00 sáng
-                    val kline2 = candles[currentCandleIdx - 2]
-                    val prev20 = candles.subList(currentCandleIdx - 21, currentCandleIdx - 1)
-
-                    val sma20 = prev20.map { it.close }.average()
-                    val priceBreakout = kline1.close > sma20
-                    val volExplosion = kline1.volume >= config.minVolRatio * kline2.volume
-                    val priceChangePct = if (kline1.open > 0) ((kline1.close - kline1.open) / kline1.open) * 100.0 else 0.0
-                    val changeValid = priceChangePct in config.minD1ChangePct..config.maxD1ChangePct
-
-                    if (priceBreakout && volExplosion && changeValid) {
-                        val candleRange = max(1e-8, kline1.high - kline1.low)
-                        val candleBody = kline1.close - kline1.open
-                        val volRatio = if (kline2.volume > 0) kline1.volume / kline2.volume else 1.0
-
-                        val score = volRatio * (1.0 + (candleBody / candleRange))
-                        val entryPrice = candles[currentCandleIdx].open // Giá Open lúc 7h00 sáng
-                        candidates.add(ScoredCoin(sym, score, entryPrice, volRatio, priceChangePct))
-                    }
+            // TẦNG 1: BỘ LỌC MACRO BTC REGIME (SMA20 + EMA50 + Panic Circuit Breaker -3.5%)
+            val btcPrev20 = btcCandles.subList(dayIdx - 21, dayIdx - 1).map { it.close }
+            val btcSma20 = btcPrev20.average()
+            val btcPrev50 = if (dayIdx >= 51) btcCandles.subList(dayIdx - 51, dayIdx - 1).map { it.close } else emptyList()
+            val btcEma50 = if (btcPrev50.isNotEmpty()) {
+                val k = 2.0 / (50 + 1)
+                var ema = btcPrev50.first()
+                for (price in btcPrev50) {
+                    ema = price * k + ema * (1 - k)
                 }
+                ema
+            } else btcSma20
+            val btcD1Change = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
+            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50 && btcD1Change > -3.5 // Panic Circuit Breaker
 
-                if (candidates.isNotEmpty()) {
-                    val sorted = candidates.sortedByDescending { it.score }
+            if (hasAvailableSlot && isBtcBullish) {
+                val totalRunningInvested = (primaryBasket?.totalInvested ?: 0.0) + (secondaryBasket?.totalInvested ?: 0.0)
+                val availableBudget = (currentEquity * config.maxPortfolioAllocation) - totalRunningInvested
 
-                    val perTradeUsdt = currentEquity * config.perTradePct
-                    val maxBudget = currentEquity * config.maxPortfolioAllocation
-                    val maxSlots = floor(maxBudget / perTradeUsdt).toInt().coerceAtLeast(1)
+                if (availableBudget >= (currentEquity * config.perTradePct)) {
+                    val candidates = mutableListOf<ScoredCoin>()
 
-                    val selectedCoins = sorted.take(maxSlots)
-                    activePositions.clear()
+                    for ((sym, candles) in klinesMap) {
+                        if (sym in runningSymbols) continue // LỌC TRÙNG TUYỆT ĐỐI
+                        val cIdx = candles.indexOfFirst { it.openTime == currentTime }
+                        if (cIdx < 25) continue
 
-                    for (coin in selectedCoins) {
-                        if (coin.entryPrice > 0) {
-                            val qty = perTradeUsdt / coin.entryPrice
-                            activePositions.add(
-                                BasketPosition(
-                                    symbol = coin.symbol,
-                                    entryPrice = coin.entryPrice,
-                                    quantity = qty,
-                                    marginAllocated = perTradeUsdt
-                                )
-                            )
+                        val k1 = candles[cIdx - 1]
+                        val k2 = candles[cIdx - 2]
+                        val prev20 = candles.subList(cIdx - 21, cIdx - 1)
+                        val sma20 = prev20.map { it.close }.average()
+                        val rvol = if (k2.volume > 0) k1.volume / k2.volume else 1.0
+                        val changePct = if (k1.open > 0) ((k1.close - k1.open) / k1.open) * 100.0 else 0.0
+
+                        // Tính biến động ATR(14)
+                        val atr14 = candles.subList(cIdx - 15, cIdx - 1).map { maxOf(it.high - it.low, Math.abs(it.high - it.close)) }.average()
+                        val atrPct = if (k1.close > 0) atr14 / k1.close else 0.05
+
+                        // Kiểm tra điều kiện cứng
+                        if (k1.close > sma20 && rvol >= config.minVolRatio && changePct in config.minD1ChangePct..config.maxD1ChangePct && atrPct <= 0.12) {
+                            val score = rvol * (1.0 + ((k1.close - k1.open) / maxOf(1e-8, k1.high - k1.low)))
+                            candidates.add(ScoredCoin(sym, score, candles[cIdx].open, rvol, changePct, atrPct))
                         }
                     }
 
-                    if (activePositions.isNotEmpty()) {
-                        isBasketActive = true
-                        basketOpenTime = currentTime
+                    if (candidates.isNotEmpty()) {
+                        val sorted = candidates.sortedByDescending { it.score }
+                        val perTradeUsdt = currentEquity * config.perTradePct
+                        val maxSlots = (availableBudget / perTradeUsdt).toInt().coerceAtLeast(1)
+                        val chosen = sorted.take(maxSlots)
+
+                        val positions = chosen.map {
+                            BasketPosition(
+                                symbol = it.symbol,
+                                entryPrice = it.entryPrice,
+                                quantity = perTradeUsdt / it.entryPrice,
+                                marginAllocated = perTradeUsdt,
+                                entryAtrPercent = it.atrPercent
+                            )
+                        }
+
+                        val assignedSlot = if (primaryBasket == null) BasketSlotId.PRIMARY else BasketSlotId.SECONDARY
+                        val newBasket = ActiveBasket(
+                            slotId = assignedSlot,
+                            openTime = currentTime,
+                            positions = positions,
+                            totalInvested = perTradeUsdt * positions.size
+                        )
+
+                        if (assignedSlot == BasketSlotId.PRIMARY) primaryBasket = newBasket else secondaryBasket = newBasket
                     }
                 }
             }
+            equityCurve.add(Pair(currentTime, currentEquity))
         }
 
         val totalCycles = cyclesHistory.size
-        val avgHolding = if (totalCycles > 0) cyclesHistory.map { it.holdingDays }.average() else 0.0
+        val winCycles = cyclesHistory.count { it.realizedProfitUsdt > 0 }
+        val winrate = if (totalCycles > 0) (winCycles.toDouble() / totalCycles) * 100.0 else 0.0
         val netProfit = currentEquity - config.initialCapital
-        val netProfitPct = (netProfit / config.initialCapital) * 100.0
 
         return@withContext BasketBacktestReport(
             totalCycles = totalCycles,
-            winratePercent = if (totalCycles > 0) 100.0 else 0.0,
-            averageHoldingDays = avgHolding,
+            winratePercent = winrate,
+            averageHoldingDays = if (totalCycles > 0) cyclesHistory.map { it.holdingDays }.average() else 0.0,
             maxDrawdownPercent = maxDrawdown,
             initialCapital = config.initialCapital,
             finalEquity = currentEquity,
             netProfitUsdt = netProfit,
-            netProfitPercent = netProfitPct,
+            netProfitPercent = (netProfit / config.initialCapital) * 100.0,
             cycles = cyclesHistory.reversed(),
             equityCurve = equityCurve
         )

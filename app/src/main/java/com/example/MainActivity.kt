@@ -63,7 +63,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.ai.AiAssistantViewModel
+import com.example.ai.ScreenContextBuilder
 import com.example.ui.MainViewModel
+import com.example.ui.components.AiAssistantBottomSheet
+import com.example.ui.components.FloatingAiButton
 import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.TradeAlertBanner
 import com.example.ui.screens.AnalyticsScreen
@@ -125,6 +130,8 @@ fun MainApp(viewModel: MainViewModel) {
     val livePositionsTpSl by viewModel.livePositionsTpSl.collectAsState()
 
     var showMainnetPinDialog by remember { mutableStateOf(false) }
+    var showAiSheet by remember { mutableStateOf(false) }
+    val aiViewModel: AiAssistantViewModel = viewModel()
 
     // Số lượng lệnh đang mở
     val openCount = if (apiConfig.isConnected) binancePortfolio.positions.size else openPositions.size
@@ -391,6 +398,34 @@ fun MainApp(viewModel: MainViewModel) {
                             )
                         }
                     }
+                }
+
+                // NÚT TRÒN NỔI DUY NHẤT NEO GÓC DƯỚI PHẢI
+                if (!showAiSheet) {
+                    FloatingAiButton(
+                        onClick = { showAiSheet = true },
+                        modifier = Modifier
+                            .align(Alignment.BottomEnd)
+                            .padding(end = 16.dp, bottom = 16.dp)
+                    )
+                }
+
+                // POPUP MODAL SHEET CHIẾM 80%
+                if (showAiSheet) {
+                    val contextJson = ScreenContextBuilder.buildDualBasketContext(
+                        currentScreen = currentScreen.name,
+                        selectedSymbol = uiState.selectedSymbol,
+                        primaryBasket = viewModel.primaryBasket,
+                        secondaryBasket = viewModel.secondaryBasket,
+                        backtestReport = uiState.basketReport
+                    )
+
+                    AiAssistantBottomSheet(
+                        viewModel = aiViewModel,
+                        screenContextJson = contextJson,
+                        currentScreenName = currentScreen.name,
+                        onDismiss = { showAiSheet = false }
+                    )
                 }
             }
         }

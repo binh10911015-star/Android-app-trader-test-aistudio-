@@ -55,8 +55,6 @@ import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
 import com.example.ui.theme.DarkSurfaceHighlight
 import com.example.ui.theme.IndicatorMA20
-import com.example.ui.theme.IndicatorSuperTrendDown
-import com.example.ui.theme.IndicatorSuperTrendUp
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextPrimary
 import com.example.ui.theme.TextSecondary
@@ -65,7 +63,6 @@ import kotlin.math.max
 import kotlin.math.min
 
 enum class ChartStrategyMode {
-    SMA_SUPERTREND,
     SMA_VOLUME
 }
 
@@ -74,12 +71,12 @@ fun CandlestickChart(
     indicatorData: List<IndicatorData> = emptyList(),
     timeframe: String = "4h",
     candles: List<Candle> = indicatorData.map { it.candle },
-    initialMode: ChartStrategyMode = ChartStrategyMode.SMA_SUPERTREND,
+    initialMode: ChartStrategyMode = ChartStrategyMode.SMA_VOLUME,
     modifier: Modifier = Modifier
 ) {
     var strategyMode by remember(initialMode) { mutableStateOf(initialMode) }
 
-    // Đảm bảo luôn có 30 nến kèm chỉ báo MA20 & SuperTrend đầy đủ
+    // Đảm bảo luôn có 30 nến kèm chỉ báo MA20 đầy đủ
     val effectiveIndicators = remember(indicatorData, candles, timeframe) {
         if (indicatorData.isNotEmpty()) {
             if (indicatorData.size > 30) indicatorData.takeLast(30) else indicatorData
@@ -112,12 +109,6 @@ fun CandlestickChart(
         ind.ma20?.let {
             if (it < minPrice) minPrice = it
             if (it > maxPrice) maxPrice = it
-        }
-        ind.superTrend?.let { st ->
-            if (st.value > 0.0) {
-                if (st.value < minPrice) minPrice = st.value
-                if (st.value > maxPrice) maxPrice = st.value
-            }
         }
     }
 
@@ -194,81 +185,46 @@ fun CandlestickChart(
 
         Spacer(modifier = Modifier.height(10.dp))
 
-        // HÀNG 2: Hai nút chuyển đổi chiến lược dàn đều 50/50, không bị co vỡ
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // HÀNG 2: Thanh thông tin chỉ báo hoạt động
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(34.dp)
+                .clip(RoundedCornerShape(8.dp))
+                .border(1.dp, DarkBorder, RoundedCornerShape(8.dp)),
+            color = DarkSurfaceHighlight
         ) {
-            // Nút 1: SMA + SuperTrend
-            val isSmaSt = strategyMode == ChartStrategyMode.SMA_SUPERTREND
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { strategyMode = ChartStrategyMode.SMA_SUPERTREND }
-                    .border(
-                        1.dp,
-                        if (isSmaSt) CryptoGold else DarkBorder,
-                        RoundedCornerShape(8.dp)
-                    )
-                    .testTag("chart_mode_sma_supertrend"),
-                color = if (isSmaSt) CryptoGold else DarkSurfaceHighlight
+            Row(
+                modifier = Modifier.padding(horizontal = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         imageVector = Icons.Default.ShowChart,
                         contentDescription = null,
-                        tint = if (isSmaSt) Color.Black else TextSecondary,
-                        modifier = Modifier.size(14.dp)
+                        tint = IndicatorMA20,
+                        modifier = Modifier.size(15.dp)
                     )
-                    Spacer(modifier = Modifier.width(5.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "SMA + SuperTrend",
-                        color = if (isSmaSt) Color.Black else TextSecondary,
+                        text = "Chỉ báo hoạt động: SMA(20) & Khối lượng",
+                        color = Color.White,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
                 }
-            }
 
-            // Nút 2: SMA + Khối lượng
-            val isSmaVol = strategyMode == ChartStrategyMode.SMA_VOLUME
-            Surface(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(34.dp)
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable { strategyMode = ChartStrategyMode.SMA_VOLUME }
-                    .border(
-                        1.dp,
-                        if (isSmaVol) CryptoGold else DarkBorder,
-                        RoundedCornerShape(8.dp)
-                    )
-                    .testTag("chart_mode_sma_volume"),
-                color = if (isSmaVol) CryptoGold else DarkSurfaceHighlight
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.Center
+                Surface(
+                    shape = RoundedCornerShape(4.dp),
+                    color = CryptoGreen.copy(alpha = 0.2f)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.BarChart,
-                        contentDescription = null,
-                        tint = if (isSmaVol) Color.Black else TextSecondary,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(modifier = Modifier.width(5.dp))
                     Text(
-                        text = "SMA + Khối lượng",
-                        color = if (isSmaVol) Color.Black else TextSecondary,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        text = "ACTIVE",
+                        color = CryptoGreen,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                     )
                 }
             }
@@ -304,39 +260,19 @@ fun CandlestickChart(
                 )
             }
 
-            if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val isBullish = latestIndicator?.superTrend?.isBullish == true
-                    Box(
-                        modifier = Modifier
-                            .size(7.dp)
-                            .background(if (isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown, CircleShape)
-                    )
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(text = "SuperTrend: ", color = TextSecondary, fontSize = 10.sp)
-                    Text(
-                        text = "$${latestIndicator?.superTrend?.value?.let { CryptoRepository.formatPrice(it) } ?: "--"}",
-                        color = if (isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    val volRatio = if (avgVolume > 0) (latestCandle?.volume ?: 0.0) / avgVolume else 1.0
-                    val isVolBreakout = volRatio >= 2.0
-                    Text(text = "Tỷ lệ Vol: ", color = TextSecondary, fontSize = 10.sp)
-                    Text(
-                        text = "${String.format(Locale.US, "%.1f", volRatio)}x",
-                        color = if (isVolBreakout) CryptoGreen else TextPrimary,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        fontFamily = FontFamily.Monospace
-                    )
-                    if (isVolBreakout) {
-                        Text(text = " 🔥 (Đạt ngưỡng 2x)", color = CryptoGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                    }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                val volRatio = if (avgVolume > 0) (latestCandle?.volume ?: 0.0) / avgVolume else 1.0
+                val isVolBreakout = volRatio >= 2.0
+                Text(text = "Tỷ lệ Vol: ", color = TextSecondary, fontSize = 10.sp)
+                Text(
+                    text = "${String.format(Locale.US, "%.1f", volRatio)}x",
+                    color = if (isVolBreakout) CryptoGreen else TextPrimary,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace
+                )
+                if (isVolBreakout) {
+                    Text(text = " 🔥 (Đạt ngưỡng 2x)", color = CryptoGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -474,43 +410,6 @@ fun CandlestickChart(
                     )
                 }
 
-                // 4. Vẽ đường SuperTrend(20,4) nếu ở chế độ SMA_SUPERTREND
-                if (strategyMode == ChartStrategyMode.SMA_SUPERTREND) {
-                    var lastStX: Float? = null
-                    var lastStY: Float? = null
-                    var lastBullish: Boolean? = null
-
-                    effectiveIndicators.forEachIndexed { index, ind ->
-                        ind.superTrend?.let { st ->
-                            if (st.value > 0.0) {
-                                val centerX = (index + 0.5f) * step
-                                val y = priceToY(st.value)
-                                val stColor = if (st.isBullish) IndicatorSuperTrendUp else IndicatorSuperTrendDown
-
-                                // Vẽ chấm tròn tại mỗi điểm
-                                drawCircle(
-                                    color = stColor,
-                                    radius = 3.5f,
-                                    center = Offset(centerX, y)
-                                )
-
-                                // Nối đường nếu cùng hướng
-                                if (lastStX != null && lastStY != null && lastBullish == st.isBullish) {
-                                    drawLine(
-                                        color = stColor,
-                                        start = Offset(lastStX!!, lastStY!!),
-                                        end = Offset(centerX, y),
-                                        strokeWidth = 2.5f
-                                    )
-                                }
-
-                                lastStX = centerX
-                                lastStY = y
-                                lastBullish = st.isBullish
-                            }
-                        }
-                    }
-                }
             }
 
             // Nhãn giá Max / Min góc trên bên phải

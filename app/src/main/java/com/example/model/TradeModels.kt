@@ -46,8 +46,8 @@ data class IndicatorData(
     val isPriceAboveSma20: Boolean
         get() = (ma20 != null && candle.close >= ma20)
 
-    fun isBullishSignal(useSuperTrend: Boolean = true): Boolean {
-        return if (useSuperTrend) (isPriceAboveSma20 && isMaAboveSuperTrend) else isPriceAboveSma20
+    fun isBullishSignal(useSuperTrend: Boolean = false): Boolean {
+        return isPriceAboveSma20
     }
 }
 
@@ -275,15 +275,15 @@ enum class TradingStrategyType(val displayName: String, val description: String)
         "Chiến lược D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)",
         "Nến D1, đường SMA20 tính theo Giá Mở Cửa (Open). Mua khi Giá >= SMA20(D1) và Volume D1 >= 2x ngày hôm trước."
     ),
-    FOUR_HOUR_SUPERTREND_MA20(
-        "Chiến lược 4H SuperTrend và 4H MA20",
-        "Nến 4H, mua khi SuperTrend(20,4) đảo chiều tăng và giá nằm trên đường MA20."
+    DUAL_BASKET_MOMENTUM_V2(
+        "Chiến lược Dual Basket Momentum v2.0 (Khuyến nghị)",
+        "Quản lý 2 giỏ lệnh Primary (07:00) & Secondary (19:00 UTC+7). Lọc BTC Regime + RVol >= 2.0x, ATR trailing take-profit, timeout 72h."
     )
 }
 
 data class TradeSettings(
     val autoTradeEnabled: Boolean = false,
-    val selectedStrategy: TradingStrategyType = TradingStrategyType.D1_SMA20_VOLUME,
+    val selectedStrategy: TradingStrategyType = TradingStrategyType.DUAL_BASKET_MOMENTUM_V2,
     val volumeMultiplierThreshold: Double = 2.0,
     val portfolioTakeProfitPercent: Double = 4.0,
     val volumeType: VolumeType = VolumeType.PERCENT_OF_BALANCE,
@@ -292,7 +292,7 @@ data class TradeSettings(
     val capitalPerTradeUsdt: Double = 50.0,
     val takeProfitPercent: Double? = 4.0,
     val stopLossPercent: Double? = null,
-    val useSuperTrendFilter: Boolean = true,
+    val enableDualBasket: Boolean = true,
     val timeframe: String = "1d",
     val simulatedBalanceUsdt: Double = 10000.0,
     val leverage: Int = 1
@@ -420,23 +420,75 @@ data class BacktestSummaryResult(
     val errorMessage: String? = null
 )
 
-data class ScoredCoin(
-    val symbol: String,
-    val score: Double,
-    val entryPrice: Double,
-    val volRatio: Double,
-    val d1ChangePct: Double
-)
+enum class BasketSlotId {
+    PRIMARY,    // Giỏ quét chính lúc 07:00 AM (UTC+7 / 00:00 UTC)
+    SECONDARY   // Giỏ quét phụ lúc 19:00 PM (UTC+7 / 12:00 UTC)
+}
+
+enum class BasketStatus {
+    OPEN,               // Đang chạy, chưa kích hoạt Trailing
+    TRAILING_ACTIVE,    // Đã vượt mốc kích hoạt cơ sở, đang bám đỉnh theo ATR
+    CLOSING,            // Đang thanh lý lệnh trên sàn (khóa slot, cấm ghi đè)
+    CLOSED              // Đã tất toán xong, giải phóng slot cho chu kỳ tiếp theo
+}
 
 data class BasketPosition(
     val symbol: String,
     val entryPrice: Double,
     val quantity: Double,
-    val marginAllocated: Double
+    val marginAllocated: Double,
+    val entryAtrPercent: Double = 0.05 // ATR(14) D1 / entryPrice tại thời điểm vào lệnh
+)
+
+data class ActiveBasket(
+    val slotId: BasketSlotId = BasketSlotId.PRIMARY,
+    val openTime: Long = System.currentTimeMillis(),
+    val positions: List<BasketPosition> = emptyList(),
+    val totalInvested: Double = 0.0,
+    var status: BasketStatus = BasketStatus.OPEN,
+    val maxHoldingMillis: Long = 72 * 3600 * 1000L // Timeout cố định 72 giờ
+) {
+    // 1. Biến động trọng số toàn giỏ: Basket ATR%
+    val basketAtrPercent: Double by lazy {
+        if (totalInvested <= 0.0) 0.0
+        else positions.sumOf { it.entryAtrPercent * (it.marginAllocated / totalInvested) }
+    }
+
+    // 2. Ngưỡng kích hoạt Trailing cơ sở: K_TP = 0.5 (Tối thiểu +1.5%)
+    val activationRoi: Double by lazy {
+        maxOf(0.015, 0.50 * basketAtrPercent)
+    }
+
+    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL = 0.5 (Tối đa -2.0%)
+    val initialStopLossRoi: Double by lazy {
+        -maxOf(0.020, 0.50 * basketAtrPercent)
+    }
+
+    // 4. Bước đệm kéo lùi Trailing: 0.25 * ATR giỏ (Tối thiểu 0.6%)
+    val trailStepRoi: Double by lazy {
+        maxOf(0.006, 0.25 * basketAtrPercent)
+    }
+
+    // Sàn bảo vệ lợi nhuận tối thiểu khi đã bật trailing (đủ bù trượt giá & phí giao dịch)
+    val floorLockRoi: Double = 0.005 // +0.5% net
+
+    // Biến trạng thái động theo dõi theo thời gian thực
+    var peakRoi: Double = 0.0
+    var currentTrailingStopRoi: Double = -1.0
+}
+
+data class ScoredCoin(
+    val symbol: String,
+    val score: Double,
+    val entryPrice: Double,
+    val volRatio: Double,
+    val changePct: Double = 0.0,
+    val atrPercent: Double = 0.05
 )
 
 data class BasketCycleResult(
     val cycleIndex: Int,
+    val slotId: BasketSlotId = BasketSlotId.PRIMARY,
     val openTime: Long,
     val closeTime: Long,
     val holdingDays: Double,
@@ -445,7 +497,8 @@ data class BasketCycleResult(
     val basketRoiPercent: Double,
     val equityAfterClose: Double,
     val coinsCount: Int,
-    val symbolsList: List<String>
+    val symbolsList: List<String>,
+    val exitReason: String = "TRAILING_STOP_HIT"
 )
 
 data class BasketBacktestReport(

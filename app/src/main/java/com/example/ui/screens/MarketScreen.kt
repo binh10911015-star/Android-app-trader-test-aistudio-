@@ -110,8 +110,7 @@ fun MarketScreen(
                     )
                 }
                 Text(
-                    text = if (uiState.settings.selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME)
-                        "D1: SMA20 Breakout & Vol >= 2x" else "4H: SuperTrend & MA20",
+                    text = "Chiến lược: D1 SMA20 Breakout & Vol >= 2x",
                     color = CryptoGold,
                     fontSize = 11.sp
                 )
@@ -212,110 +211,68 @@ fun MarketScreen(
         )
 
         // 2 THẺ TÍN HIỆU ĐỘC LẬP
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        // THẺ CHIẾN LƯỢC: D1 SMA20 Breakout & Bùng Nổ Vol (Quét nến ngày 07:00 AM)
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp)
+                .clickable {
+                    viewModel.selectSignalTab(0)
+                    viewModel.setFilterMode(
+                        if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL) MarketFilter.ALL else MarketFilter.BULLISH_SIGNAL
+                    )
+                },
+            shape = RoundedCornerShape(10.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                    DarkSurfaceElevated else DarkSurfaceHighlight
+            ),
+            border = BorderStroke(
+                1.dp,
+                if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                    CryptoGold else DarkBorder
+            )
         ) {
-            // Thẻ 1: D1 SMA20 Breakout & Bùng Nổ Vol
-            Card(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { viewModel.selectSignalTab(0) },
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
-                        DarkSurfaceElevated else DarkSurfaceHighlight
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
-                        CryptoGold else Color.Transparent
-                )
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "D1 BREAKOUT",
+                            text = "TÍN HIỆU D1 BREAKOUT & VOL 2X",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (uiState.selectedSignalTab == 0 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
+                            color = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
                                 CryptoGold else TextPrimary
                         )
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = CryptoGold.copy(alpha = 0.2f)
-                        ) {
-                            Text(
-                                text = "${uiState.d1BullishCount} coin",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = CryptoGold,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "(Nến ngày 07:00 AM)",
+                            fontSize = 10.sp,
+                            color = TextMuted
+                        )
                     }
-                    Text(
-                        text = "Giá >= SMA20 & Vol >= 2x (từ 7h)",
-                        fontSize = 9.sp,
-                        color = TextMuted,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
-                }
-            }
-
-            // Thẻ 2: 4H SuperTrend & MA20
-            Card(
-                modifier = Modifier
-                    .weight(1f)
-                    .clickable { viewModel.selectSignalTab(1) },
-                shape = RoundedCornerShape(10.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
-                        DarkSurfaceElevated else DarkSurfaceHighlight
-                ),
-                border = BorderStroke(
-                    1.dp,
-                    if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
-                        CryptoGreen else Color.Transparent
-                )
-            ) {
-                Column(modifier = Modifier.padding(8.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = CryptoGold.copy(alpha = 0.2f)
                     ) {
                         Text(
-                            text = "4H SUPERTREND",
-                            fontSize = 11.sp,
+                            text = "${uiState.d1BullishCount} coin",
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (uiState.selectedSignalTab == 1 && uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
-                                CryptoGreen else TextPrimary
+                            color = CryptoGold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                         )
-                        Surface(
-                            shape = RoundedCornerShape(4.dp),
-                            color = CryptoGreen.copy(alpha = 0.2f)
-                        ) {
-                            Text(
-                                text = "${uiState.superTrendBullishCount} coin",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = CryptoGreen,
-                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
                     }
-                    Text(
-                        text = "MA20 > SuperTrend (20,4)",
-                        fontSize = 9.sp,
-                        color = TextMuted,
-                        modifier = Modifier.padding(top = 2.dp)
-                    )
                 }
+                Text(
+                    text = "Điều kiện: Giá >= SMA20 (Open) & Khối lượng D1 >= 2x trung bình 20 ngày",
+                    fontSize = 9.sp,
+                    color = TextMuted,
+                    modifier = Modifier.padding(top = 2.dp)
+                )
             }
         }
 
@@ -351,7 +308,7 @@ fun MarketScreen(
                 border = BorderStroke(1.dp, CryptoGreen)
             ) {
                 Text(
-                    text = "Mở toàn bộ (${if (uiState.selectedSignalTab == 0) uiState.d1BullishCount else uiState.superTrendBullishCount})",
+                    text = "Mở toàn bộ (${uiState.d1BullishCount})",
                     color = CryptoGreen,
                     fontSize = 10.sp,
                     fontWeight = FontWeight.Bold

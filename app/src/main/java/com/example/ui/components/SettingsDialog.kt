@@ -125,15 +125,12 @@ fun SettingsDialog(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Strategy 1: D1 SMA20 Breakout & Volume 2x
-                val isD1Selected = selectedStrategy == TradingStrategyType.D1_SMA20_VOLUME
+                // Chiến lược mặc định: D1 SMA20 Breakout & Volume 2x
                 Surface(
                     shape = RoundedCornerShape(10.dp),
-                    color = if (isD1Selected) DarkSurfaceHighlight else DarkSurfaceElevated,
-                    border = BorderStroke(1.dp, if (isD1Selected) CryptoGold else DarkBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedStrategy = TradingStrategyType.D1_SMA20_VOLUME }
+                    color = DarkSurfaceHighlight,
+                    border = BorderStroke(1.dp, CryptoGold),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Row(
@@ -143,7 +140,7 @@ fun SettingsDialog(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(
-                                    selected = isD1Selected,
+                                    selected = true,
                                     onClick = { selectedStrategy = TradingStrategyType.D1_SMA20_VOLUME },
                                     colors = RadioButtonDefaults.colors(selectedColor = CryptoGold)
                                 )
@@ -159,7 +156,7 @@ fun SettingsDialog(
                                 color = CryptoGreen.copy(alpha = 0.2f)
                             ) {
                                 Text(
-                                    text = "KHUYÊN DÙNG",
+                                    text = "HOẠT ĐỘNG",
                                     color = CryptoGreen,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
@@ -169,41 +166,6 @@ fun SettingsDialog(
                         }
                         Text(
                             text = "Khung thời gian D1 (1 Ngày). Đường SMA20 tính căn cứ theo Giá Mở Cửa (Open). Mua khi Giá >= SMA20(D1) và Khối lượng nến D1 >= 2x hôm trước.",
-                            color = TextSecondary,
-                            fontSize = 11.sp,
-                            modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Strategy 2: 4H SuperTrend and 4H MA20
-                val is4hSelected = selectedStrategy == TradingStrategyType.FOUR_HOUR_SUPERTREND_MA20
-                Surface(
-                    shape = RoundedCornerShape(10.dp),
-                    color = if (is4hSelected) DarkSurfaceHighlight else DarkSurfaceElevated,
-                    border = BorderStroke(1.dp, if (is4hSelected) CryptoGold else DarkBorder),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { selectedStrategy = TradingStrategyType.FOUR_HOUR_SUPERTREND_MA20 }
-                ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(
-                                selected = is4hSelected,
-                                onClick = { selectedStrategy = TradingStrategyType.FOUR_HOUR_SUPERTREND_MA20 },
-                                colors = RadioButtonDefaults.colors(selectedColor = CryptoGold)
-                            )
-                            Text(
-                                text = "4H SuperTrend và 4H MA20",
-                                color = TextPrimary,
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        Text(
-                            text = "Khung thời gian 4H. Sử dụng chỉ báo SuperTrend(20,4) kết hợp MA20. Mua khi SuperTrend đảo chiều tăng và giá nằm trên MA20.",
                             color = TextSecondary,
                             fontSize = 11.sp,
                             modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)

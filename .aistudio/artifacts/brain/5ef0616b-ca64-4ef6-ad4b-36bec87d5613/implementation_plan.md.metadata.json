@@ -1,6 +1,6 @@
 {
-  "summary": "Kế hoạch nâng cấp và sửa lỗi toàn diện 4 màn hình chính của ứng dụng CryptoTrader:\n1. Thẻ Thị trường: Sửa lỗi cuộn trang bằng cấu trúc LazyColumn mượt mà, hiển thị chi tiết số liệu và điều kiện của từng tín hiệu giao dịch.\n2. Thẻ Biểu đồ: Giới hạn 30 nến gần nhất với tỷ lệ co giãn tối ưu, vẽ rõ ràng MA20 và SuperTrend; thêm thanh công tắc chuyển đổi giữa 2 chế độ hiển thị chiến lược (SMA + SuperTrend và SMA + Khối lượng).\n3. Thẻ Thống kê: Xây dựng màn hình Analytics hoàn chỉnh gồm tổng quan PnL, Win Rate, biểu đồ tăng trưởng vốn Canvas và bảng lịch sử lệnh chi tiết.\n4. Thẻ API Key: Xây dựng form nhập liệu bảo mật, lựa chọn Testnet/Mainnet kèm tính năng Test kết nối trực tiếp với máy chủ Binance Futures.",
-  "updatedAt": "2026-10-18T17:50:14.542338510Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Kế hoạch hoàn tất triển khai Cỗ máy Dual Basket Momentum v2.0 kết hợp Trợ lý AI Co-Pilot Advisor cho anh Bình. Đã thanh lọc hoàn toàn SuperTrend khỏi hệ thống, cấu hình 2 Slot giỏ lệnh độc lập, bộ lọc 3 tầng định lượng và AI Bottom Sheet 80% với phong cách xưng hô anh Bình - em chuẩn mực.",
+  "updatedAt":  "2026-10-22T17:46:24.312645885Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

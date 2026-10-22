@@ -88,10 +88,7 @@ class ExampleRobolectricTest {
         // After 20 candles, MA20 should have a value
         val lastIndicator = result.last()
         assertNotNull(lastIndicator.ma20)
-        assertNotNull(lastIndicator.superTrend)
-
-        // In a continuous strong uptrend, MA20 should be above lower SuperTrend
-        assertTrue(lastIndicator.superTrend?.isBullish == true)
+        assertTrue(lastIndicator.isPriceAboveSma20)
     }
 
     @Test
@@ -248,7 +245,8 @@ class ExampleRobolectricTest {
 
         // Trigger openAllScannedPositions
         val job = vm.openAllScannedPositions(isAuto = false)
-        testScheduler.advanceUntilIdle()
+        testScheduler.advanceTimeBy(30000)
+        testScheduler.runCurrent()
         job.join()
 
         // Verify open positions are created
@@ -486,7 +484,7 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test signal condition filters with SMA20 and optional SuperTrend`() {
+    fun `test signal condition filters with SMA20`() {
         val candle = Candle(
             openTime = 1000L,
             open = 100.0,
@@ -497,43 +495,22 @@ class ExampleRobolectricTest {
             closeTime = 2000L
         )
 
-        // Case A: Giá > SMA20, MA20 > SuperTrend is TRUE
-        val pointBullishBoth = com.example.model.IndicatorData(
+        // Case A: Giá > SMA20
+        val pointBullish = com.example.model.IndicatorData(
             candle = candle,
-            ma20 = 100.0,
-            superTrend = com.example.model.SuperTrendPoint(value = 90.0, isBullish = true),
-            isMaAboveSuperTrend = true
+            ma20 = 100.0
         )
-        assertTrue(pointBullishBoth.isPriceAboveSma20)
-        // With SuperTrend required: true
-        assertTrue(pointBullishBoth.isBullishSignal(useSuperTrend = true))
-        // With SuperTrend optional/disabled: true (only requires Price > SMA20)
-        assertTrue(pointBullishBoth.isBullishSignal(useSuperTrend = false))
+        assertTrue(pointBullish.isPriceAboveSma20)
+        assertTrue(pointBullish.isBullishSignal())
 
-        // Case B: Giá > SMA20, but MA20 > SuperTrend is FALSE
-        val pointMaBelowSuperTrend = com.example.model.IndicatorData(
-            candle = candle,
-            ma20 = 100.0,
-            superTrend = com.example.model.SuperTrendPoint(value = 110.0, isBullish = false),
-            isMaAboveSuperTrend = false
-        )
-        assertTrue(pointMaBelowSuperTrend.isPriceAboveSma20)
-        // With SuperTrend required: false
-        assertFalse(pointMaBelowSuperTrend.isBullishSignal(useSuperTrend = true))
-        // With SuperTrend optional/disabled: true because Price (105) > SMA20 (100)
-        assertTrue(pointMaBelowSuperTrend.isBullishSignal(useSuperTrend = false))
-
-        // Case C: Giá < SMA20 (fails in both modes)
+        // Case B: Giá < SMA20
         val candleBearish = candle.copy(close = 95.0)
         val pointBearish = com.example.model.IndicatorData(
             candle = candleBearish,
-            ma20 = 100.0,
-            superTrend = com.example.model.SuperTrendPoint(value = 90.0, isBullish = true),
-            isMaAboveSuperTrend = true
+            ma20 = 100.0
         )
         assertFalse(pointBearish.isPriceAboveSma20)
-        assertFalse(pointBearish.isBullishSignal(useSuperTrend = true))
-        assertFalse(pointBearish.isBullishSignal(useSuperTrend = false))
+        assertFalse(pointBearish.isBullishSignal())
     }
 
     @Test

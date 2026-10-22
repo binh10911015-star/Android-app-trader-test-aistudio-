@@ -4,10 +4,14 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
+import com.example.model.ActiveBasket
 import com.example.model.AlertType
 import com.example.model.BacktestConfig
 import com.example.model.BacktestSummaryResult
 import com.example.model.BasketBacktestReport
+import com.example.model.BasketPosition
+import com.example.model.BasketSlotId
+import com.example.model.BasketStatus
 import com.example.model.BinanceAccountVerificationResult
 import com.example.model.BinanceApiConfig
 import com.example.model.BinanceAssetBalance
@@ -59,7 +63,6 @@ data class UiState(
     val filteredTickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
     val coinStateList: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers(),
     val scannedD1BreakoutTickers: List<BinanceTicker> = emptyList(),
-    val scannedSuperTrendTickers: List<BinanceTicker> = emptyList(),
     val scannedBullishTickers: List<BinanceTicker> = com.example.data.DefaultCoinData.getSeedTickers().take(3),
     val bullishCount: Int = 3,
     val selectedSignalTab: Int = 0,
@@ -147,6 +150,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _livePositionsTpSl = MutableStateFlow<Map<String, Pair<Double?, Double?>>>(emptyMap())
     val livePositionsTpSl: StateFlow<Map<String, Pair<Double?, Double?>>> = _livePositionsTpSl.asStateFlow()
 
+    private val _primaryBasket = MutableStateFlow<ActiveBasket?>(null)
+    val primaryBasketState: StateFlow<ActiveBasket?> = _primaryBasket.asStateFlow()
+    val primaryBasket: ActiveBasket? get() = _primaryBasket.value
+
+    private val _secondaryBasket = MutableStateFlow<ActiveBasket?>(null)
+    val secondaryBasketState: StateFlow<ActiveBasket?> = _secondaryBasket.asStateFlow()
+    val secondaryBasket: ActiveBasket? get() = _secondaryBasket.value
+
     init {
         val loadedConfig = secureApiStorage.loadConfig()
         BinanceClient.isTestnet = loadedConfig.isTestnet 
@@ -170,6 +181,30 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             autoLoginMainnet()
         }
+
+        viewModelScope.launch {
+            openPositions.collect { list ->
+                if (list.isNotEmpty()) {
+                    val pos = list.map {
+                        BasketPosition(
+                            symbol = it.symbol,
+                            entryPrice = it.entryPrice,
+                            quantity = it.amount,
+                            marginAllocated = it.investedUsdt,
+                            entryAtrPercent = 0.05
+                        )
+                    }
+                    _primaryBasket.value = ActiveBasket(
+                        slotId = BasketSlotId.PRIMARY,
+                        openTime = list.minOfOrNull { it.entryTime } ?: System.currentTimeMillis(),
+                        positions = pos,
+                        totalInvested = pos.sumOf { it.marginAllocated }
+                    )
+                } else {
+                    _primaryBasket.value = null
+                }
+            }
+        }
     }
 
     @OptIn(FlowPreview::class)
@@ -188,7 +223,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             refreshTickers()
             loadKlineForSymbol(_uiState.value.selectedSymbol, _uiState.value.selectedTimeframe)
-            scanAllFuturesCoins(isAutoScheduled = false)
         }
     }
 
@@ -227,9 +261,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         applyFilters(_searchQueryFlow.value)
     }
 
-    fun selectSignalTab(tabIndex: Int) {
+    fun selectSignalTab(tabIndex: Int = 0) {
         _uiState.value = _uiState.value.copy(
-            selectedSignalTab = tabIndex,
+            selectedSignalTab = 0,
             filterMode = MarketFilter.BULLISH_SIGNAL
         )
         applyFilters(_searchQueryFlow.value)
@@ -241,11 +275,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val cleanQuery = com.example.util.SearchUtils.stripUsdtSuffix(query).uppercase()
         val rawQuery = query.trim().uppercase()
 
-        val activeSignalSymbols = if (current.selectedSignalTab == 0) {
-            current.scannedD1BreakoutTickers.map { it.symbol }.toSet()
-        } else {
-            current.scannedSuperTrendTickers.map { it.symbol }.toSet()
-        }
+        val activeSignalSymbols = current.scannedD1BreakoutTickers.map { it.symbol }.toSet()
 
         val listToFilter = current.tickers
 
@@ -479,8 +509,7 @@ fun toggleAutoTrade(enabled: Boolean) {
             // Tự động khởi động Foreground Service chạy ngầm 24/7
             com.example.TradingForegroundService.startService(context)
 
-            val isD1 = _uiState.value.settings.selectedStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME
-            val strategyTitle = if (isD1) "D1 SMA20 Breakout & Bùng Nổ Khối Lượng" else "4H SuperTrend & MA20"
+            val strategyTitle = "D1 SMA20 Breakout & Bùng Nổ Khối Lượng"
 
             triggerAlert(
                 TradeAlert(
@@ -1008,11 +1037,7 @@ fun toggleAutoTrade(enabled: Boolean) {
                     com.example.data.DefaultCoinData.getSeedTickers()
                 }
                 
-                val symbolsToOpenSource = if (_uiState.value.selectedSignalTab == 0) {
-                    _uiState.value.scannedD1BreakoutTickers.map { it.symbol }
-                } else {
-                    _uiState.value.scannedSuperTrendTickers.map { it.symbol }
-                }
+                val symbolsToOpenSource = _uiState.value.scannedD1BreakoutTickers.map { it.symbol }
 
                 if (symbolsToOpenSource.isEmpty()) {
                     if (!isAuto) {
@@ -1193,7 +1218,6 @@ fun toggleAutoTrade(enabled: Boolean) {
             var scannedCount = 0
 
             val d1Matches = mutableListOf<BinanceTicker>()
-            val superTrendMatches = mutableListOf<BinanceTicker>()
 
             val chunkSize = 8
             val chunks = allSymbols.chunked(chunkSize)
@@ -1204,12 +1228,8 @@ fun toggleAutoTrade(enabled: Boolean) {
                 val d1Deferred = chunk.map { sym ->
                     async(Dispatchers.IO) { sym to repository.getCandlesWithIndicators(sym, "1d") }
                 }
-                val h4Deferred = chunk.map { sym ->
-                    async(Dispatchers.IO) { sym to repository.getCandlesWithIndicators(sym, "4h") }
-                }
 
                 val d1Results = d1Deferred.awaitAll().toMap()
-                val h4Results = h4Deferred.awaitAll().toMap()
 
                 for (sym in chunk) {
                     scannedCount++
@@ -1235,23 +1255,13 @@ fun toggleAutoTrade(enabled: Boolean) {
                             }
                         }
                     }
-
-                    val h4Res = h4Results[sym]
-                    if (h4Res != null && h4Res.isSuccess) {
-                        val latest4h = h4Res.getOrNull()?.lastOrNull()
-                        if (latest4h?.isBullishSignal(_uiState.value.settings.useSuperTrendFilter) == true && ticker != null) {
-                            superTrendMatches.add(ticker)
-                        }
-                    }
                 }
 
                 _uiState.value = _uiState.value.copy(
-                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (D1 Vol 2x: ${d1Matches.size} | 4H SuperTrend: ${superTrendMatches.size})",
+                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (D1 Breakout: ${d1Matches.size})",
                     scanPercent = scannedCount.toFloat() / totalCoins,
                     d1BullishCount = d1Matches.size,
-                    superTrendBullishCount = superTrendMatches.size,
                     scannedD1BreakoutTickers = d1Matches.toList(),
-                    scannedSuperTrendTickers = superTrendMatches.toList(),
                     totalScannedCount = scannedCount
                 )
                 applyFilters()
@@ -1273,7 +1283,7 @@ fun toggleAutoTrade(enabled: Boolean) {
                 TradeAlert(
                     symbol = "SCANNER",
                     title = title,
-                    message = "Đã quét $totalCoins coin. Phát hiện:\n• D1 Breakout & Vol >= 2x: ${d1Matches.size} coin\n• 4H SuperTrend: ${superTrendMatches.size} coin.",
+                    message = "Đã quét $totalCoins coin. Phát hiện:\n• D1 Breakout & Vol >= 2x: ${d1Matches.size} coin.",
                     type = AlertType.BULLISH_SIGNAL
                 )
             )
@@ -1363,38 +1373,24 @@ fun toggleAutoTrade(enabled: Boolean) {
 
                     var tradeExecuted = false
 
-                    if (currentStrategy == com.example.model.TradingStrategyType.D1_SMA20_VOLUME) {
-                        val klinesRes = repository.getCandlesWithIndicators(sym, "1d")
-                        klinesRes.onSuccess { data ->
-                            if (data.size >= 21) {
-                                val currentCandle = data.last()
-                                val previous20 = data.dropLast(1).takeLast(20)
+                    val klinesRes = repository.getCandlesWithIndicators(sym, "1d")
+                    klinesRes.onSuccess { data ->
+                        if (data.size >= 21) {
+                            val currentCandle = data.last()
+                            val previous20 = data.dropLast(1).takeLast(20)
 
-                                val currentPrice = currentCandle.candle.close
-                                val currentVolumeD1 = currentCandle.candle.volume
+                            val currentPrice = currentCandle.candle.close
+                            val currentVolumeD1 = currentCandle.candle.volume
 
-                                val sma20OpenD1 = previous20.map { it.candle.open }.average()
-                                val avgVolume20D1 = previous20.map { it.candle.volume }.average()
+                            val sma20OpenD1 = previous20.map { it.candle.open }.average()
+                            val avgVolume20D1 = previous20.map { it.candle.volume }.average()
 
-                                val threshold = _uiState.value.settings.volumeMultiplierThreshold
-                                val volRatio = if (avgVolume20D1 > 0.0) currentVolumeD1 / avgVolume20D1 else 0.0
+                            val threshold = _uiState.value.settings.volumeMultiplierThreshold
+                            val volRatio = if (avgVolume20D1 > 0.0) currentVolumeD1 / avgVolume20D1 else 0.0
 
-                                val isBreakout = currentPrice >= sma20OpenD1 && volRatio >= threshold
+                            val isBreakout = currentPrice >= sma20OpenD1 && volRatio >= threshold
 
-                                if (isBreakout && currentPrice > 0.0) {
-                                    val vol = _uiState.value.settings.calculatePositionVolume()
-                                    if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
-                                        executeBuy(sym, isAuto = true)
-                                        tradeExecuted = true
-                                    }
-                                }
-                            }
-                        }
-                    } else {
-                        val res = repository.getCandlesWithIndicators(sym, "4h")
-                        res.onSuccess { data ->
-                            val latest = data.lastOrNull()
-                            if (latest != null && latest.isBullishSignal(_uiState.value.settings.useSuperTrendFilter)) {
+                            if (isBreakout && currentPrice > 0.0) {
                                 val vol = _uiState.value.settings.calculatePositionVolume()
                                 if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
                                     executeBuy(sym, isAuto = true)
@@ -1808,12 +1804,16 @@ fun toggleAutoTrade(enabled: Boolean) {
         _binancePortfolio.value = BinancePortfolio()
     }
 
-    override fun onCleared() {
-        super.onCleared()
+    fun stopAllPolling() {
         webSocketClient?.stop()
         autoTradeJob?.cancel()
         tickerPollJob?.cancel()
         klinePollJob?.cancel()
         schedulerJob?.cancel()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        stopAllPolling()
     }
 }

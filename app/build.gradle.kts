@@ -44,6 +44,9 @@ android {
 
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        unitTests.all {
+            it.jvmArgs("-Xmx1536m")
+        }
     }
 }
 
