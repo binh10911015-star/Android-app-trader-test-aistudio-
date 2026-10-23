@@ -14,7 +14,8 @@ object ScreenContextBuilder {
         secondaryBasket: ActiveBasket?,
         backtestReport: BasketBacktestReport?,
         currentBacktestConfig: BacktestConfig? = null,
-        backtestDays: Int = 180
+        backtestDays: Int = 180,
+        backtestHistory: List<com.example.model.BacktestHistoryRecord> = emptyList()
     ): String {
         val root = JSONObject()
         root.put("currentScreen", currentScreen)
@@ -61,10 +62,14 @@ object ScreenContextBuilder {
             cJson.put("kTrail", currentBacktestConfig.kTrail)
             cJson.put("kSl", currentBacktestConfig.kSl)
             cJson.put("maxHoldingHours", currentBacktestConfig.maxHoldingHours)
+            cJson.put("enableTrailingStop", currentBacktestConfig.enableTrailingStop)
+            cJson.put("enableFloorLock", currentBacktestConfig.enableFloorLock)
+            cJson.put("enableStopLoss", currentBacktestConfig.enableStopLoss)
+            cJson.put("enableTimeout", currentBacktestConfig.enableTimeout)
             root.put("backtestConfig", cJson)
         }
 
-        if (currentScreen == "ANALYTICS" && backtestReport != null) {
+        if (backtestReport != null) {
             val bJson = JSONObject()
             bJson.put("totalCycles", backtestReport.totalCycles)
             bJson.put("winrate", backtestReport.winratePercent)
@@ -83,6 +88,43 @@ object ScreenContextBuilder {
 
             root.put("backtestReport", bJson)
         }
+
+        if (backtestHistory.isNotEmpty()) {
+            val hArr = JSONArray()
+            backtestHistory.forEach { rec ->
+                val rJson = JSONObject()
+                rJson.put("id", rec.id)
+                rJson.put("timestamp", rec.timestamp)
+                rJson.put("days", rec.days)
+                rJson.put("netProfitUsdt", rec.netProfitUsdt)
+                rJson.put("winratePercent", rec.winratePercent)
+                rJson.put("maxDrawdownPercent", rec.maxDrawdownPercent)
+                rJson.put("totalCycles", rec.totalCycles)
+                rJson.put("trailingHits", rec.trailingHits)
+                rJson.put("slHits", rec.slHits)
+                rJson.put("timeoutHits", rec.timeoutHits)
+
+                val cfg = JSONObject()
+                cfg.put("kTp", rec.config.kTp)
+                cfg.put("kTrail", rec.config.kTrail)
+                cfg.put("kSl", rec.config.kSl)
+                cfg.put("maxHoldingHours", rec.config.maxHoldingHours)
+                cfg.put("perTradePct", rec.config.perTradePct)
+                cfg.put("maxPortfolioAllocation", rec.config.maxPortfolioAllocation)
+                cfg.put("minQuoteVolume24h", rec.config.minQuoteVolume24h)
+                cfg.put("minVolRatio", rec.config.minVolRatio)
+                cfg.put("maxD1ChangePct", rec.config.maxD1ChangePct)
+                cfg.put("enableTrailingStop", rec.config.enableTrailingStop)
+                cfg.put("enableFloorLock", rec.config.enableFloorLock)
+                cfg.put("enableStopLoss", rec.config.enableStopLoss)
+                cfg.put("enableTimeout", rec.config.enableTimeout)
+                rJson.put("config", cfg)
+
+                hArr.put(rJson)
+            }
+            root.put("backtestHistory", hArr)
+        }
+
         return root.toString()
     }
 }

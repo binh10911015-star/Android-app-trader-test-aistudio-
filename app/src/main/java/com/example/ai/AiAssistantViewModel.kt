@@ -3,6 +3,9 @@ package com.example.ai
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.model.BacktestConfig
+import com.example.model.BacktestHistoryRecord
+import com.example.model.BasketBacktestReport
+import com.example.model.BasketCycleResult
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -27,7 +30,9 @@ sealed class AiUiState {
     data class Success(
         val fullResponse: String,
         val recommendedConfig: BacktestConfig? = null,
-        val recommendationRationale: String? = null
+        val recommendationRationale: String? = null,
+        val diffs: List<ParameterDiff> = emptyList(),
+        val goal: OptimizationGoal = OptimizationGoal.BALANCED
     ) : AiUiState()
     data class Error(val message: String) : AiUiState()
 }
@@ -36,44 +41,78 @@ class AiAssistantViewModel : ViewModel() {
     private val _aiState = MutableStateFlow<AiUiState>(AiUiState.Idle)
     val aiState: StateFlow<AiUiState> = _aiState.asStateFlow()
 
+    private var currentGoal: OptimizationGoal = OptimizationGoal.BALANCED
+
     private val httpClient = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    fun askAi(prompt: String, screenContextJson: String) {
+    fun setOptimizationGoal(goal: OptimizationGoal) {
+        currentGoal = goal
+    }
+
+    fun askAi(
+        prompt: String,
+        screenContextJson: String,
+        goal: OptimizationGoal = currentGoal
+    ) {
+        currentGoal = goal
         viewModelScope.launch {
             _aiState.value = AiUiState.Loading
             try {
-                val apiKey = System.getenv("GEMINI_API_KEY") ?: ""
+                // Parse context JSON
+                val (parsedConfig, parsedReport, parsedHistory) = parseContext(screenContextJson)
+
+                val apiKey = try {
+                    val field = Class.forName("com.example.BuildConfig").getField("GEMINI_API_KEY")
+                    field.get(null) as? String ?: ""
+                } catch (e: Exception) {
+                    System.getenv("GEMINI_API_KEY") ?: ""
+                }
+
                 var answer: String? = null
 
                 if (apiKey.isNotBlank() && apiKey != "MY_GEMINI_API_KEY") {
                     try {
-                        answer = callGeminiApi(prompt, screenContextJson, apiKey)
+                        answer = callGeminiApi(prompt, screenContextJson, apiKey, goal)
                     } catch (e: Exception) {
                         if (e is CancellationException) throw e
                         answer = null
                     }
                 }
 
+                // If Gemini is not configured, offline, or returns error:
+                // execute the deep data-driven adaptive optimization engine
+                val optResult = AdaptiveOptimizationEngine.optimize(
+                    currentConfig = parsedConfig,
+                    currentReport = parsedReport,
+                    history = parsedHistory,
+                    goal = goal
+                )
+
                 if (answer == null) {
-                    answer = generateExpertAnalysis(prompt, screenContextJson)
+                    answer = generateExpertAnalysis(prompt, screenContextJson, optResult)
                 }
 
                 val recPair = extractRecommendedConfig(answer)
+                val finalConfig = recPair?.first ?: optResult.recommendedConfig
+                val finalRationale = recPair?.second ?: optResult.rationale
 
                 val chunks = answer.split(" ")
                 val builder = StringBuilder()
                 for (chunk in chunks) {
                     builder.append(chunk).append(" ")
                     _aiState.value = AiUiState.Streaming(builder.toString())
-                    delay(14L)
+                    delay(12L)
                 }
+
                 _aiState.value = AiUiState.Success(
                     fullResponse = builder.toString().trim(),
-                    recommendedConfig = recPair?.first,
-                    recommendationRationale = recPair?.second
+                    recommendedConfig = finalConfig,
+                    recommendationRationale = finalRationale,
+                    diffs = optResult.diffs,
+                    goal = goal
                 )
             } catch (e: CancellationException) {
                 throw e
@@ -83,11 +122,129 @@ class AiAssistantViewModel : ViewModel() {
         }
     }
 
-    private suspend fun callGeminiApi(prompt: String, screenContextJson: String, apiKey: String): String = withContext(Dispatchers.IO) {
+    private fun parseContext(jsonStr: String): Triple<BacktestConfig, BasketBacktestReport?, List<BacktestHistoryRecord>> {
+        return try {
+            val root = JSONObject(jsonStr)
+
+            // 1. Config
+            val cObj = root.optJSONObject("backtestConfig")
+            val config = if (cObj != null) {
+                BacktestConfig(
+                    initialCapital = cObj.optDouble("initialCapital", 10000.0),
+                    perTradePct = cObj.optDouble("perTradePct", 0.015),
+                    maxPortfolioAllocation = cObj.optDouble("maxPortfolioAllocation", 0.60),
+                    minQuoteVolume24h = cObj.optDouble("minQuoteVolume24h", 20_000_000.0),
+                    minVolRatio = cObj.optDouble("minVolRatio", 2.0),
+                    maxD1ChangePct = cObj.optDouble("maxD1ChangePct", 10.0),
+                    maxAtrPercent = cObj.optDouble("maxAtrPercent", 0.12),
+                    btcPanicCircuitBreaker = cObj.optDouble("btcPanicCircuitBreaker", -3.5),
+                    slotScanMode = cObj.optString("slotScanMode", "DUAL"),
+                    kTp = cObj.optDouble("kTp", 0.50),
+                    kTrail = cObj.optDouble("kTrail", 0.25),
+                    kSl = cObj.optDouble("kSl", 0.75),
+                    maxHoldingHours = cObj.optInt("maxHoldingHours", 144),
+                    enableTrailingStop = cObj.optBoolean("enableTrailingStop", true),
+                    enableFloorLock = cObj.optBoolean("enableFloorLock", true),
+                    enableStopLoss = cObj.optBoolean("enableStopLoss", true),
+                    enableTimeout = cObj.optBoolean("enableTimeout", true)
+                )
+            } else {
+                BacktestConfig()
+            }
+
+            // 2. Report
+            val rObj = root.optJSONObject("backtestReport")
+            val report = if (rObj != null) {
+                val cyclesCount = rObj.optInt("totalCycles", 0)
+                val dummyCycles = mutableListOf<BasketCycleResult>()
+                val slHits = rObj.optInt("slHits", 0)
+                val timeoutHits = rObj.optInt("timeoutHits", 0)
+                val trailingHits = rObj.optInt("trailingHits", 0)
+
+                for (i in 0 until slHits) {
+                    dummyCycles.add(BasketCycleResult(i, openTime = 0L, closeTime = 0L, holdingDays = 1.0, totalInvested = 1000.0, realizedProfitUsdt = -50.0, basketRoiPercent = -5.0, equityAfterClose = 9950.0, coinsCount = 3, symbolsList = emptyList(), exitReason = "SL_HIT"))
+                }
+                for (i in 0 until timeoutHits) {
+                    dummyCycles.add(BasketCycleResult(i, openTime = 0L, closeTime = 0L, holdingDays = 6.0, totalInvested = 1000.0, realizedProfitUsdt = 10.0, basketRoiPercent = 1.0, equityAfterClose = 10010.0, coinsCount = 3, symbolsList = emptyList(), exitReason = "TIMEOUT_EXPIRED"))
+                }
+                for (i in 0 until trailingHits) {
+                    dummyCycles.add(BasketCycleResult(i, openTime = 0L, closeTime = 0L, holdingDays = 3.0, totalInvested = 1000.0, realizedProfitUsdt = 120.0, basketRoiPercent = 12.0, equityAfterClose = 10120.0, coinsCount = 3, symbolsList = emptyList(), exitReason = "TRAILING_STOP_HIT"))
+                }
+
+                BasketBacktestReport(
+                    totalCycles = cyclesCount,
+                    winratePercent = rObj.optDouble("winrate", 0.0),
+                    netProfitUsdt = rObj.optDouble("netProfitUsdt", 0.0),
+                    netProfitPercent = rObj.optDouble("netProfitPercent", 0.0),
+                    maxDrawdownPercent = rObj.optDouble("maxDrawdown", 0.0),
+                    averageHoldingDays = rObj.optDouble("avgHoldingDays", 0.0),
+                    finalEquity = rObj.optDouble("finalEquity", 10000.0),
+                    cycles = dummyCycles
+                )
+            } else null
+
+            // 3. History
+            val hArr = root.optJSONArray("backtestHistory")
+            val history = mutableListOf<BacktestHistoryRecord>()
+            if (hArr != null) {
+                for (i in 0 until hArr.length()) {
+                    val item = hArr.optJSONObject(i) ?: continue
+                    val cItem = item.optJSONObject("config")
+                    val hCfg = BacktestConfig(
+                        kTp = cItem?.optDouble("kTp", 0.50) ?: 0.50,
+                        kTrail = cItem?.optDouble("kTrail", 0.25) ?: 0.25,
+                        kSl = cItem?.optDouble("kSl", 0.75) ?: 0.75,
+                        maxHoldingHours = cItem?.optInt("maxHoldingHours", 144) ?: 144,
+                        perTradePct = cItem?.optDouble("perTradePct", 0.015) ?: 0.015,
+                        maxPortfolioAllocation = cItem?.optDouble("maxPortfolioAllocation", 0.60) ?: 0.60,
+                        minQuoteVolume24h = cItem?.optDouble("minQuoteVolume24h", 20_000_000.0) ?: 20_000_000.0,
+                        minVolRatio = cItem?.optDouble("minVolRatio", 2.0) ?: 2.0,
+                        maxD1ChangePct = cItem?.optDouble("maxD1ChangePct", 10.0) ?: 10.0,
+                        enableTrailingStop = cItem?.optBoolean("enableTrailingStop", true) ?: true,
+                        enableFloorLock = cItem?.optBoolean("enableFloorLock", true) ?: true,
+                        enableStopLoss = cItem?.optBoolean("enableStopLoss", true) ?: true,
+                        enableTimeout = cItem?.optBoolean("enableTimeout", true) ?: true
+                    )
+                    history.add(
+                        BacktestHistoryRecord(
+                            id = item.optString("id", i.toString()),
+                            timestamp = item.optLong("timestamp", System.currentTimeMillis()),
+                            days = item.optInt("days", 180),
+                            config = hCfg,
+                            netProfitUsdt = item.optDouble("netProfitUsdt", 0.0),
+                            netProfitPercent = 0.0,
+                            winratePercent = item.optDouble("winratePercent", 0.0),
+                            maxDrawdownPercent = item.optDouble("maxDrawdownPercent", 0.0),
+                            totalCycles = item.optInt("totalCycles", 0),
+                            winCycles = 0,
+                            lossCycles = 0,
+                            trailingHits = item.optInt("trailingHits", 0),
+                            slHits = item.optInt("slHits", 0),
+                            timeoutHits = item.optInt("timeoutHits", 0)
+                        )
+                    )
+                }
+            }
+
+            Triple(config, report, history)
+        } catch (e: Exception) {
+            Triple(BacktestConfig(), null, emptyList())
+        }
+    }
+
+    private suspend fun callGeminiApi(
+        prompt: String,
+        screenContextJson: String,
+        apiKey: String,
+        goal: OptimizationGoal
+    ): String = withContext(Dispatchers.IO) {
         val fullPrompt = """
             ${AiSystemPrompt.INSTRUCTIONS}
             
-            BỐI CẢNH DỮ LIỆU HIỆN TẠI (JSON SNAPSHOT):
+            MỤC TIÊU TỐI ƯU HÓA ĐƯỢC CHỌN:
+            ${goal.title} - ${goal.description}
+            
+            BỐI CẢNH DỮ LIỆU HIỆN TẠI (JSON SNAPSHOT KÈM LỊCH SỬ CÁC LẦN TEST TRƯỚC):
             $screenContextJson
 
             YÊU CẦU CỦA ANH BÌNH:
@@ -166,8 +323,12 @@ class AiAssistantViewModel : ViewModel() {
                 slotScanMode = rec.optString("slotScanMode", "DUAL"),
                 kTp = rec.optDouble("kTp", 0.50),
                 kTrail = rec.optDouble("kTrail", 0.25),
-                kSl = rec.optDouble("kSl", 0.50),
-                maxHoldingHours = rec.optInt("maxHoldingHours", 72)
+                kSl = rec.optDouble("kSl", 0.75),
+                maxHoldingHours = rec.optInt("maxHoldingHours", 144),
+                enableTrailingStop = rec.optBoolean("enableTrailingStop", true),
+                enableFloorLock = rec.optBoolean("enableFloorLock", true),
+                enableStopLoss = rec.optBoolean("enableStopLoss", true),
+                enableTimeout = rec.optBoolean("enableTimeout", true)
             )
             Pair(cfg, rationale)
         } catch (e: Exception) {
@@ -175,97 +336,84 @@ class AiAssistantViewModel : ViewModel() {
         }
     }
 
-    private fun generateExpertAnalysis(prompt: String, screenContextJson: String): String {
+    private fun generateExpertAnalysis(
+        prompt: String,
+        screenContextJson: String,
+        optResult: OptimizationResult
+    ): String {
         val root = try { JSONObject(screenContextJson) } catch (e: Exception) { JSONObject() }
         val currentScreen = root.optString("currentScreen", "MARKET")
         val selectedSymbol = root.optString("selectedSymbol", "BTCUSDT")
 
         val primaryBasket = root.optJSONObject("primaryBasket")
         val secondaryBasket = root.optJSONObject("secondaryBasket")
-        val backtestReport = root.optJSONObject("backtestReport")
-        val backtestConfig = root.optJSONObject("backtestConfig")
 
         val pStatus = primaryBasket?.optString("status", "EMPTY_SLOT") ?: "EMPTY_SLOT"
         val sStatus = secondaryBasket?.optString("status", "EMPTY_SLOT") ?: "EMPTY_SLOT"
-
         val pCoins = primaryBasket?.optInt("coinsCount", 0) ?: 0
         val sCoins = secondaryBasket?.optInt("coinsCount", 0) ?: 0
-
         val pHours = primaryBasket?.optDouble("holdingHours", 0.0) ?: 0.0
         val pIsTimedOut = primaryBasket?.optBoolean("isTimedOut", false) ?: false
-
         val pAtr = (primaryBasket?.optDouble("basketAtrPercent", 0.05) ?: 0.05) * 100.0
         val pActivation = (primaryBasket?.optDouble("activationRoi", 0.02) ?: 0.02) * 100.0
         val pPeak = (primaryBasket?.optDouble("peakRoi", 0.0) ?: 0.0) * 100.0
         val pTrailStop = (primaryBasket?.optDouble("currentTrailingStopRoi", -1.0) ?: -1.0) * 100.0
 
         val lowerPrompt = prompt.lowercase(Locale.ROOT)
-
         val sb = StringBuilder()
-        sb.append("Chào anh Bình! Em xin giải đáp phân tích chuyên sâu cho anh theo chuẩn Dual Basket Momentum v2.0:\n\n")
+        sb.append("Chào anh Bình! Em xin gửi phân tích chiến lược chuyên sâu theo dữ liệu thực tế Dual Basket Momentum v2.1:\n\n")
 
         when {
             lowerPrompt.contains("tối ưu") || lowerPrompt.contains("gợi ý") || lowerPrompt.contains("đề xuất") ||
-            lowerPrompt.contains("đánh giá kết quả chu kỳ vừa test") -> {
-                val cycles = backtestReport?.optInt("totalCycles", 0) ?: 0
-                val winrate = backtestReport?.optDouble("winrate", 0.0) ?: 0.0
-                val netProfit = backtestReport?.optDouble("netProfitUsdt", 0.0) ?: 0.0
-                val maxDd = backtestReport?.optDouble("maxDrawdown", 0.0) ?: 0.0
-                val avgHold = backtestReport?.optDouble("avgHoldingDays", 0.0) ?: 0.0
-                val slHits = backtestReport?.optInt("slHits", 0) ?: 0
-                val timeoutHits = backtestReport?.optInt("timeoutHits", 0) ?: 0
-                val trailingHits = backtestReport?.optInt("trailingHits", 0) ?: 0
+            lowerPrompt.contains("đánh giá") || lowerPrompt.contains("thông số") -> {
 
-                val curVol = backtestConfig?.optDouble("minQuoteVolume24h", 20_000_000.0) ?: 20_000_000.0
-                val curD1 = backtestConfig?.optDouble("maxD1ChangePct", 10.0) ?: 10.0
+                sb.append("### 1. Chẩn đoán Điểm Nghẽn & Dữ Liệu Thực Tế\n")
+                sb.append(optResult.bottleneckDiagnosis)
 
-                sb.append("### 1. Chẩn đoán Điểm Nghẽn Chiến Lược (Diagnosis)\n")
-                if (cycles > 0) {
-                    sb.append("• **Dữ liệu thực tế:** Đã chạy **$cycles chu kỳ**, Winrate **${String.format(Locale.US, "%.1f", winrate)}%**, Lợi nhuận ròng **+${String.format(Locale.US, "%,.2f", netProfit)} USDT**, Max Drawdown **${String.format(Locale.US, "%.2f", maxDd)}%**.\n")
-                    sb.append("• **Phân bổ kết thúc:** Thoát Trailing TP: `$trailingHits` lần | Dính Cắt Lỗ (SL): `$slHits` lần | Hết hạn Timeout 72h: `$timeoutHits` lần.\n")
-                    if (timeoutHits > trailingHits) {
-                        sb.append("• *Nhận diện:* Tỷ lệ Timeout 72h khá cao. Nguyên nhân là các coin breakout D1 đang gặp giai đoạn tích lũy chậm hoặc ngưỡng thanh khoản $curVol USDT đang lọc qua các coin biến động thấp.\n")
-                    } else if (slHits > trailingHits) {
-                        sb.append("• *Nhận diện:* Tỷ lệ dính SL cao cho thấy hệ số K_SL = 0.5 đang bám quá sát râu nến rung lắc của Altcoin trong phiên quét.\n")
-                    } else {
-                        sb.append("• *Nhận diện:* Hệ thống vận hành rất mượt, phần lớn chu kỳ được chốt lời tự động qua cơ chế bám đỉnh ATR Trailing Stop.\n")
+                sb.append("\n")
+                sb.append(optResult.historicalComparison)
+
+                sb.append("\n### 2. Định Hướng Theo Mục Tiêu: **${optResult.goal.title}**\n")
+                sb.append("• ${optResult.rationale}\n")
+
+                if (optResult.diffs.isNotEmpty()) {
+                    sb.append("\n### 3. Bảng Chi Tiết Tinh Chỉnh Thông Số (Trước vs Đề Xuất Mới):\n")
+                    optResult.diffs.forEach { diff ->
+                        sb.append("• **${diff.name}:** `${diff.oldValue}` ➔ `**${diff.newValue}**`\n")
+                        sb.append("  ↳ *Lý do:* ${diff.changeDescription}\n")
                     }
-                } else {
-                    sb.append("• Hiện tại chưa có dữ liệu backtest được lưu trong phiên, em đã trích xuất cấu hình mặc định v2.0 để kiểm tra các van an toàn.\n")
                 }
 
-                sb.append("\n### 2. Đối soát Biên độ Lợi nhuận / Rủi ro\n")
-                sb.append("• **Bộ lọc Volume 24h:** Giữ mức 10,000,000 - 20,000,000 USDT giúp loại bỏ coin kém thanh khoản, đảm bảo khớp lệnh không trượt giá.\n")
-                sb.append("• **Chặn trên nến D1:** Nới lỏng nhẹ từ 10% lên 12% sẽ giúp bắt trọn những đợt bùng nổ xung lực ban đầu của Top Altcoin mà vẫn tránh mua đuổi đỉnh.\n")
-                sb.append("• **Đòn bẩy & Quản trị vốn:** Khóa cứng Long Cross 1x, vốn/lệnh 1.5% và trần 60% Equity để giữ Max Drawdown an toàn dưới 10%.\n")
-
-                sb.append("\n### 3. Bộ thông số Khuyến nghị Tối ưu (Adaptive Optimization)\n")
-                sb.append("Em đã cấu hình sẵn bộ thông số tối ưu thích ứng bên dưới. Anh Bình chỉ cần bấm **'Áp Dụng Bộ Thông Số Này'** để nạp thẳng vào bảng điều khiển:\n\n")
-
+                val rec = optResult.recommendedConfig
+                sb.append("\n### 4. Bộ Thông Số Tối Ưu Thích Ứng (Nhấn 'Áp Dụng' để nạp):\n")
                 sb.append("```json\n")
                 sb.append("{\n")
                 sb.append("  \"recommendation\": {\n")
-                sb.append("    \"slotScanMode\": \"DUAL\",\n")
-                sb.append("    \"initialCapital\": 10000.0,\n")
-                sb.append("    \"perTradePct\": 0.015,\n")
-                sb.append("    \"maxPortfolioAllocation\": 0.60,\n")
-                sb.append("    \"minQuoteVolume24h\": 10000000.0,\n")
-                sb.append("    \"minVolRatio\": 2.0,\n")
-                sb.append("    \"maxD1ChangePct\": 12.0,\n")
-                sb.append("    \"maxAtrPercent\": 0.12,\n")
-                sb.append("    \"btcPanicCircuitBreaker\": -3.5,\n")
-                sb.append("    \"kTp\": 0.50,\n")
-                sb.append("    \"kTrail\": 0.25,\n")
-                sb.append("    \"kSl\": 0.50,\n")
-                sb.append("    \"maxHoldingHours\": 72\n")
+                sb.append("    \"slotScanMode\": \"${rec.slotScanMode}\",\n")
+                sb.append("    \"initialCapital\": ${rec.initialCapital},\n")
+                sb.append("    \"perTradePct\": ${rec.perTradePct},\n")
+                sb.append("    \"maxPortfolioAllocation\": ${rec.maxPortfolioAllocation},\n")
+                sb.append("    \"minQuoteVolume24h\": ${rec.minQuoteVolume24h},\n")
+                sb.append("    \"minVolRatio\": ${rec.minVolRatio},\n")
+                sb.append("    \"maxD1ChangePct\": ${rec.maxD1ChangePct},\n")
+                sb.append("    \"maxAtrPercent\": ${rec.maxAtrPercent},\n")
+                sb.append("    \"btcPanicCircuitBreaker\": ${rec.btcPanicCircuitBreaker},\n")
+                sb.append("    \"kTp\": ${rec.kTp},\n")
+                sb.append("    \"kTrail\": ${rec.kTrail},\n")
+                sb.append("    \"kSl\": ${rec.kSl},\n")
+                sb.append("    \"maxHoldingHours\": ${rec.maxHoldingHours},\n")
+                sb.append("    \"enableTrailingStop\": ${rec.enableTrailingStop},\n")
+                sb.append("    \"enableFloorLock\": ${rec.enableFloorLock},\n")
+                sb.append("    \"enableStopLoss\": ${rec.enableStopLoss},\n")
+                sb.append("    \"enableTimeout\": ${rec.enableTimeout}\n")
                 sb.append("  },\n")
-                sb.append("  \"rationale\": \"Nới lỏng nến D1 lên 12% và hạ thanh khoản tối thiểu xuống 10M USDT giúp tăng số lượng cơ hội bứt phá tiềm năng trong khi vẫn kiểm soát rủi ro bằng đòn bẩy 1x.\"\n")
+                sb.append("  \"rationale\": \"${optResult.rationale}\"\n")
                 sb.append("}\n")
                 sb.append("```\n")
             }
 
             lowerPrompt.contains("trạng thái 2 giỏ") || (lowerPrompt.contains("giải thích") && currentScreen == "POSITIONS") -> {
-                sb.append("### 1. Phân tích hiện trạng 2 Slot Danh mục (Dual Basket v2.0)\n")
+                sb.append("### 1. Phân tích Hiện trạng 2 Slot Danh mục (Dual Basket v2.1)\n")
                 sb.append("• **Giỏ PRIMARY (Quét 07:00 AM UTC+7):** Trạng thái `").append(pStatus).append("`")
                 if (pStatus != "EMPTY_SLOT") {
                     sb.append(", gồm ").append(pCoins).append(" vị thế, đã giữ ").append(String.format(Locale.US, "%.1f", pHours)).append("h. ")
@@ -281,39 +429,32 @@ class AiAssistantViewModel : ViewModel() {
                     sb.append(" (Slot trống, phiên 19:00 sẽ quét nạp coin không trùng giỏ chính).")
                 }
 
-                sb.append("\n\n### 2. Đánh giá rủi ro & Cơ chế Trailing Take-Profit\n")
+                sb.append("\n\n### 2. Đánh giá Rủi ro & Cơ Chế Trailing Take-Profit\n")
                 if (pStatus == "TRAILING_ACTIVE") {
                     sb.append("• Giỏ PRIMARY đã kích hoạt Trailing Stop động. Mức chặn lãi hiện tại: `+").append(String.format(Locale.US, "%.2f", pTrailStop)).append("%` (đã khóa trên sàn bảo vệ net +0.5%).\n")
-                    sb.append("• Nếu giá đảo chiều giật lùi 0.25*ATR, hệ thống sẽ tự động chốt lời toàn bộ giỏ để bảo toàn lợi nhuận.\n")
+                    sb.append("• Theo nguyên tắc Pure Trend Following v2.1, khi đang Trailing thì KHÔNG áp dụng timeout, cho phép vị thế bám trọn con sóng dài.\n")
                 } else if (pStatus == "OPEN") {
-                    sb.append("• Giỏ PRIMARY đang vận hành dưới ngưỡng Trailing. Initial Stop Loss đặt ở mức an toàn -max(2.0%, 0.5*Basket_ATR).\n")
+                    sb.append("• Giỏ PRIMARY đang vận hành tích lũy. Stop Loss động ở mức an toàn -max(3.5%, 0.75*Basket_ATR), thời gian timeout giữ lệnh tối đa 144h.\n")
                 } else {
-                    sb.append("• Cả 2 slot hiện kiểm soát rủi ro đòn bẩy nghiêm ngặt Long Cross 1x (Effective Leverage <= 1.0), không lo thanh lý.\n")
+                    sb.append("• Cả 2 slot kiểm soát đòn bẩy an toàn Long Cross 1x (Effective Leverage <= 1.0), hoàn toàn loại trừ rủi ro thanh lý.\n")
                 }
 
-                sb.append("\n### 3. Đề xuất hành động cho anh Bình\n")
-                if (pIsTimedOut) {
-                    sb.append("• Giỏ PRIMARY đã vượt mốc 72 giờ (Timeout). Hệ thống khuyến nghị tất toán giỏ để giải phóng slot và xoay vòng dòng vốn cho phiên kế tiếp.")
+                sb.append("\n### 3. Đề xuất Hành động cho Anh Bình\n")
+                if (pIsTimedOut && pStatus == "OPEN") {
+                    sb.append("• Giỏ PRIMARY đã vượt mốc 144 giờ tích lũy mà chưa chạm trailing. Hệ thống đề xuất tất toán để giải phóng slot cho phiên mới.")
                 } else {
-                    sb.append("• Giữ nguyên kỷ luật hệ thống, không can thiệp thủ công bằng tay. Máy sẽ tự động kiểm tra điều kiện chốt lời Trailing hoặc Timeout.")
+                    sb.append("• Duy trì kỷ luật hệ thống để thuật toán tự động bám đỉnh hoặc chốt lời, không can thiệp bằng tay.")
                 }
             }
 
-            lowerPrompt.contains("timeout") || lowerPrompt.contains("72h") -> {
-                sb.append("### 1. Kiểm tra Giới hạn Thời gian Giữ Lệnh (Timeout 72h)\n")
-                sb.append("• Giỏ PRIMARY hiện đã nắm giữ: **").append(String.format(Locale.US, "%.1f", pHours)).append(" giờ** trên ngưỡng tối đa 72 giờ.\n")
+            lowerPrompt.contains("timeout") || lowerPrompt.contains("72h") || lowerPrompt.contains("144h") -> {
+                sb.append("### 1. Kiểm tra Giới hạn Thời gian Giữ Lệnh (Timeout)\n")
+                sb.append("• Giỏ PRIMARY hiện đã nắm giữ: **").append(String.format(Locale.US, "%.1f", pHours)).append(" giờ** trên ngưỡng tối đa 144 giờ.\n")
                 sb.append("• Trạng thái Timeout: ").append(if (pIsTimedOut) "**ĐÃ QUÁ HẠN (CẦN TẤT TOÁN)**" else "Vẫn nằm trong khung an toàn").append(".\n")
 
-                sb.append("\n### 2. Ý nghĩa kỹ thuật của quy tắc 72 Giờ\n")
-                sb.append("• Trong chiến lược Momentum D1, dòng tiền xung lực mạnh thường bứt phá trong vòng 2-3 ngày. Nếu sau 72h mà giỏ chưa đạt ngưỡng Trailing (+1.5% đến +3.5%), xác suất coin rơi vào tích lũy sideway là rất cao.\n")
-                sb.append("• Thoát lệnh tại mốc 72h giúp anh Bình giải phóng slot vốn để đón đầu các sóng tăng mới ở phiên quét tiếp theo.\n")
-
-                sb.append("\n### 3. Đề xuất cho anh Bình\n")
-                if (pIsTimedOut) {
-                    sb.append("• Anh có thể bấm chốt lệnh giỏ này để nhường chỗ cho phiên quét 07:00 / 19:00 sắp tới.")
-                } else {
-                    sb.append("• Thời gian còn lại khoảng ").append(String.format(Locale.US, "%.1f", (72.0 - pHours).coerceAtLeast(0.0))).append(" giờ, cứ kiên nhẫn chờ xung lực chốt lời nhé anh.")
-                }
+                sb.append("\n### 2. Cải Tiến Thoát Lệnh v2.1\n")
+                sb.append("• Trong phiên bản v2.1, thời gian timeout ở trạng thái OPEN được nâng từ 72h lên 144h (6 ngày) giúp altcoin có đủ thời gian tích lũy và bứt phá.\n")
+                sb.append("• ĐẶC BIỆT: Khi đã vượt ngưỡng kích hoạt Trailing (TRAILING_ACTIVE), timeout bị vô hiệu hóa hoàn toàn để anh Bình ăn trọn con sóng siêu lớn.\n")
             }
 
             lowerPrompt.contains("trailing stop") || lowerPrompt.contains("khoảng cách") -> {
@@ -322,38 +463,22 @@ class AiAssistantViewModel : ViewModel() {
                 sb.append("• Đỉnh ROI cao nhất từng chạm (peakRoi): **+").append(String.format(Locale.US, "%.2f", pPeak)).append("%**\n")
                 sb.append("• Chặn lãi Trailing hiện tại (currentTrailingStopRoi): **").append(if (pTrailStop > -0.9) "+${String.format(Locale.US, "%.2f", pTrailStop)}%" else "Chưa kích hoạt").append("**\n")
 
-                sb.append("\n### 2. Đánh giá vùng đệm ATR\n")
-                sb.append("• Bước đệm giật lùi là `0.25 * Basket ATR%` (khoảng +0.6% đến +1.2%).\n")
-                sb.append("• Đã có sàn bảo hiểm `floorLockRoi = +0.5%` nên một khi đã kích hoạt, chắc chắn giỏ sẽ có lãi sau phí giao dịch 0.08%.\n")
-
-                sb.append("\n### 3. Đề xuất cho anh Bình\n")
-                sb.append("• Để thuật toán Trailing tự vận hành bám đỉnh tự động, không nên dời Stop Loss thủ công để tránh bị rung lắc rũ hàng (shake-out).")
-            }
-
-            lowerPrompt.contains("btc") || lowerPrompt.contains("regime") || lowerPrompt.contains("sức khỏe") -> {
-                sb.append("### 1. Đánh giá Macro BTC Market Regime (Tầng 1)\n")
-                sb.append("• Điều kiện tiên quyết: Giá BTC D1 phải đóng cửa **trên SMA(20)** và **EMA(50)**.\n")
-                sb.append("• **Panic Circuit Breaker:** Nến D1 gần nhất của BTC không được giảm quá **-3.5%**.\n")
-
-                sb.append("\n### 2. Đánh giá trạng thái lọc\n")
-                sb.append("• Nếu BTC thỏa mãn điều kiện, bộ quét Tầng 2 sẽ tự động lọc danh sách Altcoin có RVol >= 2.0x và biến động an toàn ATR(14) <= 12%.\n")
-                sb.append("• Nếu BTC vi phạm (nến đỏ sập > 3.5%), cỗ máy lập tức hủy phiên mở giỏ mới để bảo toàn vốn tuyệt đối cho anh.\n")
-
-                sb.append("\n### 3. Đề xuất cho anh Bình\n")
-                sb.append("• Anh hãy quan sát nến D1 BTC vào lúc 07:00 sáng. Nếu BTC duy trì xu hướng xanh trên đường SMA20, phiên quét 07:00 sẽ mở giỏ tự tin.")
+                sb.append("\n### 2. Đánh giá Vùng Đệm ATR\n")
+                sb.append("• Bước đệm giật lùi là `K_Trail * Basket ATR%` (khoảng +0.6% đến +1.2%).\n")
+                sb.append("• Đã có sàn bảo hiểm `floorLockRoi = +0.5% net` đảm bảo lệnh luôn có lãi dương sau khi trừ phí giao dịch.\n")
             }
 
             else -> {
-                sb.append("### 1. Phân tích hiện trạng thị trường & Ngữ cảnh\n")
-                sb.append("• Màn hình hiện tại: `").append(currentScreen).append("`").append(if (selectedSymbol.isNotBlank()) " (Cặp: $selectedSymbol)" else "").append(".\n")
-                sb.append("• Slot PRIMARY: `").append(pStatus).append("` | Slot SECONDARY: `").append(sStatus).append("`.\n")
+                sb.append("### 1. Phân tích Hiện trạng Thị trường & Ngữ cảnh\n")
+                sb.append("• Màn hình: `").append(currentScreen).append("`").append(if (selectedSymbol.isNotBlank()) " (Cặp: $selectedSymbol)" else "").append(".\n")
+                sb.append("• PRIMARY Slot: `").append(pStatus).append("` | SECONDARY Slot: `").append(sStatus).append("`.\n")
 
-                sb.append("\n### 2. Đánh giá rủi ro thuật toán\n")
-                sb.append("• Toàn bộ lệnh đều áp dụng đòn bẩy an toàn Long Cross 1x, phân bổ 1.5% - 2.0% vốn mỗi vị thế, trần danh mục tối đa 60% Equity.\n")
-                sb.append("• Không sử dụng SuperTrend, chỉ dùng MA20/EMA50 và ATR Trailing Take-Profit.\n")
+                sb.append("\n### 2. Đánh giá Rủi ro Thuật toán\n")
+                sb.append("• Đòn bẩy Long Cross 1x, phân bổ vốn kỷ luật, trần danh mục tối đa 60% Equity.\n")
+                sb.append("• Bộ lọc 3 tầng bảo vệ Macro BTC, thanh khoản Altcoin và cơ chế ATR Trailing Take-Profit.\n")
 
-                sb.append("\n### 3. Đề xuất hành động cho anh Bình\n")
-                sb.append("• Anh có thể chọn các chip câu hỏi nhanh bên trên hoặc yêu cầu em tối ưu bộ thông số Backtest bất kỳ lúc nào nhé!")
+                sb.append("\n### 3. Đề xuất Hành động cho Anh Bình\n")
+                sb.append("• Anh có thể chọn các mục tiêu tối ưu (Cân bằng, Tối đa Lợi nhuận, Giảm Max DD) phía trên để em phân tích bộ thông số phù hợp nhất!")
             }
         }
 

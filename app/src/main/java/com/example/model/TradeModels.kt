@@ -392,13 +392,34 @@ data class BacktestConfig(
     val slotScanMode: String = "DUAL", // "DUAL", "PRIMARY_ONLY", "SECONDARY_ONLY"
     val kTp: Double = 0.50, // Hệ số kích hoạt TP K_TP = 0.50 (tối thiểu 1.5%)
     val kTrail: Double = 0.25, // Bước đệm Trailing K_Trail = 0.25 * ATR giỏ
-    val kSl: Double = 0.50, // Hệ số Stop-Loss K_SL = 0.50 (tối đa -2.0%)
-    val maxHoldingHours: Int = 72 // Timeout 72 giờ giải phóng vốn
+    val kSl: Double = 0.75, // Hệ số Stop-Loss K_SL = 0.75 (sàn -3.5%) v2.1
+    val maxHoldingHours: Int = 144, // Timeout 144 giờ (6 ngày) giải phóng vốn v2.1
+    val enableTrailingStop: Boolean = true,
+    val enableFloorLock: Boolean = true,
+    val enableStopLoss: Boolean = true,
+    val enableTimeout: Boolean = true
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"
     }
 }
+
+data class BacktestHistoryRecord(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val timestamp: Long = System.currentTimeMillis(),
+    val days: Int = 180,
+    val config: BacktestConfig,
+    val netProfitUsdt: Double,
+    val netProfitPercent: Double,
+    val winratePercent: Double,
+    val maxDrawdownPercent: Double,
+    val totalCycles: Int,
+    val winCycles: Int,
+    val lossCycles: Int,
+    val trailingHits: Int,
+    val slHits: Int,
+    val timeoutHits: Int
+)
 
 data class BacktestTradeItem(
     val entryTime: Long,
@@ -453,10 +474,10 @@ data class ActiveBasket(
     val positions: List<BasketPosition> = emptyList(),
     val totalInvested: Double = 0.0,
     var status: BasketStatus = BasketStatus.OPEN,
-    val maxHoldingMillis: Long = 72 * 3600 * 1000L, // Timeout 72 giờ
+    val maxHoldingMillis: Long = 144 * 3600 * 1000L, // Timeout 144 giờ (6 ngày) v2.1
     val kTp: Double = 0.50,
     val kTrail: Double = 0.25,
-    val kSl: Double = 0.50
+    val kSl: Double = 0.75
 ) {
     // 1. Biến động trọng số toàn giỏ: Basket ATR%
     val basketAtrPercent: Double by lazy {
@@ -469,9 +490,9 @@ data class ActiveBasket(
         maxOf(0.015, kTp * basketAtrPercent)
     }
 
-    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL (Tối đa -2.0%)
+    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL = 0.75 (Sàn -3.5%) v2.1
     val initialStopLossRoi: Double by lazy {
-        -maxOf(0.020, kSl * basketAtrPercent)
+        -maxOf(0.035, kSl * basketAtrPercent)
     }
 
     // 4. Bước đệm kéo lùi Trailing: K_Trail * ATR giỏ (Tối thiểu 0.6%)
@@ -496,6 +517,17 @@ data class ScoredCoin(
     val atrPercent: Double = 0.05
 )
 
+data class BasketPositionDetail(
+    val symbol: String,
+    val entryPrice: Double,
+    val exitPrice: Double,
+    val quantity: Double,
+    val marginAllocated: Double,
+    val pnlUsdt: Double,
+    val roiPercent: Double,
+    val isWin: Boolean
+)
+
 data class BasketCycleResult(
     val cycleIndex: Int,
     val slotId: BasketSlotId = BasketSlotId.PRIMARY,
@@ -508,7 +540,8 @@ data class BasketCycleResult(
     val equityAfterClose: Double,
     val coinsCount: Int,
     val symbolsList: List<String>,
-    val exitReason: String = "TRAILING_STOP_HIT"
+    val exitReason: String = "TRAILING_STOP_HIT",
+    val positionDetails: List<BasketPositionDetail> = emptyList()
 )
 
 data class BasketBacktestReport(

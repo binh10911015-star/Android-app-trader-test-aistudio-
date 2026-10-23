@@ -10,6 +10,7 @@ import com.example.model.BacktestTradeItem
 import com.example.model.BasketBacktestReport
 import com.example.model.BasketCycleResult
 import com.example.model.BasketPosition
+import com.example.model.BasketPositionDetail
 import com.example.model.BasketSlotId
 import com.example.model.BasketStatus
 import com.example.model.BinanceTicker
@@ -614,6 +615,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             fun evaluateBasketExit(basket: ActiveBasket?): ActiveBasket? {
                 if (basket == null || basket.status == BasketStatus.CLOSED) return null
 
+                // 1. Tính toán PnL giỏ lệnh dựa trên giá đóng nến D1 đồng bộ (07:00 AM)
                 var unrealizedPnL = 0.0
                 for (pos in basket.positions) {
                     val candleToday = klinesMap[pos.symbol]?.find { it.openTime == currentTime }
@@ -626,37 +628,93 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 val isTimedOut = (currentTime - basket.openTime) >= basket.maxHoldingMillis
 
                 var exitReason: String? = null
+                var executedGrossRoi = 0.0
+                val slippage = 0.0005 // Trượt giá khớp lệnh 0.05%
 
                 when (basket.status) {
+                    // TRẠNG THÁI 1: OPEN (Đang chạy, chờ kích hoạt Trailing hoặc SL/Timeout)
                     BasketStatus.OPEN -> {
+                        val floorRoi = if (config.enableFloorLock) basket.floorLockRoi else -0.99
                         when {
-                            currentRoi >= basket.activationRoi -> {
+                            // Kích hoạt Trailing Stop khi ROI giỏ đạt mốc activationRoi (tối thiểu +1.5%)
+                            config.enableTrailingStop && currentRoi >= basket.activationRoi -> {
                                 basket.status = BasketStatus.TRAILING_ACTIVE
                                 basket.peakRoi = currentRoi
-                                basket.currentTrailingStopRoi = maxOf(basket.floorLockRoi, currentRoi - basket.trailStepRoi)
+                                basket.currentTrailingStopRoi = maxOf(floorRoi, currentRoi - basket.trailStepRoi)
                             }
-                            currentRoi <= basket.initialStopLossRoi -> exitReason = "SL_HIT"
-                            isTimedOut -> exitReason = "TIMEOUT_72H"
+                            // Nếu tắt Trailing Stop: Chốt lời mục tiêu cố định khi đạt activationRoi
+                            !config.enableTrailingStop && currentRoi >= basket.activationRoi -> {
+                                exitReason = "TP_TARGET_HIT"
+                                executedGrossRoi = basket.activationRoi - slippage
+                            }
+                            // Cắt lỗ ban đầu (Stop-Loss) khi chưa kích hoạt Trailing Stop
+                            config.enableStopLoss && currentRoi <= basket.initialStopLossRoi -> {
+                                exitReason = "SL_HIT_RELAXED"
+                                executedGrossRoi = basket.initialStopLossRoi - slippage
+                            }
+                            // Hết hạn thời gian 144h khi chưa đạt điều kiện kích hoạt
+                            config.enableTimeout && isTimedOut -> {
+                                exitReason = "TIMEOUT_144H"
+                                executedGrossRoi = currentRoi - slippage
+                            }
                         }
                     }
+
+                    // TRẠNG THÁI 2: TRAILING_ACTIVE (Bám đỉnh theo ATR - Pure Trend Following)
                     BasketStatus.TRAILING_ACTIVE -> {
+                        val floorRoi = if (config.enableFloorLock) basket.floorLockRoi else -0.99
+
+                        // Liên tục bám đỉnh cao mới và tịnh tiến Trailing Stop lên
                         if (currentRoi > basket.peakRoi) {
                             basket.peakRoi = currentRoi
-                            val newStop = maxOf(basket.floorLockRoi, basket.peakRoi - basket.trailStepRoi)
-                            if (newStop > basket.currentTrailingStopRoi) basket.currentTrailingStopRoi = newStop
+                            val newStop = maxOf(floorRoi, basket.peakRoi - basket.trailStepRoi)
+                            if (newStop > basket.currentTrailingStopRoi) {
+                                basket.currentTrailingStopRoi = newStop
+                            }
                         }
-                        if (currentRoi <= basket.currentTrailingStopRoi) exitReason = "TRAILING_STOP_HIT"
-                        else if (isTimedOut) exitReason = "TIMEOUT_IN_TRAIL"
+
+                        // Thoát lệnh khi giá thoái lui chạm ngưỡng Trailing Stop (hoặc sàn FloorLock +0.5%)
+                        if (currentRoi <= basket.currentTrailingStopRoi) {
+                            exitReason = "TRAILING_STOP_HIT"
+                            // Khớp lệnh tại đúng mức dừng lỗ trượt (Trailing Stop Level) mà bot đã thiết lập
+                            executedGrossRoi = basket.currentTrailingStopRoi - slippage
+                        }
                     }
                     else -> Unit
                 }
 
                 if (exitReason != null) {
-                    val grossProfit = basket.totalInvested * currentRoi
+                    val grossProfit = basket.totalInvested * executedGrossRoi
                     val takerFee = basket.totalInvested * 0.0008 // Phí giao dịch 2 chiều 0.08%
                     val netProfit = grossProfit - takerFee
                     currentEquity += netProfit
                     peakEquity = maxOf(peakEquity, currentEquity)
+
+                    // Tính toán chi tiết từng lệnh coin sao cho tổng PnL các coin khớp chính xác 100% với giỏ
+                    val deltaShift = executedGrossRoi - currentRoi
+                    val positionDetails = basket.positions.map { pos: BasketPosition ->
+                        val candleToday = klinesMap[pos.symbol]?.find { it.openTime == currentTime }
+                        val rawClosePrice = candleToday?.close ?: pos.entryPrice
+                        val rawCloseRoi = if (pos.entryPrice > 0.0) (rawClosePrice - pos.entryPrice) / pos.entryPrice else 0.0
+                        val effectiveExitRoi = rawCloseRoi + deltaShift
+                        val effectiveExitPrice = maxOf(1e-8, pos.entryPrice * (1.0 + effectiveExitRoi))
+                        val gross = (effectiveExitPrice - pos.entryPrice) * pos.quantity
+                        val fee = pos.marginAllocated * 0.0008
+                        val net = gross - fee
+                        val roi = if (pos.marginAllocated > 0.0) (net / pos.marginAllocated) * 100.0 else 0.0
+                        BasketPositionDetail(
+                            symbol = pos.symbol,
+                            entryPrice = pos.entryPrice,
+                            exitPrice = effectiveExitPrice,
+                            quantity = pos.quantity,
+                            marginAllocated = pos.marginAllocated,
+                            pnlUsdt = net,
+                            roiPercent = roi,
+                            isWin = net > 0
+                        )
+                    }
+
+                    val finalBasketRoiPercent = if (basket.totalInvested > 0.0) (netProfit / basket.totalInvested) * 100.0 else 0.0
 
                     cyclesHistory.add(
                         BasketCycleResult(
@@ -667,11 +725,12 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                             holdingDays = maxOf(1.0, (currentTime - basket.openTime) / 86400000.0),
                             totalInvested = basket.totalInvested,
                             realizedProfitUsdt = netProfit,
-                            basketRoiPercent = currentRoi * 100.0,
+                            basketRoiPercent = finalBasketRoiPercent,
                             equityAfterClose = currentEquity,
                             coinsCount = basket.positions.size,
                             symbolsList = basket.positions.map { it.symbol },
-                            exitReason = exitReason
+                            exitReason = exitReason,
+                            positionDetails = positionDetails
                         )
                     )
                     return null // Giải phóng slot
@@ -776,6 +835,64 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             }
             equityCurve.add(Pair(currentTime, currentEquity))
         }
+
+        // Tất toán các giỏ còn đang mở tại nến cuối cùng của chu kỳ kiểm thử (Mark-to-Market)
+        val finalTime = btcCandles.last().openTime
+        fun closeAtEnd(basket: ActiveBasket?) {
+            if (basket == null || basket.status == BasketStatus.CLOSED) return
+            var pnlClose = 0.0
+            for (pos in basket.positions) {
+                val candle = klinesMap[pos.symbol]?.find { it.openTime == finalTime }
+                if (candle != null) {
+                    pnlClose += (candle.close - pos.entryPrice) * pos.quantity
+                }
+            }
+            val closeRoi = if (basket.totalInvested > 0) pnlClose / basket.totalInvested else 0.0
+            val grossProfit = basket.totalInvested * closeRoi
+            val takerFee = basket.totalInvested * 0.0008
+            val netProfit = grossProfit - takerFee
+            currentEquity += netProfit
+            peakEquity = maxOf(peakEquity, currentEquity)
+
+            val positionDetails = basket.positions.map { pos ->
+                val candle = klinesMap[pos.symbol]?.find { it.openTime == finalTime }
+                val exitPrice = candle?.close ?: pos.entryPrice
+                val gross = (exitPrice - pos.entryPrice) * pos.quantity
+                val fee = pos.marginAllocated * 0.0008
+                val net = gross - fee
+                val roi = if (pos.marginAllocated > 0.0) (net / pos.marginAllocated) * 100.0 else 0.0
+                BasketPositionDetail(
+                    symbol = pos.symbol,
+                    entryPrice = pos.entryPrice,
+                    exitPrice = exitPrice,
+                    quantity = pos.quantity,
+                    marginAllocated = pos.marginAllocated,
+                    pnlUsdt = net,
+                    roiPercent = roi,
+                    isWin = net > 0
+                )
+            }
+
+            cyclesHistory.add(
+                BasketCycleResult(
+                    cycleIndex = ++basketCycleCounter,
+                    slotId = basket.slotId,
+                    openTime = basket.openTime,
+                    closeTime = finalTime,
+                    holdingDays = maxOf(1.0, (finalTime - basket.openTime) / 86400000.0),
+                    totalInvested = basket.totalInvested,
+                    realizedProfitUsdt = netProfit,
+                    basketRoiPercent = if (basket.totalInvested > 0.0) (netProfit / basket.totalInvested) * 100.0 else 0.0,
+                    equityAfterClose = currentEquity,
+                    coinsCount = basket.positions.size,
+                    symbolsList = basket.positions.map { it.symbol },
+                    exitReason = "OPEN_AT_END",
+                    positionDetails = positionDetails
+                )
+            )
+        }
+        closeAtEnd(primaryBasket)
+        closeAtEnd(secondaryBasket)
 
         val totalCycles = cyclesHistory.size
         val winCycles = cyclesHistory.count { it.realizedProfitUsdt > 0 }

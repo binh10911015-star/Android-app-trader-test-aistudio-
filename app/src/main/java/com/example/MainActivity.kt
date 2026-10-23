@@ -37,24 +37,37 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -67,7 +80,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
@@ -79,11 +96,14 @@ import com.example.ui.components.AiAssistantBottomSheet
 import com.example.ui.components.FloatingAiButton
 import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.TradeAlertBanner
-import com.example.ui.screens.AnalyticsScreen
+import com.example.model.BacktestConfig
+import com.example.model.TradingStrategyType
 import com.example.ui.screens.ApiConfigScreen
+import com.example.ui.screens.BacktestScreen
 import com.example.ui.screens.CoinDetailScreen
 import com.example.ui.screens.MarketScreen
 import com.example.ui.screens.PositionsScreen
+import com.example.ui.screens.StatisticsScreen
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
 import com.example.ui.theme.CryptoRed
@@ -95,10 +115,10 @@ import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextSecondary
 
-
 enum class NavScreen {
     MARKET,
     POSITIONS,
+    BACKTEST,
     ANALYTICS,
     API_CONFIG,
     DETAIL
@@ -140,6 +160,7 @@ fun MainApp(viewModel: MainViewModel) {
     val livePositionsTpSl by viewModel.livePositionsTpSl.collectAsState()
 
     var showMainnetPinDialog by remember { mutableStateOf(false) }
+    var showBotConfirmDialog by remember { mutableStateOf(false) }
     var showAiSheet by remember { mutableStateOf(false) }
     val aiViewModel: AiAssistantViewModel = viewModel()
 
@@ -158,6 +179,24 @@ fun MainApp(viewModel: MainViewModel) {
         )
     }
 
+    if (showBotConfirmDialog) {
+        val currentBConfig by viewModel.backtestConfig.collectAsState()
+        BotParametersConfirmationDialog(
+            initialConfig = currentBConfig,
+            initialCapitalPerTrade = uiState.settings.capitalPerTradeUsdt,
+            onConfirmAndStart = { modifiedConfig, modifiedCapital ->
+                viewModel.saveCustomBotConfigAndStart(modifiedConfig, modifiedCapital)
+                showBotConfirmDialog = false
+            },
+            onDismiss = {
+                showBotConfirmDialog = false
+            },
+            onFetchOptimalAiConfig = {
+                viewModel.getOptimalAiConfig()
+            }
+        )
+    }
+
     // Xử lý nút Back của Android khi đang ở màn hình phụ
     BackHandler(enabled = currentScreen != NavScreen.MARKET) {
         currentScreen = if (currentScreen == NavScreen.DETAIL && previousScreen != NavScreen.DETAIL) previousScreen else NavScreen.MARKET
@@ -170,7 +209,13 @@ fun MainApp(viewModel: MainViewModel) {
         topBar = {
             CryptoTraderTopBar(
                 isBotRunning = uiState.settings.autoTradeEnabled,
-                onToggleBot = { viewModel.toggleAutoTrade(it) }
+                onToggleBot = { shouldTurnOn ->
+                    if (shouldTurnOn) {
+                        showBotConfirmDialog = true
+                    } else {
+                        viewModel.toggleAutoTrade(false)
+                    }
+                }
             )
         },
         bottomBar = {
@@ -263,7 +308,30 @@ fun MainApp(viewModel: MainViewModel) {
                     modifier = Modifier.testTag("nav_positions")
                 )
 
-                // Tab 3: Thống kê
+                // Tab 4: Backtest
+                NavigationBarItem(
+                    selected = currentScreen == NavScreen.BACKTEST,
+                    onClick = {
+                        previousScreen = currentScreen
+                        currentScreen = NavScreen.BACKTEST
+                    },
+                    icon = {
+                        Icon(Icons.Default.Science, contentDescription = "Backtest")
+                    },
+                    label = {
+                        Text("Backtest", fontSize = 10.sp, fontWeight = FontWeight.Medium)
+                    },
+                    colors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = DarkBg,
+                        selectedTextColor = CryptoGold,
+                        indicatorColor = CryptoGold,
+                        unselectedIconColor = TextMuted,
+                        unselectedTextColor = TextMuted
+                    ),
+                    modifier = Modifier.testTag("nav_backtest")
+                )
+
+                // Tab 5: Thống kê (Lịch sử & Đề xuất AI)
                 NavigationBarItem(
                     selected = currentScreen == NavScreen.ANALYTICS,
                     onClick = {
@@ -274,7 +342,7 @@ fun MainApp(viewModel: MainViewModel) {
                         Icon(Icons.Default.Analytics, contentDescription = "Thống kê")
                     },
                     label = {
-                        Text("Thống kê", fontSize = 11.sp, fontWeight = FontWeight.Medium)
+                        Text("Thống kê", fontSize = 10.sp, fontWeight = FontWeight.Medium)
                     },
                     colors = NavigationBarItemDefaults.colors(
                         selectedIconColor = DarkBg,
@@ -387,10 +455,20 @@ fun MainApp(viewModel: MainViewModel) {
                             )
                         }
 
-                        NavScreen.ANALYTICS -> {
-                            AnalyticsScreen(
+                        NavScreen.BACKTEST -> {
+                            BacktestScreen(
                                 viewModel = viewModel,
                                 closedPositions = closedPositions
+                            )
+                        }
+
+                        NavScreen.ANALYTICS -> {
+                            StatisticsScreen(
+                                viewModel = viewModel,
+                                onNavigateToBacktest = {
+                                    previousScreen = currentScreen
+                                    currentScreen = NavScreen.BACKTEST
+                                }
                             )
                         }
 
@@ -430,6 +508,7 @@ fun MainApp(viewModel: MainViewModel) {
                 if (showAiSheet) {
                     val currentBConfig by viewModel.backtestConfig.collectAsState()
                     val currentBDays by viewModel.backtestDays.collectAsState()
+                    val bHistory by viewModel.backtestHistory.collectAsState()
 
                     val contextJson = ScreenContextBuilder.buildDualBasketContext(
                         currentScreen = currentScreen.name,
@@ -438,7 +517,8 @@ fun MainApp(viewModel: MainViewModel) {
                         secondaryBasket = viewModel.secondaryBasket,
                         backtestReport = uiState.basketReport,
                         currentBacktestConfig = currentBConfig,
-                        backtestDays = currentBDays
+                        backtestDays = currentBDays,
+                        backtestHistory = bHistory
                     )
 
                     AiAssistantBottomSheet(
@@ -622,6 +702,254 @@ fun LiveMainnetRiskWarningBanner() {
                 )
             }
         }
+    }
+}
+
+@Composable
+fun BotParametersConfirmationDialog(
+    initialConfig: BacktestConfig,
+    initialCapitalPerTrade: Double,
+    onConfirmAndStart: (BacktestConfig, Double) -> Unit,
+    onDismiss: () -> Unit,
+    onFetchOptimalAiConfig: () -> BacktestConfig
+) {
+    var capitalText by remember { mutableStateOf(initialCapitalPerTrade.toInt().toString()) }
+    var kTpText by remember { mutableStateOf(initialConfig.kTp.toString()) }
+    var kTrailText by remember { mutableStateOf(initialConfig.kTrail.toString()) }
+    var kSlText by remember { mutableStateOf(initialConfig.kSl.toString()) }
+    var minVolRatioText by remember { mutableStateOf(initialConfig.minVolRatio.toString()) }
+
+    var enableTrailing by remember { mutableStateOf(initialConfig.enableTrailingStop) }
+    var enableFloorLock by remember { mutableStateOf(initialConfig.enableFloorLock) }
+    var enableStopLoss by remember { mutableStateOf(initialConfig.enableStopLoss) }
+    var enableTimeout by remember { mutableStateOf(initialConfig.enableTimeout) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Icon(Icons.Default.Settings, contentDescription = null, tint = CryptoGold)
+                Text("Xác nhận thông số Bot v2.1", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+            }
+        },
+        text = {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 440.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                item {
+                    Text(
+                        "Kiểm tra và tùy chỉnh thông số trước khi khởi động bot giao dịch tự động Dual Basket v2.1 (Pure Trend Following):",
+                        color = TextSecondary,
+                        fontSize = 12.sp
+                    )
+                }
+
+                // AI Optimal Config Button
+                item {
+                    Button(
+                        onClick = {
+                            val optimal = onFetchOptimalAiConfig()
+                            kTpText = optimal.kTp.toString()
+                            kTrailText = optimal.kTrail.toString()
+                            kSlText = optimal.kSl.toString()
+                            minVolRatioText = optimal.minVolRatio.toString()
+                            enableTrailing = optimal.enableTrailingStop
+                            enableFloorLock = optimal.enableFloorLock
+                            enableStopLoss = optimal.enableStopLoss
+                            enableTimeout = optimal.enableTimeout
+                        },
+                        colors = ButtonDefaults.buttonColors(containerColor = CryptoGold.copy(alpha = 0.2f)),
+                        border = BorderStroke(1.dp, CryptoGold),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("apply_ai_config_btn"),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Điền bộ thông số tối ưu từ AI", color = CryptoGold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+
+                // Vốn mỗi lệnh USDT
+                item {
+                    OutlinedTextField(
+                        value = capitalText,
+                        onValueChange = { capitalText = it },
+                        label = { Text("Vốn mỗi lệnh (USDT)") },
+                        modifier = Modifier.fillMaxWidth().testTag("bot_capital_input"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CryptoGold,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        )
+                    )
+                }
+
+                // K_TP & K_Trail
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = kTpText,
+                            onValueChange = { kTpText = it },
+                            label = { Text("K_TP (Kích hoạt)") },
+                            modifier = Modifier.weight(1f).testTag("bot_ktp_input"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                        OutlinedTextField(
+                            value = kTrailText,
+                            onValueChange = { kTrailText = it },
+                            label = { Text("K_Trail (Trượt)") },
+                            modifier = Modifier.weight(1f).testTag("bot_ktrail_input"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                // K_SL & RVol
+                item {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = kSlText,
+                            onValueChange = { kSlText = it },
+                            label = { Text("K_SL (Cắt lỗ)") },
+                            modifier = Modifier.weight(1f).testTag("bot_ksl_input"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                        OutlinedTextField(
+                            value = minVolRatioText,
+                            onValueChange = { minVolRatioText = it },
+                            label = { Text("RVol tối thiểu") },
+                            modifier = Modifier.weight(1f).testTag("bot_rvol_input"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+                }
+
+                // Safety Toggles
+                item {
+                    Text("Cơ chế an toàn & thoát lệnh v2.1:", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                }
+
+                item {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(DarkSurface)
+                            .padding(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        BotToggleRow("Trailing Stop ATR", "Bám theo xu hướng tối đa hóa lợi nhuận", enableTrailing) { enableTrailing = it }
+                        BotToggleRow("FloorLock (Khóa lãi >= +0.5%)", "Bảo toàn lãi ròng khi đã vào trailing", enableFloorLock) { enableFloorLock = it }
+                        BotToggleRow("Cắt lỗ động K_SL 0.75", "Bảo vệ vốn nếu xu hướng đảo chiều", enableStopLoss) { enableStopLoss = it }
+                        BotToggleRow("Giới hạn thời gian (Timeout 144h)", "Thoát vị thế đi ngang không phát triển", enableTimeout) { enableTimeout = it }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val finalConfig = initialConfig.copy(
+                        kTp = kTpText.toDoubleOrNull() ?: initialConfig.kTp,
+                        kTrail = kTrailText.toDoubleOrNull() ?: initialConfig.kTrail,
+                        kSl = kSlText.toDoubleOrNull() ?: initialConfig.kSl,
+                        minVolRatio = minVolRatioText.toDoubleOrNull() ?: initialConfig.minVolRatio,
+                        enableTrailingStop = enableTrailing,
+                        enableFloorLock = enableFloorLock,
+                        enableStopLoss = enableStopLoss,
+                        enableTimeout = enableTimeout
+                    )
+                    val finalCapital = capitalText.toDoubleOrNull() ?: initialCapitalPerTrade
+                    onConfirmAndStart(finalConfig, finalCapital)
+                },
+                colors = ButtonDefaults.buttonColors(containerColor = CryptoGreen),
+                modifier = Modifier.testTag("confirm_and_start_bot_btn")
+            ) {
+                Text("Xác nhận & Khởi động", color = DarkBg, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDismiss,
+                border = BorderStroke(1.dp, DarkBorder),
+                modifier = Modifier.testTag("cancel_start_bot_btn")
+            ) {
+                Text("Hủy", color = TextSecondary)
+            }
+        },
+        containerColor = DarkSurfaceElevated,
+        shape = RoundedCornerShape(16.dp)
+    )
+}
+
+@Composable
+private fun BotToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, color = TextMuted, fontSize = 10.sp)
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            modifier = Modifier.scale(0.8f),
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = CryptoGold,
+                checkedTrackColor = CryptoGold.copy(alpha = 0.3f),
+                uncheckedThumbColor = TextMuted,
+                uncheckedTrackColor = DarkSurface
+            )
+        )
     }
 }
 

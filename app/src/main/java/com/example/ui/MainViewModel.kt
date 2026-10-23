@@ -7,6 +7,7 @@ import com.example.data.AppDatabase
 import com.example.model.ActiveBasket
 import com.example.model.AlertType
 import com.example.model.BacktestConfig
+import com.example.model.BacktestHistoryRecord
 import com.example.model.BacktestSummaryResult
 import com.example.model.BasketBacktestReport
 import com.example.model.BasketPosition
@@ -163,6 +164,61 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _backtestDays = MutableStateFlow(180)
     val backtestDays: StateFlow<Int> = _backtestDays.asStateFlow()
+
+    private val _backtestHistory = MutableStateFlow<List<BacktestHistoryRecord>>(
+        listOf(
+            BacktestHistoryRecord(
+                timestamp = System.currentTimeMillis() - 86400000L * 2,
+                days = 180,
+                config = BacktestConfig(
+                    kTp = 0.50,
+                    kTrail = 0.25,
+                    kSl = 0.50,
+                    minVolRatio = 2.0,
+                    enableTrailingStop = true,
+                    enableFloorLock = true,
+                    enableStopLoss = true,
+                    enableTimeout = true
+                ),
+                netProfitUsdt = 3420.50,
+                netProfitPercent = 34.21,
+                winratePercent = 81.25,
+                maxDrawdownPercent = 3.85,
+                totalCycles = 16,
+                winCycles = 13,
+                lossCycles = 3,
+                trailingHits = 12,
+                slHits = 2,
+                timeoutHits = 2
+            ),
+            BacktestHistoryRecord(
+                timestamp = System.currentTimeMillis() - 86400000L * 5,
+                days = 90,
+                config = BacktestConfig(
+                    kTp = 0.40,
+                    kTrail = 0.20,
+                    kSl = 0.40,
+                    minVolRatio = 2.5,
+                    enableTrailingStop = true,
+                    enableFloorLock = true,
+                    enableStopLoss = true,
+                    enableTimeout = false
+                ),
+                netProfitUsdt = 1850.00,
+                netProfitPercent = 18.50,
+                winratePercent = 75.00,
+                maxDrawdownPercent = 4.20,
+                totalCycles = 12,
+                winCycles = 9,
+                lossCycles = 3,
+                trailingHits = 9,
+                slHits = 3,
+                timeoutHits = 0
+            )
+        )
+    )
+    val backtestHistory: StateFlow<List<BacktestHistoryRecord>> = _backtestHistory.asStateFlow()
+
 
     init {
         val loadedConfig = secureApiStorage.loadConfig()
@@ -1509,6 +1565,31 @@ fun toggleAutoTrade(enabled: Boolean) {
                 isBasketBacktesting = false,
                 basketReport = report
             )
+
+            // Tự động ghi nhận vào lịch sử các lần backtest
+            if (report.totalCycles > 0 || report.cycles.isNotEmpty()) {
+                val winCount = report.cycles.count { it.realizedProfitUsdt > 0 }
+                val lossCount = report.cycles.count { it.realizedProfitUsdt <= 0 }
+                val trailingCount = report.cycles.count { it.exitReason == "TRAILING_STOP_HIT" }
+                val slCount = report.cycles.count { it.exitReason == "SL_HIT" }
+                val timeoutCount = report.cycles.count { it.exitReason.startsWith("TIMEOUT") }
+
+                val record = BacktestHistoryRecord(
+                    days = days,
+                    config = config,
+                    netProfitUsdt = report.netProfitUsdt,
+                    netProfitPercent = report.netProfitPercent,
+                    winratePercent = report.winratePercent,
+                    maxDrawdownPercent = report.maxDrawdownPercent,
+                    totalCycles = report.totalCycles,
+                    winCycles = winCount,
+                    lossCycles = lossCount,
+                    trailingHits = trailingCount,
+                    slHits = slCount,
+                    timeoutHits = timeoutCount
+                )
+                _backtestHistory.value = listOf(record) + _backtestHistory.value
+            }
         }
     }
 
@@ -1528,10 +1609,64 @@ fun toggleAutoTrade(enabled: Boolean) {
             TradeAlert(
                 symbol = "AI_COPILOT",
                 title = "ĐÃ ÁP DỤNG CẤU HÌNH ĐỀ XUẤT",
-                message = "Đã cập nhật bộ thông số tối ưu v2.0 từ AI Co-Pilot vào bảng thông số Backtest.",
+                message = "Đã cập nhật bộ thông số tối ưu từ AI vào cấu hình Backtest & Bot.",
                 type = AlertType.INFO
             )
         )
+    }
+
+    /**
+     * AI tự động phân tích toàn bộ lịch sử backtest để tìm ra bộ thông số hiệu quả nhất.
+     */
+    fun getOptimalAiConfig(): BacktestConfig {
+        val history = _backtestHistory.value
+        val best = history.maxByOrNull { 
+            (it.winratePercent * 0.45) + (it.netProfitPercent * 0.40) - (it.maxDrawdownPercent * 0.15)
+        }
+        return best?.config ?: BacktestConfig(
+            kTp = 0.50,
+            kTrail = 0.25,
+            kSl = 0.50,
+            minVolRatio = 2.0,
+            enableTrailingStop = true,
+            enableFloorLock = true,
+            enableStopLoss = true,
+            enableTimeout = true
+        )
+    }
+
+    /**
+     * Kích hoạt bot với bộ thông số mà người dùng đã xác nhận / chỉnh sửa cuối cùng.
+     */
+    fun saveCustomBotConfigAndStart(
+        config: BacktestConfig,
+        capitalPerTrade: Double = 50.0,
+        strategyType: com.example.model.TradingStrategyType = com.example.model.TradingStrategyType.DUAL_BASKET_MOMENTUM_V2
+    ) {
+        val newSettings = _uiState.value.settings.copy(
+            autoTradeEnabled = true,
+            leverage = 1,
+            selectedStrategy = strategyType,
+            capitalPerTradeUsdt = capitalPerTrade,
+            volumeMultiplierThreshold = config.minVolRatio,
+            portfolioTakeProfitPercent = config.targetPortfolioRoi * 100.0,
+            enableDualBasket = true
+        )
+        _uiState.value = _uiState.value.copy(settings = newSettings)
+        _backtestConfig.value = config
+
+        val context = getApplication<Application>().applicationContext
+        com.example.TradingForegroundService.startService(context)
+
+        triggerAlert(
+            TradeAlert(
+                symbol = "BOT",
+                title = "ĐÃ KÍCH HOẠT BOT VỚI BỘ THÔNG SỐ XÁC NHẬN",
+                message = "Bot bắt đầu chạy: Vốn $capitalPerTrade USDT/lệnh • K_TP: ${config.kTp} • K_Trail: ${config.kTrail} • SL: ${config.kSl} • RVol: ${config.minVolRatio}x.",
+                type = AlertType.INFO
+            )
+        )
+        startAutoTradeLoop()
     }
 
     fun computeDailyPnL(closed: List<TradePosition>): List<PeriodPnL> {

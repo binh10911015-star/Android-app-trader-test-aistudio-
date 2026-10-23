@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ai.AiAssistantViewModel
 import com.example.ai.AiUiState
+import com.example.ai.OptimizationGoal
+import com.example.ai.ParameterDiff
 import com.example.model.BacktestConfig
 import com.example.ui.theme.*
 import java.util.Locale
@@ -70,17 +72,18 @@ fun AiAssistantBottomSheet(
     val aiState by viewModel.aiState.collectAsState()
     var inputQuery by remember { mutableStateOf("") }
     var appliedSuccess by remember { mutableStateOf(false) }
+    var selectedGoal by remember { mutableStateOf(OptimizationGoal.BALANCED) }
 
     val quickChips = when (currentScreenName) {
         "POSITIONS" -> listOf(
             "Giải thích trạng thái 2 giỏ",
-            "Rủi ro dính Timeout 72h?",
+            "Rủi ro dính Timeout 144h?",
             "Khoảng cách đến Trailing Stop"
         )
         "ANALYTICS" -> listOf(
-            "Đánh giá kết quả chu kỳ vừa test",
-            "Hãy tối ưu bộ thông số giúp anh",
-            "Mức Max Drawdown có an toàn?"
+            "Tối ưu hóa thông số thích ứng",
+            "Đánh giá điểm nghẽn chu kỳ vừa test",
+            "So sánh với các lần test trước trong lịch sử"
         )
         "CHART", "DETAIL" -> listOf(
             "Đánh giá nến D1 so với EMA20",
@@ -103,8 +106,8 @@ fun AiAssistantBottomSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .fillMaxHeight(0.80f) // MỞ RỘNG ĐÚNG 80% CHIỀU CAO MÀN HÌNH
-                .padding(horizontal = 16.dp, vertical = 8.dp)
+                .fillMaxHeight(0.85f)
+                .padding(horizontal = 16.dp, vertical = 6.dp)
         ) {
             // Header Row
             Row(
@@ -121,7 +124,7 @@ fun AiAssistantBottomSheet(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = "Cố Vấn AI • Dual Basket v2.0",
+                        text = "Cố Vấn AI • Dual Basket v2.1",
                         color = TextPrimary,
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
@@ -135,30 +138,72 @@ fun AiAssistantBottomSheet(
                 }
             }
 
+            // HÀNG NÚT CHỌN MỤC TIÊU TỐI ƯU HÓA ĐA CHẾ ĐỘ (MULTI-OBJECTIVE OPTIMIZATION MODES)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                OptimizationGoal.values().forEach { goal ->
+                    val isSelected = (selectedGoal == goal)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (isSelected) CryptoGold.copy(alpha = 0.2f) else DarkSurfaceHighlight,
+                        border = BorderStroke(1.dp, if (isSelected) CryptoGold else DarkBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("goal_chip_${goal.name}")
+                            .clickable {
+                                selectedGoal = goal
+                                appliedSuccess = false
+                                viewModel.askAi(
+                                    prompt = "Hãy phân tích lịch sử và tối ưu hóa bộ thông số theo mục tiêu: ${goal.title}",
+                                    screenContextJson = screenContextJson,
+                                    goal = goal
+                                )
+                            }
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(vertical = 6.dp, horizontal = 4.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                text = goal.title,
+                                color = if (isSelected) CryptoGold else TextPrimary,
+                                fontSize = 11.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
+
             // Quick Question Chips Row
             LazyRow(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(vertical = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 items(quickChips) { chipText ->
                     Surface(
-                        shape = RoundedCornerShape(16.dp),
+                        shape = RoundedCornerShape(14.dp),
                         color = DarkSurfaceHighlight,
                         border = BorderStroke(0.5.dp, DarkBorder),
                         modifier = Modifier
                             .testTag("ai_chip_$chipText")
                             .clickable {
                                 appliedSuccess = false
-                                viewModel.askAi(chipText, screenContextJson)
+                                viewModel.askAi(chipText, screenContextJson, selectedGoal)
                             }
                     ) {
                         Text(
                             text = chipText,
                             color = TextSecondary,
-                            fontSize = 12.sp,
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                            fontSize = 11.sp,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                         )
                     }
                 }
@@ -171,13 +216,18 @@ fun AiAssistantBottomSheet(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(vertical = 10.dp)
+                    .padding(vertical = 8.dp)
                     .verticalScroll(rememberScrollState())
             ) {
                 when (val state = aiState) {
                     is AiUiState.Idle -> {
                         Text(
-                            text = "Chào anh Bình! Em là Cố vấn AI Co-Pilot độc quyền cho hệ thống Dual Basket v2.0.\n\nEm đã nắm rõ toàn bộ thuật toán lọc 3 tầng, quy tắc 2 giỏ độc lập lúc 07:00 & 19:00, cơ chế dời Trailing Take-Profit theo Basket ATR% và giới hạn 72h Timeout.\n\nAnh hãy chọn một trong các gợi ý phía trên hoặc gõ câu hỏi bất kỳ ở bên dưới nhé!",
+                            text = "Chào anh Bình! Em là Cố vấn AI Chiến lược Định lượng cho hệ thống Dual Basket v2.1.\n\n" +
+                                    "✨ **Điểm mới:**\n" +
+                                    "• Phân tích đối chiếu toàn bộ lịch sử các lần backtest trước.\n" +
+                                    "• Chẩn đoán điểm nghẽn chính xác (tỷ lệ dính SL, Timeout, Trailing hit).\n" +
+                                    "• Tối ưu thích ứng đa mục tiêu: Cân bằng, Tối đa Lợi nhuận, An toàn / Giảm Max DD.\n\n" +
+                                    "Anh có thể nhấn trực tiếp vào 1 trong 3 chế độ tối ưu ở trên hoặc chọn câu hỏi nhanh bên dưới để bắt đầu phân tích nhé!",
                             color = TextMuted,
                             fontSize = 13.sp,
                             lineHeight = 20.sp
@@ -195,7 +245,7 @@ fun AiAssistantBottomSheet(
                             )
                             Spacer(modifier = Modifier.width(10.dp))
                             Text(
-                                text = "Gemini đang đọc dữ liệu giỏ lệnh...",
+                                text = "Đang phân tích dữ liệu lịch sử & tính toán thông số tối ưu...",
                                 color = TextSecondary,
                                 fontSize = 13.sp
                             )
@@ -230,25 +280,78 @@ fun AiAssistantBottomSheet(
                                     border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.8f))
                                 ) {
                                     Column(modifier = Modifier.padding(12.dp)) {
-                                        Row(verticalAlignment = Alignment.CenterVertically) {
-                                            Icon(
-                                                imageVector = Icons.Default.Tune,
-                                                contentDescription = null,
-                                                tint = CryptoGold,
-                                                modifier = Modifier.size(16.dp)
-                                            )
-                                            Spacer(modifier = Modifier.width(6.dp))
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Tune,
+                                                    contentDescription = null,
+                                                    tint = CryptoGold,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                    text = "Bộ Thông Số Khuyến Nghị Thích Ứng",
+                                                    color = CryptoGold,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+
+                                            Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = CryptoGold.copy(alpha = 0.2f),
+                                                border = BorderStroke(0.5.dp, CryptoGold)
+                                            ) {
+                                                Text(
+                                                    text = state.goal.title,
+                                                    color = CryptoGold,
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                                )
+                                            }
+                                        }
+
+                                        // BẢNG DIFFS NẾU CÓ THAY ĐỔI RÕ RỆT
+                                        if (state.diffs.isNotEmpty()) {
+                                            Spacer(modifier = Modifier.height(8.dp))
                                             Text(
-                                                text = "Bộ Thông Số Khuyến Nghị Tối Ưu v2.0",
-                                                color = CryptoGold,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.Bold
+                                                text = "Các điều chỉnh thích ứng chính:",
+                                                color = TextSecondary,
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.SemiBold
                                             )
+                                            Spacer(modifier = Modifier.height(4.dp))
+                                            Column(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .background(DarkSurface, RoundedCornerShape(6.dp))
+                                                    .padding(8.dp),
+                                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                                            ) {
+                                                state.diffs.forEach { diff ->
+                                                    Row(
+                                                        modifier = Modifier.fillMaxWidth(),
+                                                        horizontalArrangement = Arrangement.SpaceBetween
+                                                    ) {
+                                                        Text(diff.name, color = TextMuted, fontSize = 11.sp)
+                                                        Row {
+                                                            Text(diff.oldValue, color = TextMuted, fontSize = 11.sp)
+                                                            Text(" ➔ ", color = CryptoGold, fontSize = 11.sp)
+                                                            Text(diff.newValue, color = CryptoGreen, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                        }
+                                                    }
+                                                }
+                                            }
                                         }
 
                                         Spacer(modifier = Modifier.height(8.dp))
 
-                                        // Bảng tóm tắt các giá trị được AI tối ưu
+                                        // Bảng tóm tắt toàn bộ cấu hình chuẩn v2.1
                                         Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
@@ -298,6 +401,18 @@ fun AiAssistantBottomSheet(
                                                 Text("• Cắt lỗ K_SL / Timeout:", color = TextMuted, fontSize = 11.sp)
                                                 Text("${recConfig.kSl} / ${recConfig.maxHoldingHours} giờ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                             }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Cơ chế v2.1:", color = TextMuted, fontSize = 11.sp)
+                                                Text(
+                                                    "Trailing: ${if (recConfig.enableTrailingStop) "BẬT" else "TẮT"} | FloorLock: ${if (recConfig.enableFloorLock) "BẬT" else "TẮT"} | SL: ${if (recConfig.enableStopLoss) "BẬT" else "TẮT"}",
+                                                    color = CryptoGold,
+                                                    fontSize = 11.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
                                         }
 
                                         Spacer(modifier = Modifier.height(10.dp))
@@ -324,7 +439,7 @@ fun AiAssistantBottomSheet(
                                             )
                                             Spacer(modifier = Modifier.width(6.dp))
                                             Text(
-                                                text = if (appliedSuccess) "ĐÃ ÁP DỤNG THÀNH CÔNG!" else "ÁP DỤNG BỘ THÔNG SỐ NÀY",
+                                                text = if (appliedSuccess) "ĐÃ ÁP DỤNG THÀNH CÔNG VÀO BẢNG ĐIỀU KHIỂN!" else "ÁP DỤNG BỘ THÔNG SỐ NÀY",
                                                 fontWeight = FontWeight.Bold,
                                                 fontSize = 12.sp
                                             )
@@ -379,7 +494,7 @@ fun AiAssistantBottomSheet(
                     onClick = {
                         if (inputQuery.isNotBlank()) {
                             appliedSuccess = false
-                            viewModel.askAi(inputQuery, screenContextJson)
+                            viewModel.askAi(inputQuery, screenContextJson, selectedGoal)
                             inputQuery = ""
                         }
                     },
