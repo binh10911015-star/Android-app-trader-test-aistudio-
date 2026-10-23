@@ -19,6 +19,9 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
 import androidx.compose.animation.Crossfade
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,6 +35,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
@@ -48,6 +52,8 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -57,6 +63,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -80,11 +88,13 @@ import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
 import com.example.ui.theme.CryptoRed
 import com.example.ui.theme.DarkBg
+import com.example.ui.theme.DarkBorder
 import com.example.ui.theme.DarkSurface
 import com.example.ui.theme.DarkSurfaceElevated
 import com.example.ui.theme.MyApplicationTheme
 import com.example.ui.theme.TextMuted
 import com.example.ui.theme.TextSecondary
+
 
 enum class NavScreen {
     MARKET,
@@ -157,6 +167,12 @@ fun MainApp(viewModel: MainViewModel) {
         modifier = Modifier.fillMaxSize(),
         containerColor = DarkBg,
         contentWindowInsets = WindowInsets.safeDrawing,
+        topBar = {
+            CryptoTraderTopBar(
+                isBotRunning = uiState.settings.autoTradeEnabled,
+                onToggleBot = { viewModel.toggleAutoTrade(it) }
+            )
+        },
         bottomBar = {
             NavigationBar(
                 containerColor = DarkSurfaceElevated,
@@ -435,6 +451,131 @@ fun MainApp(viewModel: MainViewModel) {
                         }
                     )
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Thanh tiêu đề ứng dụng hiển thị rõ ràng trạng thái bot (Đang chạy/Đang dừng)
+ * và Toggle mới giúp người dùng bật/tắt bot tức thì.
+ */
+@Composable
+fun CryptoTraderTopBar(
+    isBotRunning: Boolean,
+    onToggleBot: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("crypto_trader_top_bar"),
+        color = DarkSurfaceElevated,
+        border = BorderStroke(1.dp, DarkBorder)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            // Nhóm tiêu đề & Trạng thái Bot
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.weight(1f, fill = false)
+            ) {
+                // Logo ₿
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(CryptoGold.copy(alpha = 0.15f))
+                        .border(1.dp, CryptoGold.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "₿",
+                        color = CryptoGold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Black
+                    )
+                }
+
+                // Tiêu đề ứng dụng
+                Text(
+                    text = "CryptoTrader",
+                    color = Color.White,
+                    fontSize = 16.sp,
+                    fontWeight = FontWeight.ExtraBold,
+                    modifier = Modifier.testTag("app_title")
+                )
+
+                // Huy hiệu trạng thái Bot ngay cạnh tiêu đề
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isBotRunning) CryptoGreen.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (isBotRunning) CryptoGreen.copy(alpha = 0.7f) else DarkBorder
+                    ),
+                    modifier = Modifier.testTag("bot_status_badge")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        // Icon trạng thái nhỏ thay đổi màu sắc tức thì (Xanh khi chạy / Đỏ khi dừng)
+                        Box(
+                            modifier = Modifier
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (isBotRunning) CryptoGreen else CryptoRed)
+                                .border(
+                                    1.dp,
+                                    if (isBotRunning) CryptoGreen.copy(alpha = 0.8f) else CryptoRed.copy(alpha = 0.8f),
+                                    CircleShape
+                                )
+                                .testTag("bot_status_icon")
+                        )
+                        // Chữ thông báo trạng thái rõ ràng: Đang chạy / Đang dừng
+                        Text(
+                            text = if (isBotRunning) "Đang chạy" else "Đang dừng",
+                            color = if (isBotRunning) CryptoGreen else CryptoRed.copy(alpha = 0.85f),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.testTag("bot_status_text")
+                        )
+                    }
+                }
+            }
+
+            // Toggle mới bật/tắt bot tức thì
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = "Bot",
+                    color = if (isBotRunning) CryptoGreen else TextMuted,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Switch(
+                    checked = isBotRunning,
+                    onCheckedChange = onToggleBot,
+                    modifier = Modifier
+                        .scale(0.72f)
+                        .testTag("bot_toggle_switch"),
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = CryptoGreen,
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = DarkSurface
+                    )
+                )
             }
         }
     }

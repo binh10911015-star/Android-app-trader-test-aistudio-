@@ -22,6 +22,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBalanceWallet
+import androidx.compose.material.icons.filled.AutoGraph
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
@@ -90,6 +92,7 @@ fun ApiConfigScreen(
 ) {
     val apiConfig by viewModel.apiConfig.collectAsState()
     val isVerifying by viewModel.isVerifyingApi.collectAsState()
+    val uiState by viewModel.uiState.collectAsState()
     val clipboardManager = LocalClipboardManager.current
 
     // Form states initialized with current config or default testnet credentials
@@ -205,6 +208,105 @@ fun ApiConfigScreen(
             }
             Spacer(modifier = Modifier.height(14.dp))
         }
+
+        // --- BOT MASTER TOGGLE SWITCH CARD ---
+        val isBotRunning = uiState.settings.autoTradeEnabled
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("bot_master_switch_card"),
+            shape = RoundedCornerShape(14.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (isBotRunning) CryptoGreen.copy(alpha = 0.12f) else DarkSurfaceElevated
+            ),
+            border = BorderStroke(
+                width = if (isBotRunning) 1.5.dp else 1.dp,
+                color = if (isBotRunning) CryptoGreen else DarkBorder
+            )
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    modifier = Modifier.weight(1f),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .background(
+                                color = if (isBotRunning) CryptoGreen.copy(alpha = 0.22f) else DarkSurfaceHighlight,
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = if (isBotRunning) Icons.Default.AutoGraph else Icons.Default.Lock,
+                            contentDescription = null,
+                            tint = if (isBotRunning) CryptoGreen else TextMuted,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = "Kích Hoạt Bot Auto-Trade",
+                                color = TextPrimary,
+                                fontSize = 13.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isBotRunning) CryptoGreen else DarkSurfaceHighlight
+                            ) {
+                                Text(
+                                    text = if (isBotRunning) "ĐANG CHẠY" else "ĐÃ TẮT",
+                                    color = if (isBotRunning) DarkBg else TextSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(3.dp))
+                        Text(
+                            text = if (isBotRunning)
+                                "Bot đang quét tín hiệu và tự động vào lệnh Futures 24/7"
+                            else
+                                "Gạt công tắc để kích hoạt hệ thống tự động giao dịch",
+                            color = if (isBotRunning) CryptoGreen.copy(alpha = 0.95f) else TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                Switch(
+                    checked = isBotRunning,
+                    onCheckedChange = { checked ->
+                        viewModel.toggleAutoTrade(checked)
+                    },
+                    colors = SwitchDefaults.colors(
+                        checkedThumbColor = Color.White,
+                        checkedTrackColor = CryptoGreen,
+                        checkedBorderColor = CryptoGreen,
+                        uncheckedThumbColor = TextMuted,
+                        uncheckedTrackColor = DarkSurfaceHighlight,
+                        uncheckedBorderColor = DarkBorder
+                    ),
+                    modifier = Modifier.testTag("bot_toggle_switch")
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
 
         // Environment Selector: Testnet vs Mainnet
         Card(

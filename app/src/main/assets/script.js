@@ -757,6 +757,17 @@ function calculateDefaultQuantity(symbol, price) {
   return parseFloat((targetUsdt / price).toFixed(1));
 }
 
+function toggleAutoTrade(enabled) {
+  if (typeof enabled === 'boolean') {
+    state.isAutoTradeActive = enabled;
+    state.autoTradeEnabled = enabled;
+    updateAutoTradeUI();
+    showToast(enabled ? "Hệ thống Auto Trade ĐÃ BẬT!" : "Hệ thống Auto Trade ĐÃ TẮT.", enabled ? 'success' : 'info');
+  } else {
+    toggleAutoTradeWithPin();
+  }
+}
+
 function toggleAutoTradeWithPin() {
   const targetState = !state.isAutoTradeActive;
   const title = targetState ? "Bật hệ thống Auto Trade tự động vào lệnh" : "Tắt hệ thống Auto Trade";
@@ -770,21 +781,126 @@ function toggleAutoTradeWithPin() {
 }
 
 function updateAutoTradeUI() {
-  const btn = document.getElementById('auto-trade-toggle-btn');
+  const isRunning = Boolean(state.isAutoTradeActive || state.autoTradeEnabled);
+
+  // Header Switch Elements
+  const headerWrapper = document.getElementById('header-bot-toggle-wrapper');
+  const headerStatusText = document.getElementById('header-bot-status-text');
+  const headerTrack = document.getElementById('header-bot-switch-track');
+  const headerThumb = document.getElementById('header-bot-switch-thumb');
   const dot = document.getElementById('auto-trade-status-dot');
 
-  if (state.isAutoTradeActive) {
-    if (btn) {
-      btn.innerText = '⏸ Đang Bật Auto Trade';
-      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 transition flex items-center';
+  // Settings Screen Elements
+  const settingsCard = document.getElementById('settings-bot-card');
+  const settingsIconBox = document.getElementById('settings-bot-icon-box');
+  const settingsBadge = document.getElementById('settings-bot-badge');
+  const settingsDesc = document.getElementById('settings-bot-desc');
+  const settingsLabel = document.getElementById('settings-bot-state-label');
+  const settingsBtn = document.getElementById('settings-bot-toggle-btn');
+  const settingsThumb = document.getElementById('settings-bot-toggle-thumb');
+
+  // Legacy button fallback if present
+  const legacyBtn = document.getElementById('auto-trade-toggle-btn');
+  if (legacyBtn) {
+    if (isRunning) {
+      legacyBtn.innerText = '⏸ Đang Bật Auto Trade';
+      legacyBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 transition flex items-center';
+    } else {
+      legacyBtn.innerText = 'Bật Auto Trade';
+      legacyBtn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-card border border-border hover:bg-card-hover text-gray-300 transition flex items-center';
     }
-    if (dot) dot.className = 'pulsing-dot online mr-1.5';
+  }
+
+  if (isRunning) {
+    // === BOT RUNNING: BRIGHT VIBRANT GREEN ===
+    if (headerWrapper) {
+      headerWrapper.className = 'group cursor-pointer select-none px-2.5 py-1.5 rounded-xl bg-emerald-950/40 border border-emerald-500/60 hover:border-emerald-400 transition-all flex items-center space-x-2.5 shadow-lg shadow-emerald-950/40';
+    }
+    if (headerStatusText) {
+      headerStatusText.textContent = 'ĐANG CHẠY';
+      headerStatusText.className = 'text-[11px] font-bold text-emerald-400 mt-0.5';
+    }
+    if (headerTrack) {
+      headerTrack.className = 'relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border border-emerald-400 bg-[#0ECB81] shadow-[0_0_12px_rgba(14,203,129,0.55)] transition-colors duration-300 ease-in-out';
+    }
+    if (headerThumb) {
+      headerThumb.className = 'inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300 ease-in-out translate-x-4 mt-0.5';
+    }
+    if (dot) {
+      dot.className = 'pulsing-dot online';
+    }
+
+    if (settingsCard) {
+      settingsCard.className = 'bg-emerald-950/20 border border-emerald-500/60 p-4 sm:p-5 rounded-xl transition-all duration-300 shadow-lg shadow-emerald-950/20';
+    }
+    if (settingsIconBox) {
+      settingsIconBox.className = 'w-11 h-11 rounded-xl bg-emerald-900/40 border border-emerald-500/50 flex items-center justify-center text-emerald-400 transition-colors shadow-inner flex-shrink-0';
+    }
+    if (settingsBadge) {
+      settingsBadge.textContent = '● ĐANG HOẠT ĐỘNG';
+      settingsBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950 text-emerald-400 border border-emerald-700 uppercase tracking-wide';
+    }
+    if (settingsDesc) {
+      settingsDesc.innerHTML = '<span class="text-emerald-400 font-semibold">Bot đang chạy tự động 24/7:</span> Đang liên tục phân tích tín hiệu thị trường và mở lệnh Futures theo chiến lược.';
+    }
+    if (settingsLabel) {
+      settingsLabel.textContent = 'ON';
+      settingsLabel.className = 'text-xs font-bold text-emerald-400 mono';
+    }
+    if (settingsBtn) {
+      settingsBtn.className = 'relative inline-flex h-8 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-emerald-400 transition-all duration-300 ease-in-out focus:outline-none bg-[#0ECB81] shadow-[0_0_16px_rgba(14,203,129,0.55)]';
+      settingsBtn.setAttribute('aria-checked', 'true');
+    }
+    if (settingsThumb) {
+      settingsThumb.className = 'pointer-events-none inline-block h-7 w-7 transform rounded-full bg-white shadow-lg ring-0 transition duration-300 ease-in-out translate-x-8';
+    }
   } else {
-    if (btn) {
-      btn.innerText = 'Bật Auto Trade';
-      btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-card border border-border hover:bg-card-hover text-gray-300 transition flex items-center';
+    // === BOT STOPPED: DARK GRAY ===
+    if (headerWrapper) {
+      headerWrapper.className = 'group cursor-pointer select-none px-2.5 py-1.5 rounded-xl bg-card border border-border hover:border-gray-600 transition-all flex items-center space-x-2.5 shadow-sm';
     }
-    if (dot) dot.className = 'w-2 h-2 rounded-full bg-gray-600 mr-1.5';
+    if (headerStatusText) {
+      headerStatusText.textContent = 'ĐÃ TẮT';
+      headerStatusText.className = 'text-[11px] font-bold text-gray-400 mt-0.5';
+    }
+    if (headerTrack) {
+      headerTrack.className = 'relative inline-flex h-5 w-9 flex-shrink-0 rounded-full border border-gray-600 bg-[#2B313A] transition-colors duration-300 ease-in-out';
+    }
+    if (headerThumb) {
+      headerThumb.className = 'inline-block h-4 w-4 transform rounded-full bg-gray-400 shadow transition-transform duration-300 ease-in-out translate-x-0.5 mt-0.5';
+    }
+    if (dot) {
+      dot.className = 'w-2 h-2 rounded-full bg-gray-500';
+    }
+
+    if (settingsCard) {
+      settingsCard.className = 'bg-card border border-border p-4 sm:p-5 rounded-xl transition-all duration-300';
+    }
+    if (settingsIconBox) {
+      settingsIconBox.className = 'w-11 h-11 rounded-xl bg-dark/80 border border-border flex items-center justify-center text-gray-400 transition-colors shadow-inner flex-shrink-0';
+    }
+    if (settingsBadge) {
+      settingsBadge.textContent = 'ĐÃ TẮT';
+      settingsBadge.className = 'px-2 py-0.5 rounded text-[10px] font-bold bg-dark border border-border text-gray-400 uppercase tracking-wide';
+    }
+    if (settingsDesc) {
+      settingsDesc.textContent = 'Khi kích hoạt, Bot liên tục quét thị trường theo nến D1/4H và tự động vào lệnh Futures bằng API đã lưu.';
+    }
+    if (settingsLabel) {
+      settingsLabel.textContent = 'OFF';
+      settingsLabel.className = 'text-xs font-bold text-gray-400 mono';
+    }
+    if (settingsBtn) {
+      settingsBtn.className = 'relative inline-flex h-8 w-16 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-all duration-300 ease-in-out focus:outline-none bg-[#2B313A]';
+      settingsBtn.setAttribute('aria-checked', 'false');
+    }
+    if (settingsThumb) {
+      settingsThumb.className = 'pointer-events-none inline-block h-7 w-7 transform rounded-full bg-gray-400 shadow-md ring-0 transition duration-300 ease-in-out translate-x-0.5';
+    }
+  }
+
+  if (window.lucide) {
+    window.lucide.createIcons();
   }
 }
 

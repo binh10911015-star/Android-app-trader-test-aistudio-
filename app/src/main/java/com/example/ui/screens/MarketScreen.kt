@@ -100,7 +100,12 @@ fun MarketScreen(
         ) {
             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Box(modifier = Modifier.size(8.dp).clip(CircleShape).background(CryptoGreen))
+                    Box(
+                        modifier = Modifier
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (uiState.settings.autoTradeEnabled) CryptoGreen else CryptoRed)
+                    )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = "Binance Futures USDT-M",
@@ -108,6 +113,20 @@ fun MarketScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (uiState.settings.autoTradeEnabled) CryptoGreen.copy(alpha = 0.15f) else CryptoRed.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, if (uiState.settings.autoTradeEnabled) CryptoGreen.copy(alpha = 0.5f) else CryptoRed.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = if (uiState.settings.autoTradeEnabled) "Bot: Đang chạy" else "Bot: Đang dừng",
+                            color = if (uiState.settings.autoTradeEnabled) CryptoGreen else CryptoRed,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
                 Text(
                     text = "Chiến lược: D1 SMA20 Breakout & Vol >= 2x",

@@ -757,6 +757,18 @@ function calculateDefaultQuantity(symbol, price) {
   return parseFloat((targetUsdt / price).toFixed(1));
 }
 
+function toggleBotFromSwitch(isChecked) {
+  state.isAutoTradeActive = isChecked;
+  state.autoTradeEnabled = isChecked;
+  updateAutoTradeUI();
+  showToast(
+    isChecked 
+      ? 'Bot giao dịch: ĐÃ BẬT (Đang chạy)' 
+      : 'Bot giao dịch: ĐÃ TẮT (Đang dừng)', 
+    isChecked ? 'success' : 'info'
+  );
+}
+
 function toggleAutoTradeWithPin() {
   const targetState = !state.isAutoTradeActive;
   const title = targetState ? "Bật hệ thống Auto Trade tự động vào lệnh" : "Tắt hệ thống Auto Trade";
@@ -772,6 +784,10 @@ function toggleAutoTradeWithPin() {
 function updateAutoTradeUI() {
   const btn = document.getElementById('auto-trade-toggle-btn');
   const dot = document.getElementById('auto-trade-status-dot');
+  const botContainer = document.getElementById('bot-status-container');
+  const botIcon = document.getElementById('bot-status-icon');
+  const botText = document.getElementById('bot-status-text');
+  const botToggle = document.getElementById('bot-header-toggle');
 
   if (state.isAutoTradeActive) {
     if (btn) {
@@ -779,12 +795,38 @@ function updateAutoTradeUI() {
       btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-900/40 transition flex items-center';
     }
     if (dot) dot.className = 'pulsing-dot online mr-1.5';
+
+    if (botContainer) {
+      botContainer.className = 'inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all duration-300 bg-emerald-950/80 border-emerald-500/70 text-emerald-300 shadow-md shadow-emerald-950/50';
+    }
+    if (botIcon) {
+      botIcon.className = 'w-2.5 h-2.5 rounded-full bot-status-dot-running';
+    }
+    if (botText) {
+      botText.innerText = 'Bot: Đang chạy';
+    }
+    if (botToggle && !botToggle.checked) {
+      botToggle.checked = true;
+    }
   } else {
     if (btn) {
       btn.innerText = 'Bật Auto Trade';
       btn.className = 'px-3 py-1.5 rounded-lg text-xs font-bold bg-card border border-border hover:bg-card-hover text-gray-300 transition flex items-center';
     }
     if (dot) dot.className = 'w-2 h-2 rounded-full bg-gray-600 mr-1.5';
+
+    if (botContainer) {
+      botContainer.className = 'inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all duration-300 bg-card border-border text-gray-400';
+    }
+    if (botIcon) {
+      botIcon.className = 'w-2.5 h-2.5 rounded-full bot-status-dot-stopped';
+    }
+    if (botText) {
+      botText.innerText = 'Bot: Đang dừng';
+    }
+    if (botToggle && botToggle.checked) {
+      botToggle.checked = false;
+    }
   }
 }
 

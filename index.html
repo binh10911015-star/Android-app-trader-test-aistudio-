@@ -44,10 +44,25 @@
           ₿
         </div>
         <div>
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center flex-wrap gap-2">
             <h1 class="font-extrabold text-base sm:text-lg text-white tracking-wide">CryptoTrader</h1>
             <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-gold/20 text-gold border border-gold/40">FUTURES</span>
-            <span id="api-status-badge" class="inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-950 text-green border border-emerald-800">
+            
+            <!-- Trạng thái Bot (Đang chạy / Đang dừng) & Toggle Mới cạnh tiêu đề -->
+            <div id="bot-status-container" 
+                 class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold border transition-all duration-300 bg-card border-border text-gray-400"
+                 title="Trạng thái Bot giao dịch">
+              <span id="bot-status-icon" class="w-2.5 h-2.5 rounded-full bot-status-dot-stopped transition-all duration-300"></span>
+              <span id="bot-status-text" class="text-[11px] font-bold tracking-wide">Bot: Đang dừng</span>
+              
+              <!-- Toggle Switch Mới -->
+              <label class="relative inline-flex items-center cursor-pointer ml-1 select-none" title="Bật/Tắt Bot giao dịch tự động">
+                <input type="checkbox" id="bot-header-toggle" class="sr-only peer" onchange="toggleBotFromSwitch(this.checked)">
+                <div class="w-8 h-4 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-emerald-500"></div>
+              </label>
+            </div>
+
+            <span id="api-status-badge" class="hidden sm:inline-flex items-center px-2 py-0.5 rounded text-xs font-semibold bg-emerald-950 text-green border border-emerald-800">
               Binance Mainnet
             </span>
           </div>
