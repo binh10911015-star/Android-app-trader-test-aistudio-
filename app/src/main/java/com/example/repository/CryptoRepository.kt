@@ -687,14 +687,17 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             primaryBasket = evaluateBasketExit(primaryBasket)
             secondaryBasket = evaluateBasketExit(secondaryBasket)
 
-            // BƯỚC 2: KIỂM TRA MỞ GIỎ MỚI NẾU CÒN SLOT TRỐNG
-            val hasAvailableSlot = (primaryBasket == null || secondaryBasket == null)
+            // BƯỚC 2: KIỂM TRA MỞ GIỎ MỚI NẾU CÒN SLOT TRỐNG THEO CHẾ ĐỘ QUÉT
+            val canOpenPrimary = (config.slotScanMode == "DUAL" || config.slotScanMode == "PRIMARY_ONLY") && primaryBasket == null
+            val canOpenSecondary = (config.slotScanMode == "DUAL" || config.slotScanMode == "SECONDARY_ONLY") && secondaryBasket == null
+            val hasAvailableSlot = canOpenPrimary || canOpenSecondary
+
             val runningSymbols = mutableSetOf<String>().apply {
                 primaryBasket?.positions?.forEach { add(it.symbol) }
                 secondaryBasket?.positions?.forEach { add(it.symbol) }
             }
 
-            // TẦNG 1: BỘ LỌC MACRO BTC REGIME (SMA20 + EMA50 + Panic Circuit Breaker -3.5%)
+            // TẦNG 1: BỘ LỌC MACRO BTC REGIME (SMA20 + EMA50 + Panic Circuit Breaker)
             val btcPrev20 = btcCandles.subList(dayIdx - 21, dayIdx - 1).map { it.close }
             val btcSma20 = btcPrev20.average()
             val btcPrev50 = if (dayIdx >= 51) btcCandles.subList(dayIdx - 51, dayIdx - 1).map { it.close } else emptyList()
@@ -707,7 +710,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 ema
             } else btcSma20
             val btcD1Change = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
-            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50 && btcD1Change > -3.5 // Panic Circuit Breaker
+            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50 && btcD1Change > config.btcPanicCircuitBreaker
 
             if (hasAvailableSlot && isBtcBullish) {
                 val totalRunningInvested = (primaryBasket?.totalInvested ?: 0.0) + (secondaryBasket?.totalInvested ?: 0.0)
@@ -732,8 +735,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                         val atr14 = candles.subList(cIdx - 15, cIdx - 1).map { maxOf(it.high - it.low, Math.abs(it.high - it.close)) }.average()
                         val atrPct = if (k1.close > 0) atr14 / k1.close else 0.05
 
-                        // Kiểm tra điều kiện cứng
-                        if (k1.close > sma20 && rvol >= config.minVolRatio && changePct in config.minD1ChangePct..config.maxD1ChangePct && atrPct <= 0.12) {
+                        // Kiểm tra điều kiện cứng v2.0
+                        if (k1.close > sma20 && rvol >= config.minVolRatio && changePct in config.minD1ChangePct..config.maxD1ChangePct && atrPct <= config.maxAtrPercent) {
                             val score = rvol * (1.0 + ((k1.close - k1.open) / maxOf(1e-8, k1.high - k1.low)))
                             candidates.add(ScoredCoin(sym, score, candles[cIdx].open, rvol, changePct, atrPct))
                         }
@@ -755,12 +758,16 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                             )
                         }
 
-                        val assignedSlot = if (primaryBasket == null) BasketSlotId.PRIMARY else BasketSlotId.SECONDARY
+                        val assignedSlot = if (canOpenPrimary) BasketSlotId.PRIMARY else BasketSlotId.SECONDARY
                         val newBasket = ActiveBasket(
                             slotId = assignedSlot,
                             openTime = currentTime,
                             positions = positions,
-                            totalInvested = perTradeUsdt * positions.size
+                            totalInvested = perTradeUsdt * positions.size,
+                            maxHoldingMillis = config.maxHoldingHours * 3600 * 1000L,
+                            kTp = config.kTp,
+                            kTrail = config.kTrail,
+                            kSl = config.kSl
                         )
 
                         if (assignedSlot == BasketSlotId.PRIMARY) primaryBasket = newBasket else secondaryBasket = newBasket

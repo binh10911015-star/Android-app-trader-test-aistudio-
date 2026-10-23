@@ -158,6 +158,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val secondaryBasketState: StateFlow<ActiveBasket?> = _secondaryBasket.asStateFlow()
     val secondaryBasket: ActiveBasket? get() = _secondaryBasket.value
 
+    private val _backtestConfig = MutableStateFlow(BacktestConfig())
+    val backtestConfig: StateFlow<BacktestConfig> = _backtestConfig.asStateFlow()
+
+    private val _backtestDays = MutableStateFlow(180)
+    val backtestDays: StateFlow<Int> = _backtestDays.asStateFlow()
+
     init {
         val loadedConfig = secureApiStorage.loadConfig()
         BinanceClient.isTestnet = loadedConfig.isTestnet 
@@ -1508,6 +1514,24 @@ fun toggleAutoTrade(enabled: Boolean) {
 
     fun clearBasketReport() {
         _uiState.value = _uiState.value.copy(basketReport = null)
+    }
+
+    fun updateBacktestConfig(config: BacktestConfig, days: Int? = null) {
+        _backtestConfig.value = config
+        if (days != null) _backtestDays.value = days
+    }
+
+    fun applyRecommendedConfig(config: BacktestConfig, days: Int? = null) {
+        _backtestConfig.value = config
+        if (days != null) _backtestDays.value = days
+        triggerAlert(
+            TradeAlert(
+                symbol = "AI_COPILOT",
+                title = "ĐÃ ÁP DỤNG CẤU HÌNH ĐỀ XUẤT",
+                message = "Đã cập nhật bộ thông số tối ưu v2.0 từ AI Co-Pilot vào bảng thông số Backtest.",
+                type = AlertType.INFO
+            )
+        )
     }
 
     fun computeDailyPnL(closed: List<TradePosition>): List<PeriodPnL> {

@@ -382,11 +382,18 @@ data class BacktestConfig(
     val initialCapital: Double = 10_000.0,
     val perTradePct: Double = 0.015,
     val maxPortfolioAllocation: Double = 0.60,
-    val targetPortfolioRoi: Double = 0.01,
-    val minQuoteVolume24h: Double = 0.0, // ĐÃ ĐỔI: 0.0 để quét cả coin dưới 5M USDT
-    val minVolRatio: Double = 2.0,
+    val targetPortfolioRoi: Double = 0.015,
+    val minQuoteVolume24h: Double = 20_000_000.0, // Chuẩn v2.0 >= 20M USDT
+    val minVolRatio: Double = 2.0, // Ngưỡng nổ RVol(20) >= 2.0x
     val minD1ChangePct: Double = 2.0,
-    val maxD1ChangePct: Double = 17.5
+    val maxD1ChangePct: Double = 10.0, // Chuẩn v2.0 <= 10.0%
+    val maxAtrPercent: Double = 0.12, // Trần biến động ATR% D1 <= 12.0%
+    val btcPanicCircuitBreaker: Double = -3.5, // BTC Panic Breaker -3.5%
+    val slotScanMode: String = "DUAL", // "DUAL", "PRIMARY_ONLY", "SECONDARY_ONLY"
+    val kTp: Double = 0.50, // Hệ số kích hoạt TP K_TP = 0.50 (tối thiểu 1.5%)
+    val kTrail: Double = 0.25, // Bước đệm Trailing K_Trail = 0.25 * ATR giỏ
+    val kSl: Double = 0.50, // Hệ số Stop-Loss K_SL = 0.50 (tối đa -2.0%)
+    val maxHoldingHours: Int = 72 // Timeout 72 giờ giải phóng vốn
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"
@@ -446,7 +453,10 @@ data class ActiveBasket(
     val positions: List<BasketPosition> = emptyList(),
     val totalInvested: Double = 0.0,
     var status: BasketStatus = BasketStatus.OPEN,
-    val maxHoldingMillis: Long = 72 * 3600 * 1000L // Timeout cố định 72 giờ
+    val maxHoldingMillis: Long = 72 * 3600 * 1000L, // Timeout 72 giờ
+    val kTp: Double = 0.50,
+    val kTrail: Double = 0.25,
+    val kSl: Double = 0.50
 ) {
     // 1. Biến động trọng số toàn giỏ: Basket ATR%
     val basketAtrPercent: Double by lazy {
@@ -454,19 +464,19 @@ data class ActiveBasket(
         else positions.sumOf { it.entryAtrPercent * (it.marginAllocated / totalInvested) }
     }
 
-    // 2. Ngưỡng kích hoạt Trailing cơ sở: K_TP = 0.5 (Tối thiểu +1.5%)
+    // 2. Ngưỡng kích hoạt Trailing cơ sở: K_TP (Tối thiểu +1.5%)
     val activationRoi: Double by lazy {
-        maxOf(0.015, 0.50 * basketAtrPercent)
+        maxOf(0.015, kTp * basketAtrPercent)
     }
 
-    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL = 0.5 (Tối đa -2.0%)
+    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL (Tối đa -2.0%)
     val initialStopLossRoi: Double by lazy {
-        -maxOf(0.020, 0.50 * basketAtrPercent)
+        -maxOf(0.020, kSl * basketAtrPercent)
     }
 
-    // 4. Bước đệm kéo lùi Trailing: 0.25 * ATR giỏ (Tối thiểu 0.6%)
+    // 4. Bước đệm kéo lùi Trailing: K_Trail * ATR giỏ (Tối thiểu 0.6%)
     val trailStepRoi: Double by lazy {
-        maxOf(0.006, 0.25 * basketAtrPercent)
+        maxOf(0.006, kTrail * basketAtrPercent)
     }
 
     // Sàn bảo vệ lợi nhuận tối thiểu khi đã bật trailing (đủ bù trượt giá & phí giao dịch)

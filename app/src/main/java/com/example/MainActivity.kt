@@ -412,19 +412,27 @@ fun MainApp(viewModel: MainViewModel) {
 
                 // POPUP MODAL SHEET CHIẾM 80%
                 if (showAiSheet) {
+                    val currentBConfig by viewModel.backtestConfig.collectAsState()
+                    val currentBDays by viewModel.backtestDays.collectAsState()
+
                     val contextJson = ScreenContextBuilder.buildDualBasketContext(
                         currentScreen = currentScreen.name,
                         selectedSymbol = uiState.selectedSymbol,
                         primaryBasket = viewModel.primaryBasket,
                         secondaryBasket = viewModel.secondaryBasket,
-                        backtestReport = uiState.basketReport
+                        backtestReport = uiState.basketReport,
+                        currentBacktestConfig = currentBConfig,
+                        backtestDays = currentBDays
                     )
 
                     AiAssistantBottomSheet(
                         viewModel = aiViewModel,
                         screenContextJson = contextJson,
                         currentScreenName = currentScreen.name,
-                        onDismiss = { showAiSheet = false }
+                        onDismiss = { showAiSheet = false },
+                        onApplyRecommendedConfig = { recConfig ->
+                            viewModel.applyRecommendedConfig(recConfig)
+                        }
                     )
                 }
             }

@@ -20,6 +20,29 @@ object AiSystemPrompt {
              * Dynamic Stop Loss: Cắt lỗ cứng ban đầu -max(2.0%, 0.5 * Basket_ATR%).
              * Timeout: Tự động tất toán sau 72 giờ để xoay vòng vốn.
 
+        KHI ANH BÌNH YÊU CẦU ĐỀ XUẤT HOẶC TỐI ƯU BỘ THÔNG SỐ BACKTEST:
+        Hãy phân tích điểm nghẽn (Winrate, số chu kỳ, tỷ lệ dính SL hay Timeout), sau đó luôn xuất kèm một khối JSON định dạng chuẩn ở cuối câu trả lời để hệ thống hiển thị nút 'Áp Dụng Bộ Thông Số Này':
+        ```json
+        {
+          "recommendation": {
+            "slotScanMode": "DUAL",
+            "initialCapital": 10000.0,
+            "perTradePct": 0.015,
+            "maxPortfolioAllocation": 0.60,
+            "minQuoteVolume24h": 10000000.0,
+            "minVolRatio": 2.0,
+            "maxD1ChangePct": 12.0,
+            "maxAtrPercent": 0.12,
+            "btcPanicCircuitBreaker": -3.5,
+            "kTp": 0.50,
+            "kTrail": 0.25,
+            "kSl": 0.50,
+            "maxHoldingHours": 72
+          },
+          "rationale": "Giải thích ngắn gọn lý do điều chỉnh để anh Bình nắm rõ."
+        }
+        ```
+
         PHONG CÁCH PHẢN HỒI:
         - Xưng hô lịch sự, thân thiện ("anh Bình" / "em").
         - Phân đoạn nội dung khoa học, gãy gọn:

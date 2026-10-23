@@ -12,20 +12,25 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Send
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ai.AiAssistantViewModel
 import com.example.ai.AiUiState
+import com.example.model.BacktestConfig
 import com.example.ui.theme.*
+import java.util.Locale
 
 @Composable
 fun FloatingAiButton(
@@ -59,10 +64,12 @@ fun AiAssistantBottomSheet(
     viewModel: AiAssistantViewModel,
     screenContextJson: String,
     currentScreenName: String,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onApplyRecommendedConfig: (BacktestConfig) -> Unit = {}
 ) {
     val aiState by viewModel.aiState.collectAsState()
     var inputQuery by remember { mutableStateOf("") }
+    var appliedSuccess by remember { mutableStateOf(false) }
 
     val quickChips = when (currentScreenName) {
         "POSITIONS" -> listOf(
@@ -72,7 +79,7 @@ fun AiAssistantBottomSheet(
         )
         "ANALYTICS" -> listOf(
             "Đánh giá kết quả chu kỳ vừa test",
-            "Gợi ý tối ưu tham số TP/SL",
+            "Hãy tối ưu bộ thông số giúp anh",
             "Mức Max Drawdown có an toàn?"
         )
         "CHART", "DETAIL" -> listOf(
@@ -142,7 +149,10 @@ fun AiAssistantBottomSheet(
                         border = BorderStroke(0.5.dp, DarkBorder),
                         modifier = Modifier
                             .testTag("ai_chip_$chipText")
-                            .clickable { viewModel.askAi(chipText, screenContextJson) }
+                            .clickable {
+                                appliedSuccess = false
+                                viewModel.askAi(chipText, screenContextJson)
+                            }
                     ) {
                         Text(
                             text = chipText,
@@ -200,12 +210,129 @@ fun AiAssistantBottomSheet(
                         )
                     }
                     is AiUiState.Success -> {
-                        Text(
-                            text = state.fullResponse,
-                            color = TextPrimary,
-                            fontSize = 13.sp,
-                            lineHeight = 20.sp
-                        )
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            Text(
+                                text = state.fullResponse,
+                                color = TextPrimary,
+                                fontSize = 13.sp,
+                                lineHeight = 20.sp
+                            )
+
+                            // CARD 1-CHẠM: ÁP DỤNG CẤU HÌNH ĐỀ XUẤT TỪ AI CO-PILOT
+                            state.recommendedConfig?.let { recConfig ->
+                                Spacer(modifier = Modifier.height(14.dp))
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("ai_recommended_config_card"),
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = CardDefaults.cardColors(containerColor = DarkSurfaceHighlight),
+                                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.8f))
+                                ) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Icon(
+                                                imageVector = Icons.Default.Tune,
+                                                contentDescription = null,
+                                                tint = CryptoGold,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = "Bộ Thông Số Khuyến Nghị Tối Ưu v2.0",
+                                                color = CryptoGold,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        // Bảng tóm tắt các giá trị được AI tối ưu
+                                        Column(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(DarkSurface, RoundedCornerShape(6.dp))
+                                                .padding(8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                                        ) {
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Chế độ quét:", color = TextMuted, fontSize = 11.sp)
+                                                Text(recConfig.slotScanMode, color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Vốn/Lệnh:", color = TextMuted, fontSize = 11.sp)
+                                                Text("${String.format(Locale.US, "%.1f", recConfig.perTradePct * 100)}% (Trần: ${String.format(Locale.US, "%.0f", recConfig.maxPortfolioAllocation * 100)}%)", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Lọc Vol 24h:", color = TextMuted, fontSize = 11.sp)
+                                                Text("${String.format(Locale.US, "%,.0f", recConfig.minQuoteVolume24h)} USDT", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Chặn trên D1 / RVol:", color = TextMuted, fontSize = 11.sp)
+                                                Text("${recConfig.maxD1ChangePct}% / ${recConfig.minVolRatio}x", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Thoát ATR (K_TP / K_Trail):", color = TextMuted, fontSize = 11.sp)
+                                                Text("${recConfig.kTp} / ${recConfig.kTrail}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween
+                                            ) {
+                                                Text("• Cắt lỗ K_SL / Timeout:", color = TextMuted, fontSize = 11.sp)
+                                                Text("${recConfig.kSl} / ${recConfig.maxHoldingHours} giờ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                            }
+                                        }
+
+                                        Spacer(modifier = Modifier.height(10.dp))
+
+                                        Button(
+                                            onClick = {
+                                                onApplyRecommendedConfig(recConfig)
+                                                appliedSuccess = true
+                                            },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .height(42.dp)
+                                                .testTag("apply_recommended_config_button"),
+                                            colors = ButtonDefaults.buttonColors(
+                                                containerColor = if (appliedSuccess) CryptoGreen else CryptoGold,
+                                                contentColor = Color.Black
+                                            ),
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Icon(
+                                                imageVector = if (appliedSuccess) Icons.Default.Check else Icons.Default.AutoAwesome,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(16.dp)
+                                            )
+                                            Spacer(modifier = Modifier.width(6.dp))
+                                            Text(
+                                                text = if (appliedSuccess) "ĐÃ ÁP DỤNG THÀNH CÔNG!" else "ÁP DỤNG BỘ THÔNG SỐ NÀY",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                     is AiUiState.Error -> {
                         Text(
@@ -229,7 +356,7 @@ fun AiAssistantBottomSheet(
                     onValueChange = { inputQuery = it },
                     placeholder = {
                         Text(
-                            "Hỏi AI về vị thế hoặc chiến lược...",
+                            "Hỏi AI về vị thế hoặc tối ưu thông số...",
                             color = TextMuted,
                             fontSize = 12.sp
                         )
@@ -251,6 +378,7 @@ fun AiAssistantBottomSheet(
                 IconButton(
                     onClick = {
                         if (inputQuery.isNotBlank()) {
+                            appliedSuccess = false
                             viewModel.askAi(inputQuery, screenContextJson)
                             inputQuery = ""
                         }
