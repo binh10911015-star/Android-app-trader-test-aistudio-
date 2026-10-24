@@ -284,119 +284,62 @@ fun PositionsScreen(
                 HorizontalDivider(color = DarkBorder, thickness = 0.5.dp)
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // BẢNG CHI TIẾT UNREALIZED PNL & TỔNG VOLUME CỦA TỪNG GIỎ
-                val isLiveActive = apiConfig.isConnected && livePositions.isNotEmpty()
-                val priPositionsCount: Int
-                val priPnl: Double
-                val priMargin: Double
-                val priRoi: Double
+                // BẢNG CHI TIẾT UNREALIZED PNL & TỔNG VOLUME TỪNG GIỎ - TÁCH BIỆT PAPER VÀ LIVE
+                val paperPriList = openPositions.filter { it.basketSlot.uppercase() == "PRIMARY" || it.basketSlot.isEmpty() }
+                val paperSecList = openPositions.filter { it.basketSlot.uppercase() == "SECONDARY" }
+                val paperPriCount = paperPriList.size
+                val paperPriPnl = paperPriList.sumOf { it.unrealizedPnlUsdt }
+                val paperPriMargin = paperPriList.sumOf { it.investedUsdt }
+                val paperPriRoi = if (paperPriMargin > 0.0) (paperPriPnl / paperPriMargin) * 100.0 else 0.0
 
-                val secPositionsCount: Int
-                val secPnl: Double
-                val secMargin: Double
-                val secRoi: Double
+                val paperSecCount = paperSecList.size
+                val paperSecPnl = paperSecList.sumOf { it.unrealizedPnlUsdt }
+                val paperSecMargin = paperSecList.sumOf { it.investedUsdt }
+                val paperSecRoi = if (paperSecMargin > 0.0) (paperSecPnl / paperSecMargin) * 100.0 else 0.0
 
-                if (isLiveActive) {
-                    val priList = livePositions.filter { it.basketSlot.uppercase() == "PRIMARY" || it.basketSlot.isEmpty() }
-                    val secList = livePositions.filter { it.basketSlot.uppercase() == "SECONDARY" }
-                    priPositionsCount = priList.size
-                    priPnl = priList.sumOf { it.unrealizedProfit }
-                    priMargin = priList.sumOf { it.initialMargin }
-                    priRoi = if (priMargin > 0.0) (priPnl / priMargin) * 100.0 else 0.0
+                // KHỐI 1: PHÂN TÍCH GIỎ PAPER TRADE
+                BasketBreakdownSection(
+                    title = "CHI TIẾT GIỎ (PAPER TRADE)",
+                    tag = "PAPER",
+                    tagColor = CryptoGold,
+                    priCount = paperPriCount,
+                    priPnl = paperPriPnl,
+                    priMargin = paperPriMargin,
+                    priRoi = paperPriRoi,
+                    secCount = paperSecCount,
+                    secPnl = paperSecPnl,
+                    secMargin = paperSecMargin,
+                    secRoi = paperSecRoi
+                )
 
-                    secPositionsCount = secList.size
-                    secPnl = secList.sumOf { it.unrealizedProfit }
-                    secMargin = secList.sumOf { it.initialMargin }
-                    secRoi = if (secMargin > 0.0) (secPnl / secMargin) * 100.0 else 0.0
-                } else {
-                    val priList = openPositions.filter { it.basketSlot.uppercase() == "PRIMARY" || it.basketSlot.isEmpty() }
-                    val secList = openPositions.filter { it.basketSlot.uppercase() == "SECONDARY" }
-                    priPositionsCount = priList.size
-                    priPnl = priList.sumOf { it.unrealizedPnlUsdt }
-                    priMargin = priList.sumOf { it.investedUsdt }
-                    priRoi = if (priMargin > 0.0) (priPnl / priMargin) * 100.0 else 0.0
+                // KHỐI 2: PHÂN TÍCH GIỎ BINANCE LIVE (Nếu đã kết nối API hoặc có lệnh Live)
+                if (apiConfig.isConnected || livePositions.isNotEmpty()) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    val livePriList = livePositions.filter { it.basketSlot.uppercase() == "PRIMARY" || it.basketSlot.isEmpty() }
+                    val liveSecList = livePositions.filter { it.basketSlot.uppercase() == "SECONDARY" }
+                    val livePriCount = livePriList.size
+                    val livePriPnl = livePriList.sumOf { it.unrealizedProfit }
+                    val livePriMargin = livePriList.sumOf { it.initialMargin }
+                    val livePriRoi = if (livePriMargin > 0.0) (livePriPnl / livePriMargin) * 100.0 else 0.0
 
-                    secPositionsCount = secList.size
-                    secPnl = secList.sumOf { it.unrealizedPnlUsdt }
-                    secMargin = secList.sumOf { it.investedUsdt }
-                    secRoi = if (secMargin > 0.0) (secPnl / secMargin) * 100.0 else 0.0
-                }
+                    val liveSecCount = liveSecList.size
+                    val liveSecPnl = liveSecList.sumOf { it.unrealizedProfit }
+                    val liveSecMargin = liveSecList.sumOf { it.initialMargin }
+                    val liveSecRoi = if (liveSecMargin > 0.0) (liveSecPnl / liveSecMargin) * 100.0 else 0.0
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    // GIỎ CHÍNH
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
-                        color = DarkSurfaceHighlight.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(CryptoGold)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("GIỎ CHÍNH", color = CryptoGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(modifier = Modifier.height(3.dp))
-                            val priPnlSign = if (priPnl >= 0) "+" else ""
-                            Text(
-                                text = "$priPnlSign$${String.format(Locale.US, "%.2f", priPnl)} ($priPnlSign${String.format(Locale.US, "%.2f", priRoi)}%)",
-                                color = if (priPnl >= 0) CryptoGreen else CryptoRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "$priPositionsCount vị thế • Vol: $${String.format(Locale.US, "%.1f", priMargin)} USDT",
-                                color = TextMuted,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
-
-                    // GIỎ PHỤ
-                    Surface(
-                        modifier = Modifier.weight(1f),
-                        shape = RoundedCornerShape(8.dp),
-                        color = DarkSurfaceHighlight.copy(alpha = 0.5f),
-                        border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
-                    ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(Color(0xFF00E5FF))
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
-                                Text("GIỎ PHỤ", color = Color(0xFF00E5FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                            }
-                            Spacer(modifier = Modifier.height(3.dp))
-                            val secPnlSign = if (secPnl >= 0) "+" else ""
-                            Text(
-                                text = "$secPnlSign$${String.format(Locale.US, "%.2f", secPnl)} ($secPnlSign${String.format(Locale.US, "%.2f", secRoi)}%)",
-                                color = if (secPnl >= 0) CryptoGreen else CryptoRed,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "$secPositionsCount vị thế • Vol: $${String.format(Locale.US, "%.1f", secMargin)} USDT",
-                                color = TextMuted,
-                                fontSize = 9.sp
-                            )
-                        }
-                    }
+                    BasketBreakdownSection(
+                        title = "CHI TIẾT GIỎ (BINANCE LIVE)",
+                        tag = "LIVE",
+                        tagColor = CryptoGreen,
+                        priCount = livePriCount,
+                        priPnl = livePriPnl,
+                        priMargin = livePriMargin,
+                        priRoi = livePriRoi,
+                        secCount = liveSecCount,
+                        secPnl = liveSecPnl,
+                        secMargin = liveSecMargin,
+                        secRoi = liveSecRoi
+                    )
                 }
             }
         }
@@ -1062,3 +1005,124 @@ private fun ClosedPositionItem(
         }
     }
 }
+
+@Composable
+private fun BasketBreakdownSection(
+    title: String,
+    tag: String,
+    tagColor: Color,
+    priCount: Int,
+    priPnl: Double,
+    priMargin: Double,
+    priRoi: Double,
+    secCount: Int,
+    secPnl: Double,
+    secMargin: Double,
+    secRoi: Double
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = title,
+                color = TextSecondary,
+                fontSize = 10.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(
+                shape = RoundedCornerShape(4.dp),
+                color = tagColor.copy(alpha = 0.15f),
+                border = BorderStroke(0.5.dp, tagColor.copy(alpha = 0.5f))
+            ) {
+                Text(
+                    text = tag,
+                    color = tagColor,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // GIỎ CHÍNH
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                color = DarkSurfaceHighlight.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(CryptoGold)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("GIỎ CHÍNH", color = CryptoGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(3.dp))
+                    val priPnlSign = if (priPnl >= 0) "+" else ""
+                    Text(
+                        text = "$priPnlSign$${String.format(Locale.US, "%.2f", priPnl)} ($priPnlSign${String.format(Locale.US, "%.2f", priRoi)}%)",
+                        color = if (priPnl >= 0) CryptoGreen else CryptoRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "$priCount vị thế • Vol: $${String.format(Locale.US, "%.1f", priMargin)} USDT",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+
+            // GIỎ PHỤ
+            Surface(
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                color = DarkSurfaceHighlight.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.4f))
+            ) {
+                Column(modifier = Modifier.padding(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF00E5FF))
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("GIỎ PHỤ", color = Color(0xFF00E5FF), fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(modifier = Modifier.height(3.dp))
+                    val secPnlSign = if (secPnl >= 0) "+" else ""
+                    Text(
+                        text = "$secPnlSign$${String.format(Locale.US, "%.2f", secPnl)} ($secPnlSign${String.format(Locale.US, "%.2f", secRoi)}%)",
+                        color = if (secPnl >= 0) CryptoGreen else CryptoRed,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.height(2.dp))
+                    Text(
+                        text = "$secCount vị thế • Vol: $${String.format(Locale.US, "%.1f", secMargin)} USDT",
+                        color = TextMuted,
+                        fontSize = 9.sp
+                    )
+                }
+            }
+        }
+    }
+}
+

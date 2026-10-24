@@ -639,7 +639,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-fun toggleAutoTrade(enabled: Boolean) {
+    fun toggleAutoTrade(enabled: Boolean) {
         val newSettings = _uiState.value.settings.copy(autoTradeEnabled = enabled, leverage = 1)
         _uiState.value = _uiState.value.copy(settings = newSettings)
 
@@ -649,13 +649,17 @@ fun toggleAutoTrade(enabled: Boolean) {
             // Tự động khởi động Foreground Service chạy ngầm 24/7
             com.example.TradingForegroundService.startService(context)
 
-            val strategyTitle = "D1 SMA20 Breakout & Bùng Nổ Khối Lượng"
+            val nextTarget = ScanScheduler.getNextScanTimestamp()
+            val nextScanHour = ScanScheduler.getNextScanHourText(nextTarget)
+            val countdown = ScanScheduler.formatCountdown(nextTarget)
+            val remainingReadable = ScanScheduler.formatRemainingReadable(nextTarget)
+            _uiState.update { it.copy(nextScanTimestamp = nextTarget, countdownText = countdown) }
 
             triggerAlert(
                 TradeAlert(
                     symbol = "BOT",
-                    title = "ĐÃ BẬT AUTO-TRADE (LONG 1X)",
-                    message = "Hệ thống bắt đầu quét và giao dịch tự động theo chiến lược: $strategyTitle (Mặc định Cross 1x, Foreground Service Active).",
+                    title = "ĐÃ KÍCH HOẠT BOT THÀNH CÔNG",
+                    message = "Bot đã kích hoạt chế độ tự động 24/7!\n\n• Phiên quét và vào lệnh tiếp theo: $nextScanHour\n• Thời gian còn lại: $countdown ($remainingReadable)\n\nLƯU Ý QUAN TRỌNG: Bot tuyệt đối KHÔNG vào lệnh ngay lúc này. Lệnh chỉ được mở khi hệ thống quét tín hiệu ở đúng mốc thời gian trên (07:00 & 19:00 UTC+7) để đảm bảo kỷ luật chiến lược 2 giỏ.",
                     type = AlertType.INFO
                 )
             )
@@ -677,7 +681,7 @@ fun toggleAutoTrade(enabled: Boolean) {
                 TradeAlert(
                     symbol = "BOT",
                     title = "ĐÃ TẮT AUTO-TRADE",
-                    message = "Hệ thống dừng mở lệnh mới. Các vị thế đang mở vẫn được giám sát TP/SL.",
+                    message = "Hệ thống dừng quét và mở lệnh mới. Các vị thế đang mở vẫn tiếp tục được bảo vệ Trailing Stop.",
                     type = AlertType.INFO
                 )
             )
@@ -712,6 +716,17 @@ fun toggleAutoTrade(enabled: Boolean) {
      * Tính toán vốn động dựa trên số dư khả dụng thực tế còn lại của tài khoản.
      */
     fun executeBuy(symbol: String, isAuto: Boolean = false, basketSlot: String = "PRIMARY") {
+        if (!isAuto && _uiState.value.settings.autoTradeEnabled) {
+            triggerAlert(
+                TradeAlert(
+                    symbol = symbol,
+                    title = "BOT ĐANG HOẠT ĐỘNG",
+                    message = "Bot giao dịch tự động đang hoạt động theo cơ chế Dual Basket và phân bổ vốn động. Không nên mở lệnh thủ công để tránh làm lệch tỷ lệ vốn của các giỏ.",
+                    type = AlertType.INFO
+                )
+            )
+            return
+        }
         if (isAuto && !_uiState.value.settings.autoTradeEnabled) return
         viewModelScope.launch {
             val currentTicker = _uiState.value.tickers.find { it.symbol == symbol }
@@ -1178,7 +1193,7 @@ fun toggleAutoTrade(enabled: Boolean) {
         }
     }
 
-    fun openAllScannedPositions(isAuto: Boolean = false): Job {
+    fun openAllScannedPositions(isAuto: Boolean = false, targetBasketSlot: String = "PRIMARY"): Job {
         if (isAuto && !_uiState.value.settings.autoTradeEnabled) {
             val completed = Job()
             completed.complete()
@@ -1194,7 +1209,7 @@ fun toggleAutoTrade(enabled: Boolean) {
         val job = viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isOpeningPositions = true,
-                openingPositionsProgress = "Đang kiểm tra danh sách vào lệnh..."
+                openingPositionsProgress = "Đang kiểm tra danh sách vào lệnh cho [$targetBasketSlot]..."
             )
             try {
                 val currentTickers = _uiState.value.tickers.ifEmpty {
@@ -1236,14 +1251,23 @@ fun toggleAutoTrade(enabled: Boolean) {
 
                 var newlyOpened = 0
                 var totalInvested = 0.0
-                var balance = _uiState.value.settings.simulatedBalanceUsdt
 
                 for ((index, symbol) in symbolsToOpen.withIndex()) {
                     if (!isActive) break
                     if (isAuto && !_uiState.value.settings.autoTradeEnabled) break
 
-                    val volume = _uiState.value.settings.calculatePositionVolume(balance)
-                    if (balance < volume || volume <= 0.0) break
+                    val isLive = _apiConfig.value.isConnected
+                    // Vốn động: luôn kiểm tra số dư khả dụng thực tế còn lại tại thời điểm mở từng lệnh
+                    val availableBal = if (isLive) {
+                        val b = _binancePortfolio.value.availableBalance
+                        if (b > 0.0) b else _binancePortfolio.value.totalWalletBalance
+                    } else {
+                        val used = openPositions.value.sumOf { it.investedUsdt } + totalInvested
+                        maxOf(0.0, _uiState.value.settings.simulatedBalanceUsdt - used)
+                    }
+
+                    val volume = _uiState.value.settings.calculateDynamicVolume(availableBal)
+                    if (availableBal < volume || volume <= 0.0) break
                     
                     val tickerPrice = currentTickers.find { it.symbol == symbol }?.lastPrice
                     val klinePrice = if (symbol == _uiState.value.selectedSymbol) _uiState.value.klineData.lastOrNull()?.candle?.close else null
@@ -1255,20 +1279,22 @@ fun toggleAutoTrade(enabled: Boolean) {
 
                     if (newlyOpened > 0) {
                         _uiState.value = _uiState.value.copy(
-                            openingPositionsProgress = "Đã mở $newlyOpened vị thế. Chờ 5s trước khi mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
+                            openingPositionsProgress = "Đã mở $newlyOpened vị thế ($targetBasketSlot). Chờ 5s trước khi mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
                         )
                         delay(5000L)
                     }
                     if (!isActive || (isAuto && !_uiState.value.settings.autoTradeEnabled)) break
 
                     _uiState.value = _uiState.value.copy(
-                        openingPositionsProgress = "Đang mở vị thế Cross 1x $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
+                        openingPositionsProgress = "Đang mở vị thế Cross 1x $cleanSymbol [$targetBasketSlot] (${index + 1}/${symbolsToOpen.size})..."
                     )
 
-                    val isLive = _apiConfig.value.isConnected
                     if (isLive) {
                         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                         
+                        // Lưu gán giỏ cho vị thế Binance Live
+                        liveBasketAssignments[cleanSymbol] = targetBasketSlot
+
                         // Ép cứng Cross Margin & Đòn bẩy 1x trên sàn trước khi bắn lệnh
                         withContext(Dispatchers.IO) {
                             BinanceClient.setCrossMarginAndLeverage1x(cleanSymbol, apiKey, apiSecret, isTestnet)
@@ -1299,7 +1325,8 @@ fun toggleAutoTrade(enabled: Boolean) {
                                 binanceStatus = orderResult.status ?: "FILLED",
                                 exactAmount = if (orderResult.executedQty > 0.0) orderResult.executedQty else null,
                                 exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
-                                autoFixNote = orderResult.autoFixApplied
+                                autoFixNote = orderResult.autoFixApplied,
+                                basketSlot = targetBasketSlot
                             )
                             if (alert != null) {
                                 newlyOpened++
@@ -1313,16 +1340,13 @@ fun toggleAutoTrade(enabled: Boolean) {
                             currentPrice = price,
                             settings = _uiState.value.settings.copy(leverage = 1),
                             investedUsdt = volume,
-                            isAutoTriggered = isAuto
+                            isAutoTriggered = isAuto,
+                            basketSlot = targetBasketSlot
                         )
 
                         if (alert != null) {
                             newlyOpened++
                             totalInvested += volume
-                            balance -= volume
-                            _uiState.value = _uiState.value.copy(
-                                settings = _uiState.value.settings.updateBalance(balance)
-                            )
                             triggerAlert(alert)
                         }
                     }
@@ -1333,8 +1357,8 @@ fun toggleAutoTrade(enabled: Boolean) {
                     triggerAlert(
                         TradeAlert(
                             symbol = "ALL_BULLISH",
-                            title = "ĐÃ MỞ TOÀN BỘ VỊ THẾ (LONG 1X)",
-                            message = "Đã khớp $newlyOpened vị thế mới với đòn bẩy 1x (mỗi vị thế cách nhau 5 giây, tổng vốn: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
+                            title = "ĐÃ MỞ TOÀN BỘ VỊ THẾ [$targetBasketSlot] (LONG 1X)",
+                            message = "Đã khớp $newlyOpened vị thế mới thuộc $targetBasketSlot với vốn động (tổng vốn đã vào: ${String.format(Locale.US, "%.1f", totalInvested)} USDT).",
                             type = AlertType.AUTO_BUY_ORDER
                         )
                     )
@@ -1351,7 +1375,7 @@ fun toggleAutoTrade(enabled: Boolean) {
         return job
     }
 
-    fun scanAllFuturesCoins(isAutoScheduled: Boolean = false) {
+    fun scanAllFuturesCoins(isAutoScheduled: Boolean = false, targetBasketSlot: String = "PRIMARY") {
         if (_uiState.value.isScanning) return
 
         viewModelScope.launch {
@@ -1442,7 +1466,7 @@ fun toggleAutoTrade(enabled: Boolean) {
             )
             applyFilters()
 
-            val title = if (isAutoScheduled) "QUÉT TỰ ĐỘNG HOÀN TẤT (UTC+7)" else "HOÀN TẤT QUÉT TOÀN THỊ TRƯỜNG"
+            val title = if (isAutoScheduled) "QUÉT TỰ ĐỘNG HOÀN TẤT [$targetBasketSlot]" else "HOÀN TẤT QUÉT TOÀN THỊ TRƯỜNG"
             triggerAlert(
                 TradeAlert(
                     symbol = "SCANNER",
@@ -1451,6 +1475,11 @@ fun toggleAutoTrade(enabled: Boolean) {
                     type = AlertType.BULLISH_SIGNAL
                 )
             )
+
+            // Khi đến đúng mốc quét theo lịch và Bot đang bật, tự động vào lệnh phân bổ theo giỏ tương ứng
+            if (isAutoScheduled && _uiState.value.settings.autoTradeEnabled && d1Matches.isNotEmpty()) {
+                openAllScannedPositions(isAuto = true, targetBasketSlot = targetBasketSlot)
+            }
         }
     }
 
@@ -1466,9 +1495,10 @@ fun toggleAutoTrade(enabled: Boolean) {
                 }
 
                 if (now >= target) {
+                    val targetSlot = ScanScheduler.getNextScanSlot(target)
                     val nextTarget = ScanScheduler.getNextScanTimestamp(now + 60000)
                     _uiState.update { it.copy(nextScanTimestamp = nextTarget) }
-                    scanAllFuturesCoins(isAutoScheduled = true)
+                    scanAllFuturesCoins(isAutoScheduled = true, targetBasketSlot = targetSlot)
                 }
 
                 delay(1000)
@@ -1524,54 +1554,11 @@ fun toggleAutoTrade(enabled: Boolean) {
 
     private fun startAutoTradeLoop() {
         autoTradeJob?.cancel()
+        // Bot tuân thủ tuyệt đối cơ chế Dual Basket và lịch quét (07:00 & 19:00 UTC+7).
+        // Tuyệt đối không tự ý vào lệnh ngay sau khi bật Bot; việc vào lệnh chỉ diễn ra ở mốc quét kế tiếp do startScanScheduler điều khiển.
         autoTradeJob = viewModelScope.launch {
             while (isActive && _uiState.value.settings.autoTradeEnabled) {
-                val candidateSymbols = _uiState.value.tickers
-                    .map { it.symbol }
-                    .filter { it.endsWith("USDT") }
-
-                val currentStrategy = _uiState.value.settings.selectedStrategy
-
-                for (sym in candidateSymbols) {
-                    if (!isActive || !_uiState.value.settings.autoTradeEnabled) break
-
-                    if (repository.hasOpenPositionForSymbol(sym)) continue
-
-                    var tradeExecuted = false
-
-                    val klinesRes = repository.getCandlesWithIndicators(sym, "1d")
-                    klinesRes.onSuccess { data ->
-                        if (data.size >= 21) {
-                            val currentCandle = data.last()
-                            val previous20 = data.dropLast(1).takeLast(20)
-
-                            val currentPrice = currentCandle.candle.close
-                            val currentVolumeD1 = currentCandle.candle.volume
-
-                            val sma20OpenD1 = previous20.map { it.candle.open }.average()
-                            val avgVolume20D1 = previous20.map { it.candle.volume }.average()
-
-                            val threshold = _uiState.value.settings.volumeMultiplierThreshold
-                            val volRatio = if (avgVolume20D1 > 0.0) currentVolumeD1 / avgVolume20D1 else 0.0
-
-                            val isBreakout = currentPrice >= sma20OpenD1 && volRatio >= threshold
-
-                            if (isBreakout && currentPrice > 0.0) {
-                                val targetSlot = if ((_primaryBasket.value?.positions?.size ?: 0) < 10) "PRIMARY" else "SECONDARY"
-                                executeBuy(sym, isAuto = true, basketSlot = targetSlot)
-                                tradeExecuted = true
-                            }
-                        }
-                    }
-
-                    if (tradeExecuted) {
-                        delay(5000L)
-                    } else {
-                        delay(150L)
-                    }
-                }
-
-                delay(15000L)
+                delay(30000L)
             }
         }
     }

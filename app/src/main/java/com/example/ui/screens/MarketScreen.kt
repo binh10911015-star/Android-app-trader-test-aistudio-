@@ -20,6 +20,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -207,37 +208,96 @@ fun MarketScreen(
 
         Spacer(modifier = Modifier.height(6.dp))
 
-        // HÀNG QUÉT TOÀN BỘ SÀN
+        // HÀNG ĐẾM NGƯỢC QUÉT TÍN HIỆU & NÚT KÍCH HOẠT BOT
+        val nextScanLabel = com.example.util.ScanScheduler.getNextScanHourText(uiState.nextScanTimestamp)
         Row(
-            modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 4.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
         ) {
             Surface(
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(8.dp),
-                color = DarkSurfaceHighlight
+                color = DarkSurfaceHighlight,
+                border = BorderStroke(1.dp, DarkBorder)
             ) {
                 Row(
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Text(text = "Quét 4H (7:00 UTC+7)", color = TextMuted, fontSize = 11.sp)
-                    Text(text = uiState.countdownText, color = CryptoGold, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Column {
+                        Text(
+                            text = "Quét: $nextScanLabel",
+                            color = TextMuted,
+                            fontSize = 10.sp,
+                            maxLines = 1
+                        )
+                        Text(
+                            text = "Đếm ngược phiên quét",
+                            color = TextSecondary,
+                            fontSize = 9.sp
+                        )
+                    }
+                    Text(
+                        text = if (uiState.countdownText.isNotEmpty()) uiState.countdownText else "00:00:00",
+                        color = CryptoGold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold,
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
             }
 
-            Button(
-                onClick = { viewModel.scanAllFuturesCoins() },
-                enabled = !uiState.isScanning,
-                modifier = Modifier.height(36.dp),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = CryptoGold)
-            ) {
-                if (uiState.isScanning) {
-                    CircularProgressIndicator(modifier = Modifier.size(14.dp), color = Color.Black, strokeWidth = 2.dp)
-                } else {
-                    Text(text = "Quét ngay (${uiState.tickers.size})", color = Color.Black, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+            if (!uiState.settings.autoTradeEnabled) {
+                Button(
+                    onClick = { viewModel.toggleAutoTrade(true) },
+                    modifier = Modifier.height(38.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoGold),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.PlayArrow,
+                        contentDescription = null,
+                        tint = Color.Black,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = "Kích hoạt Bot",
+                        color = Color.Black,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                OutlinedButton(
+                    onClick = { viewModel.toggleAutoTrade(false) },
+                    modifier = Modifier.height(38.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        containerColor = CryptoGreen.copy(alpha = 0.15f),
+                        contentColor = CryptoGreen
+                    ),
+                    border = BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.6f)),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(CircleShape)
+                            .background(CryptoGreen)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "Bot đang chạy",
+                        color = CryptoGreen,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
                 }
             }
         }
