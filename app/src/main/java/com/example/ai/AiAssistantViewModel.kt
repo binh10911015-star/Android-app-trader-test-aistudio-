@@ -276,7 +276,8 @@ class AiAssistantViewModel : ViewModel() {
 
     private fun extractRecommendedConfig(text: String): Pair<BacktestConfig, String>? {
         return try {
-            val startIdx = text.indexOf("\"recommendation\"")
+            val keyWord = if (text.contains("\"recommendedConfig\"")) "\"recommendedConfig\"" else "\"recommendation\""
+            val startIdx = text.indexOf(keyWord)
             if (startIdx == -1) return null
             val braceStart = text.lastIndexOf('{', startIdx)
             if (braceStart == -1) return null
@@ -297,22 +298,31 @@ class AiAssistantViewModel : ViewModel() {
 
             val jsonStr = text.substring(braceStart, braceEnd)
             val obj = JSONObject(jsonStr)
-            val rec = obj.optJSONObject("recommendation") ?: return null
+            val rec = obj.optJSONObject("recommendedConfig") ?: obj.optJSONObject("recommendation") ?: return null
             val rationale = obj.optString("rationale", "")
+
+            val enableBtc = if (rec.has("enableBtcRegime")) rec.optBoolean("enableBtcRegime", true)
+                            else rec.optBoolean("enableBtcMacroFilter", true)
+            val timeoutDays = if (rec.has("maxHoldingHours")) (rec.optInt("maxHoldingHours", 144) / 24).coerceAtLeast(1)
+                              else rec.optInt("timeoutDays", 6)
 
             val cfg = BacktestConfig(
                 initialCapital = rec.optDouble("initialCapital", 10000.0),
                 perTradePct = rec.optDouble("perTradePct", 0.015),
                 maxPortfolioAllocation = rec.optDouble("maxPortfolioAllocation", 0.60),
-                minQuoteVolume24h = rec.optDouble("minQuoteVolume24h", 20_000_000.0),
+                targetPortfolioRoi = rec.optDouble("targetPortfolioRoi", 0.015),
+                minQuoteVolume24h = rec.optDouble("minQuoteVolume24h", 5_000_000.0),
                 minVolRatio = rec.optDouble("minVolRatio", 2.0),
-                maxD1ChangePct = rec.optDouble("maxD1ChangePct", 10.0),
+                maxD1ChangePct = rec.optDouble("maxD1ChangePct", 17.5),
                 maxAtrPercent = rec.optDouble("maxAtrPercent", 0.12),
                 slotScanMode = rec.optString("slotScanMode", "DUAL"),
                 kTrail = rec.optDouble("kTrail", 0.25),
                 enableTrailingStop = rec.optBoolean("enableTrailingStop", true),
                 enableFloorLock = rec.optBoolean("enableFloorLock", true),
-                floorLockMinRoi = rec.optDouble("floorLockMinRoi", 0.005)
+                floorLockMinRoi = rec.optDouble("floorLockMinRoi", 0.005),
+                enableBtcMacroFilter = enableBtc,
+                enableSmartTimeout = rec.optBoolean("enableSmartTimeout", true),
+                timeoutDays = timeoutDays
             )
             Pair(cfg, rationale)
         } catch (e: Exception) {
@@ -370,19 +380,15 @@ class AiAssistantViewModel : ViewModel() {
                 sb.append("\n### 4. Bộ Thông Số Tối Ưu Thích Ứng (Nhấn 'Áp Dụng' để nạp):\n")
                 sb.append("```json\n")
                 sb.append("{\n")
-                sb.append("  \"recommendation\": {\n")
-                sb.append("    \"slotScanMode\": \"${rec.slotScanMode}\",\n")
-                sb.append("    \"initialCapital\": ${rec.initialCapital},\n")
+                sb.append("  \"recommendedConfig\": {\n")
                 sb.append("    \"perTradePct\": ${rec.perTradePct},\n")
                 sb.append("    \"maxPortfolioAllocation\": ${rec.maxPortfolioAllocation},\n")
-                sb.append("    \"minQuoteVolume24h\": ${rec.minQuoteVolume24h},\n")
-                sb.append("    \"minVolRatio\": ${rec.minVolRatio},\n")
+                sb.append("    \"targetPortfolioRoi\": ${rec.targetPortfolioRoi},\n")
                 sb.append("    \"maxD1ChangePct\": ${rec.maxD1ChangePct},\n")
-                sb.append("    \"maxAtrPercent\": ${rec.maxAtrPercent},\n")
-                sb.append("    \"kTrail\": ${rec.kTrail},\n")
-                sb.append("    \"enableTrailingStop\": ${rec.enableTrailingStop},\n")
-                sb.append("    \"enableFloorLock\": ${rec.enableFloorLock},\n")
-                sb.append("    \"floorLockMinRoi\": ${rec.floorLockMinRoi}\n")
+                sb.append("    \"minQuoteVolume24h\": ${rec.minQuoteVolume24h},\n")
+                sb.append("    \"maxHoldingHours\": ${rec.timeoutDays * 24},\n")
+                sb.append("    \"enableBtcRegime\": ${rec.enableBtcMacroFilter},\n")
+                sb.append("    \"enableSmartTimeout\": ${rec.enableSmartTimeout}\n")
                 sb.append("  },\n")
                 sb.append("  \"rationale\": \"${optResult.rationale}\"\n")
                 sb.append("}\n")
