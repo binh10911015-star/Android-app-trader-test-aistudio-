@@ -123,7 +123,8 @@ data class TradePosition(
     val leverage: Int = 1,
     val markPrice: Double = currentPrice,
     val tpOrderId: Long? = null,
-    val slOrderId: Long? = null
+    val slOrderId: Long? = null,
+    val basketSlot: String = "PRIMARY"
 ) {
     companion object {
         const val STATUS_OPEN = "OPEN"
@@ -186,7 +187,8 @@ data class BinanceLivePosition(
     val updateTime: Long = 0L,
     val takeProfitPrice: Double? = null,
     val stopLossPrice: Double? = null,
-    val positionSide: String = "BOTH"
+    val positionSide: String = "BOTH",
+    val basketSlot: String = "PRIMARY"
 ) {
     val isLong: Boolean get() = positionAmt > 0
     val isShort: Boolean get() = positionAmt < 0
@@ -350,11 +352,30 @@ data class TradeSettings(
     fun calculatePositionVolume(customBalance: Double = simulatedBalanceUsdt): Double {
         return when (volumeType) {
             VolumeType.PERCENT_OF_BALANCE -> {
-                val calculated = customBalance * (volumePercentOfBalance / 100.0)
+                val pct = if (volumePercentOfBalance > 0.0) volumePercentOfBalance / 100.0 else perTradePct
+                val calculated = customBalance * pct
                 if (calculated > 0.0) calculated else 50.0
             }
             VolumeType.FIXED_AMOUNT -> {
                 if (fixedVolumeUsdt > 0.0) fixedVolumeUsdt else 50.0
+            }
+        }
+    }
+
+    /**
+     * Vốn vào lệnh động theo % vốn khả dụng thực tế của tài khoản (vốn còn lại chưa ký quỹ).
+     * Đảm bảo: Khởi đầu 1000$ -> 5 lệnh x 2% = 100$ (còn 900$). Đợt sau 10 lệnh x 2% của 900$ = 180$.
+     */
+    fun calculateDynamicVolume(availableBalance: Double): Double {
+        if (availableBalance <= 0.0) return 10.0
+        return when (volumeType) {
+            VolumeType.PERCENT_OF_BALANCE -> {
+                val pct = if (volumePercentOfBalance > 0.0) volumePercentOfBalance / 100.0 else perTradePct
+                val raw = availableBalance * pct
+                maxOf(5.0, raw)
+            }
+            VolumeType.FIXED_AMOUNT -> {
+                if (fixedVolumeUsdt > 0.0) minOf(availableBalance, fixedVolumeUsdt) else 50.0
             }
         }
     }

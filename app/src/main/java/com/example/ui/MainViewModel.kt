@@ -131,6 +131,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val pendingWsUpdates = java.util.concurrent.ConcurrentHashMap<String, com.example.network.MiniTickerUpdate>()
     private var lastWsFlushTime: Long = 0L
     private var lastPositionsUpdateTime: Long = 0L
+    private val liveBasketAssignments = java.util.concurrent.ConcurrentHashMap<String, String>()
 
     private val _searchQueryFlow = MutableStateFlow("")
 
@@ -240,8 +241,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
         viewModelScope.launch {
             openPositions.collect { list ->
-                if (list.isNotEmpty()) {
-                    val pos = list.map {
+                val priList = list.filter { it.basketSlot.uppercase() == "PRIMARY" || it.basketSlot.isEmpty() }
+                val secList = list.filter { it.basketSlot.uppercase() == "SECONDARY" }
+
+                if (priList.isNotEmpty()) {
+                    val pos = priList.map {
                         BasketPosition(
                             symbol = it.symbol,
                             entryPrice = it.entryPrice,
@@ -252,12 +256,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                     _primaryBasket.value = ActiveBasket(
                         slotId = BasketSlotId.PRIMARY,
-                        openTime = list.minOfOrNull { it.entryTime } ?: System.currentTimeMillis(),
+                        openTime = priList.minOfOrNull { it.entryTime } ?: System.currentTimeMillis(),
                         positions = pos,
                         totalInvested = pos.sumOf { it.marginAllocated }
                     )
                 } else {
                     _primaryBasket.value = null
+                }
+
+                if (secList.isNotEmpty()) {
+                    val pos = secList.map {
+                        BasketPosition(
+                            symbol = it.symbol,
+                            entryPrice = it.entryPrice,
+                            quantity = it.amount,
+                            marginAllocated = it.investedUsdt,
+                            entryAtrPercent = 0.05
+                        )
+                    }
+                    _secondaryBasket.value = ActiveBasket(
+                        slotId = BasketSlotId.SECONDARY,
+                        openTime = secList.minOfOrNull { it.entryTime } ?: System.currentTimeMillis(),
+                        positions = pos,
+                        totalInvested = pos.sumOf { it.marginAllocated }
+                    )
+                } else {
+                    _secondaryBasket.value = null
                 }
             }
         }
@@ -684,9 +708,10 @@ fun toggleAutoTrade(enabled: Boolean) {
     }
 
     /**
-     * Mua coin (Tự động hoặc Thủ công) - Ép cứng Cross Margin & Đòn bẩy 1x trên Binance
+     * Mua coin (Tự động hoặc Thủ công) - Ép cứng Cross Margin & Đòn bẩy 1x trên Binance.
+     * Tính toán vốn động dựa trên số dư khả dụng thực tế còn lại của tài khoản.
      */
-    fun executeBuy(symbol: String, isAuto: Boolean = false) {
+    fun executeBuy(symbol: String, isAuto: Boolean = false, basketSlot: String = "PRIMARY") {
         if (isAuto && !_uiState.value.settings.autoTradeEnabled) return
         viewModelScope.launch {
             val currentTicker = _uiState.value.tickers.find { it.symbol == symbol }
@@ -694,15 +719,36 @@ fun toggleAutoTrade(enabled: Boolean) {
                 ?: _uiState.value.klineData.lastOrNull()?.candle?.close
                 ?: return@launch
 
-            val volume = _uiState.value.settings.calculatePositionVolume()
-            if (_uiState.value.settings.simulatedBalanceUsdt < volume || volume <= 0.0) return@launch
-
             val isLive = _apiConfig.value.isConnected
+            // Tính toán vốn động: kiểm tra số dư khả dụng thực tế còn lại
+            val availableBal = if (isLive) {
+                val b = _binancePortfolio.value.availableBalance
+                if (b > 0.0) b else _binancePortfolio.value.totalWalletBalance
+            } else {
+                val used = openPositions.value.sumOf { it.investedUsdt }
+                maxOf(0.0, _uiState.value.settings.simulatedBalanceUsdt - used)
+            }
+
+            val volume = _uiState.value.settings.calculateDynamicVolume(availableBal)
+            if (availableBal < volume || volume <= 0.0) {
+                triggerAlert(
+                    TradeAlert(
+                        symbol = symbol,
+                        title = "KHÔNG ĐỦ VỐN KHẢ DỤNG",
+                        message = "Số dư khả dụng còn lại ($${String.format(Locale.US, "%.1f", availableBal)} USDT) không đủ mở lệnh ($${String.format(Locale.US, "%.1f", volume)} USDT).",
+                        type = AlertType.INFO
+                    )
+                )
+                return@launch
+            }
 
             if (isLive) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
                 val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
                 val cleanSymbol = symbol.trim().uppercase()
+
+                // Lưu ánh xạ giỏ cho vị thế Binance Live
+                liveBasketAssignments[cleanSymbol] = basketSlot
 
                 _uiState.value = _uiState.value.copy(
                     isOpeningPositions = true,
@@ -751,7 +797,8 @@ fun toggleAutoTrade(enabled: Boolean) {
                         binanceStatus = orderResult.status ?: "FILLED",
                         exactAmount = if (orderResult.executedQty > 0.0) orderResult.executedQty else null,
                         exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
-                        autoFixNote = orderResult.autoFixApplied
+                        autoFixNote = orderResult.autoFixApplied,
+                        basketSlot = basketSlot
                     )
 
                     if (alert != null) triggerAlert(alert)
@@ -779,7 +826,8 @@ fun toggleAutoTrade(enabled: Boolean) {
                 binanceOrderId = null,
                 binanceClientOrderId = null,
                 isLiveBinanceOrder = false,
-                binanceStatus = null
+                binanceStatus = null,
+                basketSlot = basketSlot
             )
 
             if (alert != null) {
@@ -1509,11 +1557,9 @@ fun toggleAutoTrade(enabled: Boolean) {
                             val isBreakout = currentPrice >= sma20OpenD1 && volRatio >= threshold
 
                             if (isBreakout && currentPrice > 0.0) {
-                                val vol = _uiState.value.settings.calculatePositionVolume()
-                                if (_uiState.value.settings.simulatedBalanceUsdt >= vol && vol > 0.0) {
-                                    executeBuy(sym, isAuto = true)
-                                    tradeExecuted = true
-                                }
+                                val targetSlot = if ((_primaryBasket.value?.positions?.size ?: 0) < 10) "PRIMARY" else "SECONDARY"
+                                executeBuy(sym, isAuto = true, basketSlot = targetSlot)
+                                tradeExecuted = true
                             }
                         }
                     }
@@ -2004,9 +2050,15 @@ fun toggleAutoTrade(enabled: Boolean) {
                 apiSecret = apiSecret,
                 isTestnet = isTestnet
             )
-            _binancePortfolio.value = portfolio
+            val enrichedPositions = portfolio.positions.mapIndexed { index, pos ->
+                val assignedSlot = liveBasketAssignments[pos.symbol] ?: if (index < 10) "PRIMARY" else "SECONDARY"
+                liveBasketAssignments[pos.symbol] = assignedSlot
+                pos.copy(basketSlot = assignedSlot)
+            }
+            val enrichedPortfolio = portfolio.copy(positions = enrichedPositions)
+            _binancePortfolio.value = enrichedPortfolio
             if (portfolio.isLiveConnected) {
-                repository.syncWithBinanceLivePositions(portfolio.positions)
+                repository.syncWithBinanceLivePositions(enrichedPositions)
                 _apiConfig.value = _apiConfig.value.copy(
                     isConnected = true,
                     totalWalletBalance = portfolio.totalWalletBalance,

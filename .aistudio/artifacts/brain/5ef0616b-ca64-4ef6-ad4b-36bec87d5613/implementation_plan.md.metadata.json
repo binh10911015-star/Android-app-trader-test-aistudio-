@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch cập nhật: Loại bỏ hoàn toàn BTC Panic Circuit Breaker theo yêu cầu. Chiến lược trở nên tinh gọn và thuần khiết: DUY NHẤT 1 CƠ CHẾ THOÁT LỆNH LÀ FLOORLOCK & ATR TRAILING STOP. Tinh gọn thông báo cạnh Cài đặt, nút kích hoạt Bot dưới Cài đặt, đồng bộ 2 chiều Cài đặt - Backtest và thu nhỏ giao diện.",
-  "updatedAt":  "2026-10-23T16:43:10.904074185Z",
+  "summary":  "Kế hoạch triển khai ghi chú cụ thể Giỏ Chính/Giỏ Phụ trên từng vị thế, hiển thị phân tích PnL/Volume chi tiết cho từng giỏ bên dưới Unrealized PnL, tính toán vốn động theo % số dư thực tế còn lại, và cảnh báo nhắc nhở khi mở lệnh thủ công lúc bot đang chạy.",
+  "updatedAt":  "2026-10-24T05:17:42.051896602Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

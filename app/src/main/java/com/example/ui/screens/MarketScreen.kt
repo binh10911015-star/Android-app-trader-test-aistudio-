@@ -23,6 +23,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.WarningAmber
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -35,6 +37,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -81,6 +84,62 @@ fun MarketScreen(
     onOpenApiConfig: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
+    var pendingBuySymbol by remember { mutableStateOf<String?>(null) }
+    var showBotWarningDialog by remember { mutableStateOf(false) }
+
+    if (showBotWarningDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showBotWarningDialog = false
+                pendingBuySymbol = null
+            },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.WarningAmber, contentDescription = null, tint = CryptoGold)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text("Bot Đang Hoạt Động", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+            },
+            text = {
+                Text(
+                    text = "Bot giao dịch tự động đang hoạt động theo cơ chế Dual Basket và phân bổ vốn động. Bạn không nên mở lệnh thủ công để tránh xung đột vốn và thoát lệnh của các giỏ.\n\nBạn có muốn tắt Bot để tiếp tục mở lệnh?",
+                    color = TextSecondary,
+                    fontSize = 13.sp
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showBotWarningDialog = false
+                        val sym = pendingBuySymbol
+                        pendingBuySymbol = null
+                        if (sym != null) {
+                            viewModel.toggleAutoTrade(false)
+                            onPerformWithPinCheck {
+                                viewModel.executeBuy(sym, isAuto = false, basketSlot = "PRIMARY")
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoGold)
+                ) {
+                    Text("Tắt Bot & Mở Lệnh", color = Color.Black, fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showBotWarningDialog = false
+                        pendingBuySymbol = null
+                    }
+                ) {
+                    Text("Hủy", color = TextSecondary)
+                }
+            },
+            containerColor = DarkSurfaceElevated,
+            shape = RoundedCornerShape(12.dp)
+        )
+    }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -328,8 +387,13 @@ fun MarketScreen(
                     ticker = ticker,
                     onSelect = { onSelectCoin(ticker.symbol) },
                     onBuyClick = {
-                        onPerformWithPinCheck {
-                            viewModel.executeBuy(ticker.symbol)
+                        if (uiState.settings.autoTradeEnabled) {
+                            pendingBuySymbol = ticker.symbol
+                            showBotWarningDialog = true
+                        } else {
+                            onPerformWithPinCheck {
+                                viewModel.executeBuy(ticker.symbol, isAuto = false, basketSlot = "PRIMARY")
+                            }
                         }
                     }
                 )

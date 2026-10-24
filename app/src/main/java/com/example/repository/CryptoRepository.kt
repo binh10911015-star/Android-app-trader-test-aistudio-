@@ -115,7 +115,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         binanceStatus: String? = null,
         exactAmount: Double? = null,
         exactEntryPrice: Double? = null,
-        autoFixNote: String? = null
+        autoFixNote: String? = null,
+        basketSlot: String = "PRIMARY"
     ): TradeAlert? = withContext(Dispatchers.IO) {
         val effectiveEntryPrice = if (exactEntryPrice != null && exactEntryPrice > 0.0) exactEntryPrice else currentPrice
         if (effectiveEntryPrice <= 0.0) return@withContext null
@@ -141,7 +142,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             binanceClientOrderId = binanceClientOrderId,
             isLiveBinanceOrder = isLiveBinanceOrder,
             binanceStatus = binanceStatus ?: if (isLiveBinanceOrder) "FILLED" else null,
-            binanceUpdateTime = if (isLiveBinanceOrder) System.currentTimeMillis() else null
+            binanceUpdateTime = if (isLiveBinanceOrder) System.currentTimeMillis() else null,
+            basketSlot = basketSlot
         )
 
         tradeDao.insert(position)
