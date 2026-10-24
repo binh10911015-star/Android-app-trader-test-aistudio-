@@ -292,16 +292,29 @@ data class TradeSettings(
     val capitalPerTradeUsdt: Double = 150.0,
     val perTradePct: Double = 0.015,
     val maxPortfolioAllocation: Double = 0.60,
-    val minQuoteVolume24h: Double = 20_000_000.0,
+    val minQuoteVolume24h: Double = 5_000_000.0,
     val minVolRatio: Double = 2.0,
     val minD1ChangePct: Double = 2.0,
-    val maxD1ChangePct: Double = 10.0,
+    val maxD1ChangePct: Double = 17.5,
     val maxAtrPercent: Double = 0.12,
     val slotScanMode: String = "DUAL",
     val kTrail: Double = 0.25,
     val enableTrailingStop: Boolean = true,
     val enableFloorLock: Boolean = true,
     val floorLockMinRoi: Double = 0.005,
+    // V2.2: BỘ LỌC THỊ TRƯỜNG BTC DÀI HẠN (BTC REGIME)
+    val enableBtcMacroFilter: Boolean = true,
+    val btcEmaFastPeriod: Int = 20,
+    val btcEmaSlowPeriod: Int = 50,
+    val enableBtcCircuitBreaker: Boolean = true,
+    val btcCircuitBreakerPct: Double = -3.5,
+    // V2.2: CƠ CHẾ SMART TIMEOUT LINH HOẠT
+    val enableSmartTimeout: Boolean = true,
+    val timeoutDays: Int = 6,
+    val disableTimeoutWhenTrailing: Boolean = true,
+    val timeoutLossFloorPct: Double = -0.025,
+    val kTpAtr: Double = 0.50,
+    val minActivationRoi: Double = 0.015,
     // Trường tương thích phụ
     val volumeMultiplierThreshold: Double = 2.0,
     val portfolioTakeProfitPercent: Double = 4.0,
@@ -325,7 +338,18 @@ data class TradeSettings(
             kTrail = kTrail,
             enableTrailingStop = enableTrailingStop,
             enableFloorLock = enableFloorLock,
-            floorLockMinRoi = floorLockMinRoi
+            floorLockMinRoi = floorLockMinRoi,
+            enableBtcMacroFilter = enableBtcMacroFilter,
+            btcEmaFastPeriod = btcEmaFastPeriod,
+            btcEmaSlowPeriod = btcEmaSlowPeriod,
+            enableBtcCircuitBreaker = enableBtcCircuitBreaker,
+            btcCircuitBreakerPct = btcCircuitBreakerPct,
+            enableSmartTimeout = enableSmartTimeout,
+            timeoutDays = timeoutDays,
+            disableTimeoutWhenTrailing = disableTimeoutWhenTrailing,
+            timeoutLossFloorPct = timeoutLossFloorPct,
+            kTpAtr = kTpAtr,
+            minActivationRoi = minActivationRoi
         )
     }
 
@@ -344,6 +368,17 @@ data class TradeSettings(
             enableTrailingStop = config.enableTrailingStop,
             enableFloorLock = config.enableFloorLock,
             floorLockMinRoi = config.floorLockMinRoi,
+            enableBtcMacroFilter = config.enableBtcMacroFilter,
+            btcEmaFastPeriod = config.btcEmaFastPeriod,
+            btcEmaSlowPeriod = config.btcEmaSlowPeriod,
+            enableBtcCircuitBreaker = config.enableBtcCircuitBreaker,
+            btcCircuitBreakerPct = config.btcCircuitBreakerPct,
+            enableSmartTimeout = config.enableSmartTimeout,
+            timeoutDays = config.timeoutDays,
+            disableTimeoutWhenTrailing = config.disableTimeoutWhenTrailing,
+            timeoutLossFloorPct = config.timeoutLossFloorPct,
+            kTpAtr = config.kTpAtr,
+            minActivationRoi = config.minActivationRoi,
             capitalPerTradeUsdt = config.initialCapital * config.perTradePct,
             volumeMultiplierThreshold = config.minVolRatio
         )
@@ -451,19 +486,40 @@ data class SymbolExchangeFilter(
 
 data class BacktestConfig(
     val initialCapital: Double = 10_000.0,
-    val perTradePct: Double = 0.015,
-    val maxPortfolioAllocation: Double = 0.60,
+    val perTradePct: Double = 0.015,                // 1.5% vốn/lệnh
+    val maxPortfolioAllocation: Double = 0.60,      // Trần giải ngân 60%
     val targetPortfolioRoi: Double = 0.015,
-    val minQuoteVolume24h: Double = 20_000_000.0, // Chuẩn v2.0 >= 20M USDT
-    val minVolRatio: Double = 2.0, // Ngưỡng nổ RVol(20) >= 2.0x
-    val minD1ChangePct: Double = 2.0,
-    val maxD1ChangePct: Double = 10.0, // Chuẩn v2.0 <= 10.0%
-    val maxAtrPercent: Double = 0.12, // Trần biến động ATR% D1 <= 12.0%
-    val slotScanMode: String = "DUAL", // "DUAL", "PRIMARY_ONLY", "SECONDARY_ONLY"
-    val kTrail: Double = 0.25, // Bước đệm Trailing K_Trail = 0.25 * ATR giỏ
+    val minQuoteVolume24h: Double = 5_000_000.0,    // Lọc thanh khoản 24h (USDT)
+    val minVolRatio: Double = 2.0,                  // RVol tối thiểu
+    val minD1ChangePct: Double = 2.0,               // Biên độ nến D1 tối thiểu (%)
+    val maxD1ChangePct: Double = 17.5,              // Chặn trên nến D1 (%)
+    val maxAtrPercent: Double = 0.12,
+    val slotScanMode: String = "DUAL",              // "DUAL", "PRIMARY_ONLY", "SECONDARY_ONLY"
+    val kTrail: Double = 0.25,                      // Bước đệm Trailing
     val enableTrailingStop: Boolean = true,
     val enableFloorLock: Boolean = true,
-    val floorLockMinRoi: Double = 0.005 // +0.5% net
+    val floorLockMinRoi: Double = 0.005,            // Sàn chốt lãi ròng (+0.5% net)
+
+    // ========================================================
+    // TÍNH NĂNG MỚI V2.2: BỘ LỌC THỊ TRƯỜNG BTC DÀI HẠN (BTC REGIME)
+    // ========================================================
+    val enableBtcMacroFilter: Boolean = true,       // Bật/Tắt bộ lọc BTC Macro dài hạn
+    val btcEmaFastPeriod: Int = 20,                 // Chu kỳ EMA ngắn của BTC (D1)
+    val btcEmaSlowPeriod: Int = 50,                 // Chu kỳ EMA dài của BTC (D1)
+    val enableBtcCircuitBreaker: Boolean = true,    // Bật/Tắt ngắt mạch khẩn cấp khi BTC sập trong ngày
+    val btcCircuitBreakerPct: Double = -3.5,        // Ngưỡng giảm D1 của BTC để hủy phiên quét (%)
+
+    // ========================================================
+    // TÍNH NĂNG MỚI V2.2: CƠ CHẾ SMART TIMEOUT LINH HOẠT
+    // ========================================================
+    val enableSmartTimeout: Boolean = true,         // Bật/Tắt tự động tất toán theo thời gian
+    val timeoutDays: Int = 6,                       // Số ngày nắm giữ tối đa (Mặc định: 6 ngày = 144h)
+    val disableTimeoutWhenTrailing: Boolean = true, // Không cắt nếu giỏ đang ở trạng thái TRAILING_ACTIVE (đang có lãi bám đỉnh)
+    val timeoutLossFloorPct: Double = -0.025,       // Giới hạn lỗ tối đa cho phép khi dập Timeout (-2.5%)
+
+    // THAM SỐ TRAILING ATR
+    val kTpAtr: Double = 0.50,                      // Hệ số kích hoạt Trailing TP
+    val minActivationRoi: Double = 0.015            // Mức kích hoạt sàn (+1.5%)
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"

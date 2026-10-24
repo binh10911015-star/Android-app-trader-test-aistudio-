@@ -571,6 +571,23 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         return if (list.isNotEmpty()) list else tickers.map { it.symbol }.filter { it.endsWith("USDT") && !it.contains("_") }
     }
 
+    /**
+     * Helper tính Exponential Moving Average (EMA) theo chuẩn v2.2
+     */
+    fun calculateEMA(prices: List<Double>, period: Int): List<Double> {
+        if (prices.size < period) return emptyList()
+        val k = 2.0 / (period + 1)
+        val emaList = mutableListOf<Double>()
+        var ema = prices.take(period).average()
+        emaList.add(ema)
+
+        for (i in period until prices.size) {
+            ema = (prices[i] * k) + (ema * (1 - k))
+            emaList.add(ema)
+        }
+        return emaList
+    }
+
     suspend fun runBasketD1MomentumBacktest(
         daysToTest: Int = 180,
         config: BacktestConfig = BacktestConfig(),
@@ -628,14 +645,25 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 var executedGrossRoi = 0.0
                 val slippage = 0.0005 // Trượt giá khớp lệnh 0.05%
 
+                val holdingMillis = currentTime - basket.openTime
+                val isTimedOut = config.enableSmartTimeout && (holdingMillis >= config.timeoutDays * 86400000L)
+
                 when (basket.status) {
                     // TRẠNG THÁI 1: OPEN (Đang chạy, chờ chạm FloorLock +0.5% net để kích hoạt Trailing Stop)
                     BasketStatus.OPEN -> {
                         val floorRoi = if (config.enableFloorLock) basket.floorLockRoi else -0.99
-                        if (config.enableTrailingStop && currentRoi >= basket.floorLockRoi) {
-                            basket.status = BasketStatus.TRAILING_ACTIVE
-                            basket.peakRoi = currentRoi
-                            basket.currentTrailingStopRoi = maxOf(floorRoi, currentRoi - basket.trailStepRoi)
+                        when {
+                            // 1. Kích hoạt Trailing TP
+                            config.enableTrailingStop && currentRoi >= basket.floorLockRoi -> {
+                                basket.status = BasketStatus.TRAILING_ACTIVE
+                                basket.peakRoi = currentRoi
+                                basket.currentTrailingStopRoi = maxOf(floorRoi, currentRoi - basket.trailStepRoi)
+                            }
+                            // 2. Kích hoạt Smart Timeout khi chưa bật Trailing (giải phóng vốn kẹt)
+                            isTimedOut -> {
+                                exitReason = if (currentRoi >= 0) "TIMEOUT_PROFIT_TAKE" else "TIMEOUT_CAPITAL_RELEASE"
+                                executedGrossRoi = currentRoi - slippage
+                            }
                         }
                     }
 
@@ -657,6 +685,10 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                             exitReason = "TRAILING_STOP_HIT"
                             // Khớp lệnh tại đúng mức dừng lỗ trượt (Trailing Stop Level) mà bot đã thiết lập
                             executedGrossRoi = basket.currentTrailingStopRoi - slippage
+                        } else if (isTimedOut && !config.disableTimeoutWhenTrailing) {
+                            // Chỉ đóng khi người dùng KHÔNG bật cờ miễn trừ timeout lúc trailing
+                            exitReason = "TIMEOUT_IN_TRAIL"
+                            executedGrossRoi = currentRoi - slippage
                         }
                     }
                     else -> Unit
@@ -735,22 +767,37 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 secondaryBasket?.positions?.forEach { add(it.symbol) }
             }
 
-            // TẦNG 1: BỘ LỌC MACRO BTC REGIME (SMA20 + EMA50 + Panic Circuit Breaker)
-            val btcPrev20 = btcCandles.subList(dayIdx - 21, dayIdx - 1).map { it.close }
-            val btcSma20 = btcPrev20.average()
-            val btcPrev50 = if (dayIdx >= 51) btcCandles.subList(dayIdx - 51, dayIdx - 1).map { it.close } else emptyList()
-            val btcEma50 = if (btcPrev50.isNotEmpty()) {
-                val k = 2.0 / (50 + 1)
-                var ema = btcPrev50.first()
-                for (price in btcPrev50) {
-                    ema = price * k + ema * (1 - k)
-                }
-                ema
-            } else btcSma20
-            val btcD1Change = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
-            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50
+            // TẦNG 1: BỘ LỌC MACRO BTC REGIME V2.2 (EMA_fast + EMA_slow + Slope + Panic Circuit Breaker)
+            var isBtcSafeToTrade = true
 
-            if (hasAvailableSlot && isBtcBullish) {
+            if (config.enableBtcMacroFilter) {
+                val btcCloses = btcCandles.subList(0, dayIdx).map { it.close }
+                val emaFastList = calculateEMA(btcCloses, config.btcEmaFastPeriod)
+                val emaSlowList = calculateEMA(btcCloses, config.btcEmaSlowPeriod)
+
+                if (emaFastList.size >= 2 && emaSlowList.isNotEmpty()) {
+                    val currentBtcClose = btcCloses.last()
+                    val currentEmaFast = emaFastList.last()
+                    val prevEmaFast = emaFastList[emaFastList.size - 2]
+                    val currentEmaSlow = emaSlowList.last()
+
+                    val isAboveEmas = currentBtcClose > currentEmaFast && currentBtcClose > currentEmaSlow
+                    val isEmaSlopePositive = (currentEmaFast - prevEmaFast) >= 0.0
+
+                    isBtcSafeToTrade = isAboveEmas && isEmaSlopePositive
+                } else {
+                    isBtcSafeToTrade = false
+                }
+            }
+
+            if (config.enableBtcCircuitBreaker && isBtcSafeToTrade) {
+                val btcChangePct = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
+                if (btcChangePct <= config.btcCircuitBreakerPct) {
+                    isBtcSafeToTrade = false
+                }
+            }
+
+            if (hasAvailableSlot && isBtcSafeToTrade) {
                 val totalRunningInvested = (primaryBasket?.totalInvested ?: 0.0) + (secondaryBasket?.totalInvested ?: 0.0)
                 val availableBudget = (currentEquity * config.maxPortfolioAllocation) - totalRunningInvested
 

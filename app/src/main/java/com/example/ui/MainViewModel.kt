@@ -1402,6 +1402,63 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
+            // KIỂM TRA ĐIỀU KIỆN BTC MACRO REGIME & CIRCUIT BREAKER (v2.2)
+            val st = _uiState.value.settings
+            if (st.enableBtcMacroFilter || st.enableBtcCircuitBreaker) {
+                _uiState.value = _uiState.value.copy(
+                    scanProgress = "Đang kiểm tra chỉ số BTC Macro Regime & Circuit Breaker...",
+                    scanPercent = 0.05f
+                )
+                val btcRes = withContext(Dispatchers.IO) { repository.getCandlesWithIndicators("BTCUSDT", "1d") }
+                if (btcRes.isSuccess) {
+                    val btcCandles = btcRes.getOrNull() ?: emptyList()
+                    if (btcCandles.size >= 55) {
+                        val lastCandle = btcCandles.last().candle
+                        val btc24hChangePct = if (lastCandle.open > 0.0) ((lastCandle.close - lastCandle.open) / lastCandle.open) * 100.0 else 0.0
+
+                        // 1. Circuit breaker
+                        if (st.enableBtcCircuitBreaker && btc24hChangePct <= st.btcCircuitBreakerPct) {
+                            _uiState.value = _uiState.value.copy(isScanning = false, scanProgress = "", scanPercent = 0f)
+                            triggerAlert(
+                                TradeAlert(
+                                    symbol = "BTCUSDT",
+                                    title = "CIRCUIT BREAKER KÍCH HOẠT (HỦY QUÉT)",
+                                    message = "Nến D1 BTC giảm ${String.format(Locale.US, "%.2f", btc24hChangePct)}% (vượt ngưỡng sập ${st.btcCircuitBreakerPct}%). Tự động hủy quét mở giỏ $targetBasketSlot để bảo toàn vốn.",
+                                    type = AlertType.STOP_LOSS
+                                )
+                            )
+                            return@launch
+                        }
+
+                        // 2. Macro Filter
+                        if (st.enableBtcMacroFilter) {
+                            val closes = btcCandles.map { it.candle.close }
+                            val emaFast = repository.calculateEMA(closes, st.btcEmaFastPeriod)
+                            val emaSlow = repository.calculateEMA(closes, st.btcEmaSlowPeriod)
+                            val fastNow = emaFast.lastOrNull() ?: 0.0
+                            val slowNow = emaSlow.lastOrNull() ?: 0.0
+                            val fastPrev = emaFast.getOrNull(emaFast.size - 2) ?: fastNow
+                            val deltaEmaFast = fastNow - fastPrev
+                            val lastClose = lastCandle.close
+
+                            val isBtcBullish = lastClose > fastNow && lastClose > slowNow && deltaEmaFast >= 0.0
+                            if (!isBtcBullish) {
+                                _uiState.value = _uiState.value.copy(isScanning = false, scanProgress = "", scanPercent = 0f)
+                                triggerAlert(
+                                    TradeAlert(
+                                        symbol = "BTCUSDT",
+                                        title = "BTC MACRO REGIME: THỊ TRƯỜNG YẾU",
+                                        message = "BTCUSDT (${String.format(Locale.US, "%.0f", lastClose)}) chưa thỏa điều kiện EMA${st.btcEmaFastPeriod}/${st.btcEmaSlowPeriod} xu hướng tăng. Giữ tiền mặt, không giải ngân giỏ $targetBasketSlot.",
+                                        type = AlertType.INFO
+                                    )
+                                )
+                                return@launch
+                            }
+                        }
+                    }
+                }
+            }
+
             val totalCoins = allSymbols.size
             var scannedCount = 0
 

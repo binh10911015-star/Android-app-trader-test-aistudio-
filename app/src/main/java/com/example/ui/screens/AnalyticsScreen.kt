@@ -65,6 +65,18 @@ fun AnalyticsScreen(
     var kTrailText by remember { mutableStateOf(currentConfig.kTrail.toString()) }
     var floorLockMinRoiText by remember { mutableStateOf((currentConfig.floorLockMinRoi * 100).toString()) }
 
+    // 5. BỘ LỌC BTC MACRO REGIME (v2.2)
+    var enableBtcMacroFilter by remember { mutableStateOf(currentConfig.enableBtcMacroFilter) }
+    var btcEmaFastText by remember { mutableStateOf(currentConfig.btcEmaFastPeriod.toString()) }
+    var btcEmaSlowText by remember { mutableStateOf(currentConfig.btcEmaSlowPeriod.toString()) }
+    var enableBtcCircuitBreaker by remember { mutableStateOf(currentConfig.enableBtcCircuitBreaker) }
+    var btcCircuitBreakerPctText by remember { mutableStateOf(currentConfig.btcCircuitBreakerPct.toString()) }
+
+    // 6. CƠ CHẾ SMART TIMEOUT (v2.2)
+    var enableSmartTimeout by remember { mutableStateOf(currentConfig.enableSmartTimeout) }
+    var timeoutDaysText by remember { mutableStateOf(currentConfig.timeoutDays.toString()) }
+    var disableTimeoutWhenTrailing by remember { mutableStateOf(currentConfig.disableTimeoutWhenTrailing) }
+
     // Lắng nghe khi có đề xuất AI 1-chạm được áp dụng
     LaunchedEffect(currentConfig, currentDays) {
         daysText = currentDays.toString()
@@ -78,6 +90,14 @@ fun AnalyticsScreen(
         maxAtrPctText = (currentConfig.maxAtrPercent * 100).toString()
         kTrailText = currentConfig.kTrail.toString()
         floorLockMinRoiText = (currentConfig.floorLockMinRoi * 100).toString()
+        enableBtcMacroFilter = currentConfig.enableBtcMacroFilter
+        btcEmaFastText = currentConfig.btcEmaFastPeriod.toString()
+        btcEmaSlowText = currentConfig.btcEmaSlowPeriod.toString()
+        enableBtcCircuitBreaker = currentConfig.enableBtcCircuitBreaker
+        btcCircuitBreakerPctText = currentConfig.btcCircuitBreakerPct.toString()
+        enableSmartTimeout = currentConfig.enableSmartTimeout
+        timeoutDaysText = currentConfig.timeoutDays.toString()
+        disableTimeoutWhenTrailing = currentConfig.disableTimeoutWhenTrailing
     }
 
     LazyColumn(
@@ -591,6 +611,198 @@ fun AnalyticsScreen(
         }
 
         // ==========================================
+        // NHÓM 5: BỘ LỌC BTC MACRO REGIME (v2.2)
+        // ==========================================
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().testTag("backtest_group_5_card"),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+                border = BorderStroke(1.dp, DarkBorder)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = "5. Bộ Lọc BTC Macro Regime (v2.2)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Kích hoạt lọc xu hướng BTC", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableBtcMacroFilter) CryptoGreen else TextMuted)
+                            Text("Chỉ mở giỏ khi BTC D1 nằm trên cụm EMA xu hướng tăng", fontSize = 10.sp, color = TextMuted)
+                        }
+                        Switch(
+                            checked = enableBtcMacroFilter,
+                            onCheckedChange = { enableBtcMacroFilter = it },
+                            modifier = Modifier.testTag("toggle_btc_macro_filter"),
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Chu kỳ EMA Nhanh D1", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = btcEmaFastText,
+                                onValueChange = { btcEmaFastText = it },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(text = "Chu kỳ EMA Chậm D1", color = TextMuted, fontSize = 11.sp)
+                            Spacer(modifier = Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = btcEmaSlowText,
+                                onValueChange = { btcEmaSlowText = it },
+                                modifier = Modifier.fillMaxWidth().height(48.dp),
+                                singleLine = true,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Divider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Ngắt mạch khẩn cấp (Circuit Breaker)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableBtcCircuitBreaker) CryptoGreen else TextMuted)
+                            Text("Hủy mở giỏ nếu nến BTC D1 giảm quá ngưỡng trong 24h", fontSize = 10.sp, color = TextMuted)
+                        }
+                        Switch(
+                            checked = enableBtcCircuitBreaker,
+                            onCheckedChange = { enableBtcCircuitBreaker = it },
+                            modifier = Modifier.testTag("toggle_btc_circuit_breaker"),
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(text = "Ngưỡng giảm BTC 24h kích hoạt ngắt mạch (%)", color = TextMuted, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = btcCircuitBreakerPctText,
+                        onValueChange = { btcCircuitBreakerPctText = it },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    )
+                }
+            }
+        }
+
+        // ==========================================
+        // NHÓM 6: CƠ CHẾ SMART TIMEOUT (v2.2)
+        // ==========================================
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth().testTag("backtest_group_6_card"),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+                border = BorderStroke(1.dp, DarkBorder)
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(imageVector = Icons.Default.Timer, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(text = "6. Cơ Chế Smart Timeout (v2.2)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Kích hoạt Smart Timeout", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableSmartTimeout) CryptoGreen else TextMuted)
+                            Text("Tự động giải phóng vị thế om vốn sau thời gian quy định", fontSize = 10.sp, color = TextMuted)
+                        }
+                        Switch(
+                            checked = enableSmartTimeout,
+                            onCheckedChange = { enableSmartTimeout = it },
+                            modifier = Modifier.testTag("toggle_smart_timeout"),
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Text(text = "Thời gian nắm giữ tối đa (ngày)", color = TextMuted, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = timeoutDaysText,
+                        onValueChange = { timeoutDaysText = it },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    )
+
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Divider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Miễn trừ khi đang Trailing lãi", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (disableTimeoutWhenTrailing) CryptoGreen else TextMuted)
+                            Text("Không cắt lệnh nếu vị thế đang có lãi và bám đỉnh sóng", fontSize = 10.sp, color = TextMuted)
+                        }
+                        Switch(
+                            checked = disableTimeoutWhenTrailing,
+                            onCheckedChange = { disableTimeoutWhenTrailing = it },
+                            modifier = Modifier.testTag("toggle_exempt_trailing"),
+                            colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                        )
+                    }
+                }
+            }
+        }
+
+        // ==========================================
         // NÚT BẤM CHẠY BACKTEST V2.0
         // ==========================================
         item {
@@ -619,7 +831,15 @@ fun AnalyticsScreen(
                         kTrail = kTrail,
                         enableTrailingStop = true,
                         enableFloorLock = true,
-                        floorLockMinRoi = floorLockRoi
+                        floorLockMinRoi = floorLockRoi,
+                        enableBtcMacroFilter = enableBtcMacroFilter,
+                        btcEmaFastPeriod = btcEmaFastText.toIntOrNull() ?: 20,
+                        btcEmaSlowPeriod = btcEmaSlowText.toIntOrNull() ?: 50,
+                        enableBtcCircuitBreaker = enableBtcCircuitBreaker,
+                        btcCircuitBreakerPct = btcCircuitBreakerPctText.toDoubleOrNull() ?: -3.5,
+                        enableSmartTimeout = enableSmartTimeout,
+                        timeoutDays = timeoutDaysText.toIntOrNull() ?: 6,
+                        disableTimeoutWhenTrailing = disableTimeoutWhenTrailing
                     )
 
                     viewModel.updateBacktestConfig(customConfig, days)

@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch triển khai ghi chú cụ thể Giỏ Chính/Giỏ Phụ trên từng vị thế, hiển thị phân tích PnL/Volume chi tiết cho từng giỏ bên dưới Unrealized PnL, tính toán vốn động theo % số dư thực tế còn lại, và cảnh báo nhắc nhở khi mở lệnh thủ công lúc bot đang chạy.",
-  "updatedAt":  "2026-10-24T05:17:42.051896602Z",
+  "summary":  "Kế hoạch triển khai hoàn tất cập nhật phiên bản v2.2 Dual Basket Momentum: Bộ lọc BTC Macro Regime & Circuit Breaker, và Cơ chế Smart Timeout linh hoạt.",
+  "updatedAt":  "2026-10-24T17:03:37.392867847Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

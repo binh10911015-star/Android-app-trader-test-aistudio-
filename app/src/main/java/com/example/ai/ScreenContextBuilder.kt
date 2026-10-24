@@ -60,6 +60,14 @@ object ScreenContextBuilder {
             cJson.put("enableTrailingStop", currentBacktestConfig.enableTrailingStop)
             cJson.put("enableFloorLock", currentBacktestConfig.enableFloorLock)
             cJson.put("floorLockMinRoi", currentBacktestConfig.floorLockMinRoi)
+            cJson.put("enableBtcMacroFilter", currentBacktestConfig.enableBtcMacroFilter)
+            cJson.put("btcEmaFastPeriod", currentBacktestConfig.btcEmaFastPeriod)
+            cJson.put("btcEmaSlowPeriod", currentBacktestConfig.btcEmaSlowPeriod)
+            cJson.put("enableBtcCircuitBreaker", currentBacktestConfig.enableBtcCircuitBreaker)
+            cJson.put("btcCircuitBreakerPct", currentBacktestConfig.btcCircuitBreakerPct)
+            cJson.put("enableSmartTimeout", currentBacktestConfig.enableSmartTimeout)
+            cJson.put("timeoutDays", currentBacktestConfig.timeoutDays)
+            cJson.put("disableTimeoutWhenTrailing", currentBacktestConfig.disableTimeoutWhenTrailing)
             root.put("backtestConfig", cJson)
         }
 
