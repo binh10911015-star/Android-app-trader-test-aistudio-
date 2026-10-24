@@ -264,8 +264,6 @@ class ExampleRobolectricTest {
         val settingsNoTpSl = TradeSettings(
             autoTradeEnabled = false,
             capitalPerTradeUsdt = 100.0,
-            takeProfitPercent = null,
-            stopLossPercent = null,
             timeframe = "4h"
         )
 
@@ -277,7 +275,7 @@ class ExampleRobolectricTest {
             isAutoTriggered = false
         )
         assertNotNull(alert)
-        assertTrue(alert?.message?.contains("Không thiết lập") == true)
+        assertTrue(alert?.message?.contains("AVAXUSDT") == true)
 
         val openPositions = repo.getOpenPositions().first()
         val avaxPos = openPositions.find { it.symbol == "AVAXUSDT" }
@@ -477,10 +475,10 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `test no stop loss setting defaults to null`() {
+    fun `test strategy defaults to Dual Basket Momentum v2`() {
         val defaultSettings = TradeSettings()
-        // Yêu cầu: không thiết lập cắt lỗ (mặc định null)
-        assertNull(defaultSettings.stopLossPercent)
+        assertEquals(com.example.model.TradingStrategyType.DUAL_BASKET_MOMENTUM_V2, defaultSettings.selectedStrategy)
+        assertTrue(defaultSettings.enableDualBasket)
     }
 
     @Test

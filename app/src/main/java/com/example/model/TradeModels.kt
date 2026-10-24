@@ -284,19 +284,69 @@ enum class TradingStrategyType(val displayName: String, val description: String)
 data class TradeSettings(
     val autoTradeEnabled: Boolean = false,
     val selectedStrategy: TradingStrategyType = TradingStrategyType.DUAL_BASKET_MOMENTUM_V2,
+    val simulatedBalanceUsdt: Double = 10000.0,
+    val leverage: Int = 1,
+    // Thông số chiến lược toàn diện (đồng bộ 2 chiều với BacktestConfig, không có SL/TP/Timeout)
+    val capitalPerTradeUsdt: Double = 150.0,
+    val perTradePct: Double = 0.015,
+    val maxPortfolioAllocation: Double = 0.60,
+    val minQuoteVolume24h: Double = 20_000_000.0,
+    val minVolRatio: Double = 2.0,
+    val minD1ChangePct: Double = 2.0,
+    val maxD1ChangePct: Double = 10.0,
+    val maxAtrPercent: Double = 0.12,
+    val slotScanMode: String = "DUAL",
+    val kTrail: Double = 0.25,
+    val enableTrailingStop: Boolean = true,
+    val enableFloorLock: Boolean = true,
+    val floorLockMinRoi: Double = 0.005,
+    // Trường tương thích phụ
     val volumeMultiplierThreshold: Double = 2.0,
     val portfolioTakeProfitPercent: Double = 4.0,
     val volumeType: VolumeType = VolumeType.PERCENT_OF_BALANCE,
-    val volumePercentOfBalance: Double = 0.5,
-    val fixedVolumeUsdt: Double = 50.0,
-    val capitalPerTradeUsdt: Double = 50.0,
-    val takeProfitPercent: Double? = 4.0,
-    val stopLossPercent: Double? = null,
+    val volumePercentOfBalance: Double = 1.5,
+    val fixedVolumeUsdt: Double = 150.0,
     val enableDualBasket: Boolean = true,
-    val timeframe: String = "1d",
-    val simulatedBalanceUsdt: Double = 10000.0,
-    val leverage: Int = 1
+    val timeframe: String = "1d"
 ) {
+    fun toBacktestConfig(): BacktestConfig {
+        return BacktestConfig(
+            initialCapital = simulatedBalanceUsdt,
+            perTradePct = perTradePct,
+            maxPortfolioAllocation = maxPortfolioAllocation,
+            minQuoteVolume24h = minQuoteVolume24h,
+            minVolRatio = minVolRatio,
+            minD1ChangePct = minD1ChangePct,
+            maxD1ChangePct = maxD1ChangePct,
+            maxAtrPercent = maxAtrPercent,
+            slotScanMode = slotScanMode,
+            kTrail = kTrail,
+            enableTrailingStop = enableTrailingStop,
+            enableFloorLock = enableFloorLock,
+            floorLockMinRoi = floorLockMinRoi
+        )
+    }
+
+    fun syncFromBacktestConfig(config: BacktestConfig): TradeSettings {
+        return copy(
+            simulatedBalanceUsdt = config.initialCapital,
+            perTradePct = config.perTradePct,
+            maxPortfolioAllocation = config.maxPortfolioAllocation,
+            minQuoteVolume24h = config.minQuoteVolume24h,
+            minVolRatio = config.minVolRatio,
+            minD1ChangePct = config.minD1ChangePct,
+            maxD1ChangePct = config.maxD1ChangePct,
+            maxAtrPercent = config.maxAtrPercent,
+            slotScanMode = config.slotScanMode,
+            kTrail = config.kTrail,
+            enableTrailingStop = config.enableTrailingStop,
+            enableFloorLock = config.enableFloorLock,
+            floorLockMinRoi = config.floorLockMinRoi,
+            capitalPerTradeUsdt = config.initialCapital * config.perTradePct,
+            volumeMultiplierThreshold = config.minVolRatio
+        )
+    }
+
     fun calculatePositionVolume(customBalance: Double = simulatedBalanceUsdt): Double {
         return when (volumeType) {
             VolumeType.PERCENT_OF_BALANCE -> {
@@ -388,16 +438,11 @@ data class BacktestConfig(
     val minD1ChangePct: Double = 2.0,
     val maxD1ChangePct: Double = 10.0, // Chuẩn v2.0 <= 10.0%
     val maxAtrPercent: Double = 0.12, // Trần biến động ATR% D1 <= 12.0%
-    val btcPanicCircuitBreaker: Double = -3.5, // BTC Panic Breaker -3.5%
     val slotScanMode: String = "DUAL", // "DUAL", "PRIMARY_ONLY", "SECONDARY_ONLY"
-    val kTp: Double = 0.50, // Hệ số kích hoạt TP K_TP = 0.50 (tối thiểu 1.5%)
     val kTrail: Double = 0.25, // Bước đệm Trailing K_Trail = 0.25 * ATR giỏ
-    val kSl: Double = 0.75, // Hệ số Stop-Loss K_SL = 0.75 (sàn -3.5%) v2.1
-    val maxHoldingHours: Int = 144, // Timeout 144 giờ (6 ngày) giải phóng vốn v2.1
     val enableTrailingStop: Boolean = true,
     val enableFloorLock: Boolean = true,
-    val enableStopLoss: Boolean = true,
-    val enableTimeout: Boolean = true
+    val floorLockMinRoi: Double = 0.005 // +0.5% net
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"
@@ -416,9 +461,7 @@ data class BacktestHistoryRecord(
     val totalCycles: Int,
     val winCycles: Int,
     val lossCycles: Int,
-    val trailingHits: Int,
-    val slHits: Int,
-    val timeoutHits: Int
+    val trailingHits: Int
 )
 
 data class BacktestTradeItem(
@@ -454,10 +497,10 @@ enum class BasketSlotId {
 }
 
 enum class BasketStatus {
-    OPEN,               // Đang chạy, chưa kích hoạt Trailing
-    TRAILING_ACTIVE,    // Đã vượt mốc kích hoạt cơ sở, đang bám đỉnh theo ATR
-    CLOSING,            // Đang thanh lý lệnh trên sàn (khóa slot, cấm ghi đè)
-    CLOSED              // Đã tất toán xong, giải phóng slot cho chu kỳ tiếp theo
+    OPEN,               // Đang chạy, chờ chạm FloorLock
+    TRAILING_ACTIVE,    // Đã chạm FloorLock (+0.5% net), bám đỉnh theo ATR
+    CLOSING,            // Đang thanh lý lệnh trên sàn
+    CLOSED              // Đã tất toán xong
 }
 
 data class BasketPosition(
@@ -465,7 +508,7 @@ data class BasketPosition(
     val entryPrice: Double,
     val quantity: Double,
     val marginAllocated: Double,
-    val entryAtrPercent: Double = 0.05 // ATR(14) D1 / entryPrice tại thời điểm vào lệnh
+    val entryAtrPercent: Double = 0.05 // ATR(14) D1 / entryPrice
 )
 
 data class ActiveBasket(
@@ -474,10 +517,7 @@ data class ActiveBasket(
     val positions: List<BasketPosition> = emptyList(),
     val totalInvested: Double = 0.0,
     var status: BasketStatus = BasketStatus.OPEN,
-    val maxHoldingMillis: Long = 144 * 3600 * 1000L, // Timeout 144 giờ (6 ngày) v2.1
-    val kTp: Double = 0.50,
-    val kTrail: Double = 0.25,
-    val kSl: Double = 0.75
+    val kTrail: Double = 0.25
 ) {
     // 1. Biến động trọng số toàn giỏ: Basket ATR%
     val basketAtrPercent: Double by lazy {
@@ -485,23 +525,13 @@ data class ActiveBasket(
         else positions.sumOf { it.entryAtrPercent * (it.marginAllocated / totalInvested) }
     }
 
-    // 2. Ngưỡng kích hoạt Trailing cơ sở: K_TP (Tối thiểu +1.5%)
-    val activationRoi: Double by lazy {
-        maxOf(0.015, kTp * basketAtrPercent)
-    }
+    // Sàn bảo vệ lợi nhuận tối thiểu FloorLock (+0.5% net)
+    val floorLockRoi: Double = 0.005
 
-    // 3. Ngưỡng cắt lỗ danh mục ban đầu: K_SL = 0.75 (Sàn -3.5%) v2.1
-    val initialStopLossRoi: Double by lazy {
-        -maxOf(0.035, kSl * basketAtrPercent)
-    }
-
-    // 4. Bước đệm kéo lùi Trailing: K_Trail * ATR giỏ (Tối thiểu 0.6%)
+    // Bước đệm kéo lùi Trailing: K_Trail * ATR giỏ (Tối thiểu 0.6%)
     val trailStepRoi: Double by lazy {
         maxOf(0.006, kTrail * basketAtrPercent)
     }
-
-    // Sàn bảo vệ lợi nhuận tối thiểu khi đã bật trailing (đủ bù trượt giá & phí giao dịch)
-    val floorLockRoi: Double = 0.005 // +0.5% net
 
     // Biến trạng thái động theo dõi theo thời gian thực
     var peakRoi: Double = 0.0

@@ -391,23 +391,16 @@ fun AiAssistantBottomSheet(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Text("• Thoát ATR (K_TP / K_Trail):", color = TextMuted, fontSize = 11.sp)
-                                                Text("${recConfig.kTp} / ${recConfig.kTrail}", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                                Text("• Bước đệm K_Trail / Sàn FloorLock:", color = TextMuted, fontSize = 11.sp)
+                                                Text("${recConfig.kTrail} / +${recConfig.floorLockMinRoi * 100}% net", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
                                             }
                                             Row(
                                                 modifier = Modifier.fillMaxWidth(),
                                                 horizontalArrangement = Arrangement.SpaceBetween
                                             ) {
-                                                Text("• Cắt lỗ K_SL / Timeout:", color = TextMuted, fontSize = 11.sp)
-                                                Text("${recConfig.kSl} / ${recConfig.maxHoldingHours} giờ", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
-                                            }
-                                            Row(
-                                                modifier = Modifier.fillMaxWidth(),
-                                                horizontalArrangement = Arrangement.SpaceBetween
-                                            ) {
-                                                Text("• Cơ chế v2.1:", color = TextMuted, fontSize = 11.sp)
+                                                Text("• Thoát lệnh Pure Trailing:", color = TextMuted, fontSize = 11.sp)
                                                 Text(
-                                                    "Trailing: ${if (recConfig.enableTrailingStop) "BẬT" else "TẮT"} | FloorLock: ${if (recConfig.enableFloorLock) "BẬT" else "TẮT"} | SL: ${if (recConfig.enableStopLoss) "BẬT" else "TẮT"}",
+                                                    "Trailing: ${if (recConfig.enableTrailingStop) "BẬT" else "TẮT"} | FloorLock: ${if (recConfig.enableFloorLock) "BẬT" else "TẮT"}",
                                                     color = CryptoGold,
                                                     fontSize = 11.sp,
                                                     fontWeight = FontWeight.Bold

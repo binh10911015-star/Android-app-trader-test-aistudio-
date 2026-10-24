@@ -162,24 +162,20 @@ fun StatisticsScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("• Ngưỡng kích hoạt TP (K_TP):", fontSize = 11.sp, color = TextMuted)
-                                Text("${optimalConfig.kTp} (Tối thiểu +1.5%)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White, fontFamily = FontFamily.Monospace)
-                            }
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("• Bước giật Trailing ATR (K_Trail):", fontSize = 11.sp, color = TextMuted)
                                 Text("${optimalConfig.kTrail} (Bám đỉnh)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CryptoGreen, fontFamily = FontFamily.Monospace)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("• Ngưỡng cắt lỗ bảo vệ (K_SL):", fontSize = 11.sp, color = TextMuted)
-                                Text("${optimalConfig.kSl}", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CryptoRed, fontFamily = FontFamily.Monospace)
+                                Text("• Sàn khóa lãi FloorLock tối thiểu:", fontSize = 11.sp, color = TextMuted)
+                                Text("+${optimalConfig.floorLockMinRoi * 100}% net", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CryptoGold, fontFamily = FontFamily.Monospace)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text("• Ngưỡng nổ Volume (RVol):", fontSize = 11.sp, color = TextMuted)
                                 Text(">= ${optimalConfig.minVolRatio}x", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = CryptoGold, fontFamily = FontFamily.Monospace)
                             }
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                                Text("• Sàn khóa lãi & Timeout:", fontSize = 11.sp, color = TextMuted)
-                                Text("FloorLock (+0.5%) • Timeout ${optimalConfig.maxHoldingHours}h", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                                Text("• Cơ chế thoát lệnh duy nhất:", fontSize = 11.sp, color = TextMuted)
+                                Text("FloorLock & ATR Trailing (Spot 1x)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                     }
@@ -415,7 +411,7 @@ fun BacktestHistoryItemCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "${record.days} Ngày • ${record.totalCycles} Chu kỳ (${record.trailingHits} Trailing TP, ${record.slHits} SL, ${record.timeoutHits} Timeout)",
+                    text = "${record.days} Ngày • ${record.totalCycles} Chu kỳ (${record.trailingHits} Trailing Chốt Lời)",
                     fontSize = 10.sp,
                     color = TextMuted
                 )

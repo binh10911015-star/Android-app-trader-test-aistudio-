@@ -452,24 +452,22 @@ fun CoinDetailScreen(
                     horizontalArrangement = Arrangement.SpaceBetween
                 ) {
                     Column {
-                        Text(text = "Take Profit", color = TextSecondary, fontSize = 10.sp)
+                        Text(text = "Cơ chế chốt lời", color = TextSecondary, fontSize = 10.sp)
                         Text(
-                            text = "+${uiState.settings.takeProfitPercent ?: 4.0}%",
+                            text = "FloorLock & Trailing ATR",
                             color = CryptoGreen,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontWeight = FontWeight.Bold
                         )
                     }
 
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Text(text = "Stop Loss", color = TextSecondary, fontSize = 10.sp)
+                        Text(text = "Cắt lỗ (SL)", color = TextSecondary, fontSize = 10.sp)
                         Text(
-                            text = "-${uiState.settings.stopLossPercent ?: 3.0}%",
-                            color = CryptoRed,
+                            text = "Spot 1x (Không SL)",
+                            color = CryptoGold,
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace
+                            fontWeight = FontWeight.Bold
                         )
                     }
 

@@ -137,16 +137,11 @@ class AiAssistantViewModel : ViewModel() {
                     minVolRatio = cObj.optDouble("minVolRatio", 2.0),
                     maxD1ChangePct = cObj.optDouble("maxD1ChangePct", 10.0),
                     maxAtrPercent = cObj.optDouble("maxAtrPercent", 0.12),
-                    btcPanicCircuitBreaker = cObj.optDouble("btcPanicCircuitBreaker", -3.5),
                     slotScanMode = cObj.optString("slotScanMode", "DUAL"),
-                    kTp = cObj.optDouble("kTp", 0.50),
                     kTrail = cObj.optDouble("kTrail", 0.25),
-                    kSl = cObj.optDouble("kSl", 0.75),
-                    maxHoldingHours = cObj.optInt("maxHoldingHours", 144),
                     enableTrailingStop = cObj.optBoolean("enableTrailingStop", true),
                     enableFloorLock = cObj.optBoolean("enableFloorLock", true),
-                    enableStopLoss = cObj.optBoolean("enableStopLoss", true),
-                    enableTimeout = cObj.optBoolean("enableTimeout", true)
+                    floorLockMinRoi = cObj.optDouble("floorLockMinRoi", 0.005)
                 )
             } else {
                 BacktestConfig()
@@ -191,10 +186,7 @@ class AiAssistantViewModel : ViewModel() {
                     val item = hArr.optJSONObject(i) ?: continue
                     val cItem = item.optJSONObject("config")
                     val hCfg = BacktestConfig(
-                        kTp = cItem?.optDouble("kTp", 0.50) ?: 0.50,
                         kTrail = cItem?.optDouble("kTrail", 0.25) ?: 0.25,
-                        kSl = cItem?.optDouble("kSl", 0.75) ?: 0.75,
-                        maxHoldingHours = cItem?.optInt("maxHoldingHours", 144) ?: 144,
                         perTradePct = cItem?.optDouble("perTradePct", 0.015) ?: 0.015,
                         maxPortfolioAllocation = cItem?.optDouble("maxPortfolioAllocation", 0.60) ?: 0.60,
                         minQuoteVolume24h = cItem?.optDouble("minQuoteVolume24h", 20_000_000.0) ?: 20_000_000.0,
@@ -202,8 +194,7 @@ class AiAssistantViewModel : ViewModel() {
                         maxD1ChangePct = cItem?.optDouble("maxD1ChangePct", 10.0) ?: 10.0,
                         enableTrailingStop = cItem?.optBoolean("enableTrailingStop", true) ?: true,
                         enableFloorLock = cItem?.optBoolean("enableFloorLock", true) ?: true,
-                        enableStopLoss = cItem?.optBoolean("enableStopLoss", true) ?: true,
-                        enableTimeout = cItem?.optBoolean("enableTimeout", true) ?: true
+                        floorLockMinRoi = cItem?.optDouble("floorLockMinRoi", 0.005) ?: 0.005
                     )
                     history.add(
                         BacktestHistoryRecord(
@@ -218,9 +209,7 @@ class AiAssistantViewModel : ViewModel() {
                             totalCycles = item.optInt("totalCycles", 0),
                             winCycles = 0,
                             lossCycles = 0,
-                            trailingHits = item.optInt("trailingHits", 0),
-                            slHits = item.optInt("slHits", 0),
-                            timeoutHits = item.optInt("timeoutHits", 0)
+                            trailingHits = item.optInt("trailingHits", 0)
                         )
                     )
                 }
@@ -319,16 +308,11 @@ class AiAssistantViewModel : ViewModel() {
                 minVolRatio = rec.optDouble("minVolRatio", 2.0),
                 maxD1ChangePct = rec.optDouble("maxD1ChangePct", 10.0),
                 maxAtrPercent = rec.optDouble("maxAtrPercent", 0.12),
-                btcPanicCircuitBreaker = rec.optDouble("btcPanicCircuitBreaker", -3.5),
                 slotScanMode = rec.optString("slotScanMode", "DUAL"),
-                kTp = rec.optDouble("kTp", 0.50),
                 kTrail = rec.optDouble("kTrail", 0.25),
-                kSl = rec.optDouble("kSl", 0.75),
-                maxHoldingHours = rec.optInt("maxHoldingHours", 144),
                 enableTrailingStop = rec.optBoolean("enableTrailingStop", true),
                 enableFloorLock = rec.optBoolean("enableFloorLock", true),
-                enableStopLoss = rec.optBoolean("enableStopLoss", true),
-                enableTimeout = rec.optBoolean("enableTimeout", true)
+                floorLockMinRoi = rec.optDouble("floorLockMinRoi", 0.005)
             )
             Pair(cfg, rationale)
         } catch (e: Exception) {
@@ -353,15 +337,13 @@ class AiAssistantViewModel : ViewModel() {
         val pCoins = primaryBasket?.optInt("coinsCount", 0) ?: 0
         val sCoins = secondaryBasket?.optInt("coinsCount", 0) ?: 0
         val pHours = primaryBasket?.optDouble("holdingHours", 0.0) ?: 0.0
-        val pIsTimedOut = primaryBasket?.optBoolean("isTimedOut", false) ?: false
         val pAtr = (primaryBasket?.optDouble("basketAtrPercent", 0.05) ?: 0.05) * 100.0
-        val pActivation = (primaryBasket?.optDouble("activationRoi", 0.02) ?: 0.02) * 100.0
         val pPeak = (primaryBasket?.optDouble("peakRoi", 0.0) ?: 0.0) * 100.0
         val pTrailStop = (primaryBasket?.optDouble("currentTrailingStopRoi", -1.0) ?: -1.0) * 100.0
 
         val lowerPrompt = prompt.lowercase(Locale.ROOT)
         val sb = StringBuilder()
-        sb.append("Chào anh Bình! Em xin gửi phân tích chiến lược chuyên sâu theo dữ liệu thực tế Dual Basket Momentum v2.1:\n\n")
+        sb.append("Chào anh Bình! Em xin gửi phân tích chiến lược chuyên sâu theo dữ liệu thực tế Dual Basket Momentum (Pure Trailing Stop):\n\n")
 
         when {
             lowerPrompt.contains("tối ưu") || lowerPrompt.contains("gợi ý") || lowerPrompt.contains("đề xuất") ||
@@ -397,15 +379,10 @@ class AiAssistantViewModel : ViewModel() {
                 sb.append("    \"minVolRatio\": ${rec.minVolRatio},\n")
                 sb.append("    \"maxD1ChangePct\": ${rec.maxD1ChangePct},\n")
                 sb.append("    \"maxAtrPercent\": ${rec.maxAtrPercent},\n")
-                sb.append("    \"btcPanicCircuitBreaker\": ${rec.btcPanicCircuitBreaker},\n")
-                sb.append("    \"kTp\": ${rec.kTp},\n")
                 sb.append("    \"kTrail\": ${rec.kTrail},\n")
-                sb.append("    \"kSl\": ${rec.kSl},\n")
-                sb.append("    \"maxHoldingHours\": ${rec.maxHoldingHours},\n")
                 sb.append("    \"enableTrailingStop\": ${rec.enableTrailingStop},\n")
                 sb.append("    \"enableFloorLock\": ${rec.enableFloorLock},\n")
-                sb.append("    \"enableStopLoss\": ${rec.enableStopLoss},\n")
-                sb.append("    \"enableTimeout\": ${rec.enableTimeout}\n")
+                sb.append("    \"floorLockMinRoi\": ${rec.floorLockMinRoi}\n")
                 sb.append("  },\n")
                 sb.append("  \"rationale\": \"${optResult.rationale}\"\n")
                 sb.append("}\n")
@@ -413,11 +390,11 @@ class AiAssistantViewModel : ViewModel() {
             }
 
             lowerPrompt.contains("trạng thái 2 giỏ") || (lowerPrompt.contains("giải thích") && currentScreen == "POSITIONS") -> {
-                sb.append("### 1. Phân tích Hiện trạng 2 Slot Danh mục (Dual Basket v2.1)\n")
+                sb.append("### 1. Phân tích Hiện trạng 2 Slot Danh mục (Dual Basket v2.0)\n")
                 sb.append("• **Giỏ PRIMARY (Quét 07:00 AM UTC+7):** Trạng thái `").append(pStatus).append("`")
                 if (pStatus != "EMPTY_SLOT") {
                     sb.append(", gồm ").append(pCoins).append(" vị thế, đã giữ ").append(String.format(Locale.US, "%.1f", pHours)).append("h. ")
-                    sb.append("Basket ATR: ").append(String.format(Locale.US, "%.2f", pAtr)).append("%, Ngưỡng kích hoạt Trailing: +").append(String.format(Locale.US, "%.2f", pActivation)).append("%. ")
+                    sb.append("Basket ATR: ").append(String.format(Locale.US, "%.2f", pAtr)).append("%. ")
                     if (pPeak > 0) sb.append("ROI đỉnh đạt: +").append(String.format(Locale.US, "%.2f", pPeak)).append("%. ")
                 } else {
                     sb.append(" (Slot trống, sẵn sàng mở lệnh khi nến D1 lúc 07:00 đạt chuẩn).")
@@ -432,40 +409,26 @@ class AiAssistantViewModel : ViewModel() {
                 sb.append("\n\n### 2. Đánh giá Rủi ro & Cơ Chế Trailing Take-Profit\n")
                 if (pStatus == "TRAILING_ACTIVE") {
                     sb.append("• Giỏ PRIMARY đã kích hoạt Trailing Stop động. Mức chặn lãi hiện tại: `+").append(String.format(Locale.US, "%.2f", pTrailStop)).append("%` (đã khóa trên sàn bảo vệ net +0.5%).\n")
-                    sb.append("• Theo nguyên tắc Pure Trend Following v2.1, khi đang Trailing thì KHÔNG áp dụng timeout, cho phép vị thế bám trọn con sóng dài.\n")
+                    sb.append("• Theo nguyên tắc Pure Trend Following, vị thế bám trọn con sóng lớn mà không bị timeout giải phóng vốn non.\n")
                 } else if (pStatus == "OPEN") {
-                    sb.append("• Giỏ PRIMARY đang vận hành tích lũy. Stop Loss động ở mức an toàn -max(3.5%, 0.75*Basket_ATR), thời gian timeout giữ lệnh tối đa 144h.\n")
+                    sb.append("• Giỏ PRIMARY đang vận hành theo cơ chế Pure Trend Following (Spot / Cross 1x). Khi có lãi dương sẽ khóa sàn FloorLock +0.5% net và bám sát đỉnh bằng Trailing Stop ATR.\n")
                 } else {
                     sb.append("• Cả 2 slot kiểm soát đòn bẩy an toàn Long Cross 1x (Effective Leverage <= 1.0), hoàn toàn loại trừ rủi ro thanh lý.\n")
                 }
 
                 sb.append("\n### 3. Đề xuất Hành động cho Anh Bình\n")
-                if (pIsTimedOut && pStatus == "OPEN") {
-                    sb.append("• Giỏ PRIMARY đã vượt mốc 144 giờ tích lũy mà chưa chạm trailing. Hệ thống đề xuất tất toán để giải phóng slot cho phiên mới.")
-                } else {
-                    sb.append("• Duy trì kỷ luật hệ thống để thuật toán tự động bám đỉnh hoặc chốt lời, không can thiệp bằng tay.")
-                }
+                sb.append("• Duy trì kỷ luật hệ thống để thuật toán tự động bám đỉnh hoặc chốt lời bằng Trailing Stop & FloorLock, không can thiệp thủ công.")
             }
 
-            lowerPrompt.contains("timeout") || lowerPrompt.contains("72h") || lowerPrompt.contains("144h") -> {
-                sb.append("### 1. Kiểm tra Giới hạn Thời gian Giữ Lệnh (Timeout)\n")
-                sb.append("• Giỏ PRIMARY hiện đã nắm giữ: **").append(String.format(Locale.US, "%.1f", pHours)).append(" giờ** trên ngưỡng tối đa 144 giờ.\n")
-                sb.append("• Trạng thái Timeout: ").append(if (pIsTimedOut) "**ĐÃ QUÁ HẠN (CẦN TẤT TOÁN)**" else "Vẫn nằm trong khung an toàn").append(".\n")
-
-                sb.append("\n### 2. Cải Tiến Thoát Lệnh v2.1\n")
-                sb.append("• Trong phiên bản v2.1, thời gian timeout ở trạng thái OPEN được nâng từ 72h lên 144h (6 ngày) giúp altcoin có đủ thời gian tích lũy và bứt phá.\n")
-                sb.append("• ĐẶC BIỆT: Khi đã vượt ngưỡng kích hoạt Trailing (TRAILING_ACTIVE), timeout bị vô hiệu hóa hoàn toàn để anh Bình ăn trọn con sóng siêu lớn.\n")
-            }
-
-            lowerPrompt.contains("trailing stop") || lowerPrompt.contains("khoảng cách") -> {
-                sb.append("### 1. Khoảng cách Trailing Stop & Đỉnh ROI\n")
-                sb.append("• Ngưỡng kích hoạt Trailing (activationRoi): **+").append(String.format(Locale.US, "%.2f", pActivation)).append("%**\n")
+            lowerPrompt.contains("thoát lệnh") || lowerPrompt.contains("trailing stop") || lowerPrompt.contains("floorlock") || lowerPrompt.contains("khoảng cách") -> {
+                sb.append("### 1. Cơ Chế Thoát Lệnh Duy Nhất (Pure Trailing Stop & FloorLock)\n")
+                sb.append("• Đã loại bỏ hoàn toàn Stop Loss cứng, Timeout và TP cố định để tối ưu hóa khả năng bùng nổ của altcoin.\n")
                 sb.append("• Đỉnh ROI cao nhất từng chạm (peakRoi): **+").append(String.format(Locale.US, "%.2f", pPeak)).append("%**\n")
-                sb.append("• Chặn lãi Trailing hiện tại (currentTrailingStopRoi): **").append(if (pTrailStop > -0.9) "+${String.format(Locale.US, "%.2f", pTrailStop)}%" else "Chưa kích hoạt").append("**\n")
+                sb.append("• Chặn lãi Trailing hiện tại (currentTrailingStopRoi): **").append(if (pTrailStop > -0.9) "+${String.format(Locale.US, "%.2f", pTrailStop)}%" else "Chờ kích hoạt").append("**\n")
 
-                sb.append("\n### 2. Đánh giá Vùng Đệm ATR\n")
+                sb.append("\n### 2. Đánh giá Vùng Đệm ATR & Sàn Khóa Lãi\n")
                 sb.append("• Bước đệm giật lùi là `K_Trail * Basket ATR%` (khoảng +0.6% đến +1.2%).\n")
-                sb.append("• Đã có sàn bảo hiểm `floorLockRoi = +0.5% net` đảm bảo lệnh luôn có lãi dương sau khi trừ phí giao dịch.\n")
+                sb.append("• Sàn bảo hiểm `floorLockRoi = +0.5% net` đảm bảo lệnh luôn có lãi dương sau khi trừ phí giao dịch.\n")
             }
 
             else -> {

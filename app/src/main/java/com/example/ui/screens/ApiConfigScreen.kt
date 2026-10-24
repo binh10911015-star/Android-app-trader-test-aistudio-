@@ -21,28 +21,33 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AutoGraph
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Error
+import androidx.compose.material.icons.filled.FilterAlt
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Restore
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material.icons.filled.TrendingUp
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material.icons.filled.VpnKey
-import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.OutlinedButton
@@ -51,16 +56,23 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.TabRowDefaults
+import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
@@ -68,9 +80,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BinanceAccountVerificationResult
+import com.example.model.TradeSettings
 import com.example.ui.MainViewModel
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
@@ -90,12 +104,686 @@ fun ApiConfigScreen(
     viewModel: MainViewModel,
     onBack: (() -> Unit)? = null
 ) {
+    var selectedTab by remember { mutableIntStateOf(0) }
     val apiConfig by viewModel.apiConfig.collectAsState()
     val isVerifying by viewModel.isVerifyingApi.collectAsState()
     val uiState by viewModel.uiState.collectAsState()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(DarkBg)
+            .testTag("api_config_screen")
+    ) {
+        // TOP HEADER
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            color = DarkSurfaceElevated,
+            border = BorderStroke(1.dp, DarkBorder)
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onBack != null) {
+                        IconButton(
+                            onClick = onBack,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .testTag("btn_back_settings")
+                        ) {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Quay lại",
+                                tint = Color.White
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                    }
+                    Column {
+                        Text(
+                            text = "Cài Đặt & Cấu Hình Hệ Thống",
+                            color = TextPrimary,
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (selectedTab == 0) "Thông số chiến lược (Đồng bộ Backtest)" else "Kết nối tài khoản sàn Binance",
+                            color = TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = if (apiConfig.isConnected) CryptoGreen.copy(alpha = 0.18f) else DarkSurfaceHighlight
+                ) {
+                    Text(
+                        text = if (apiConfig.isConnected) "API SẴN SÀNG ✓" else "CHƯA KẾT NỐI",
+                        color = if (apiConfig.isConnected) CryptoGreen else TextSecondary,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+        }
+
+        // TAB ROW SELECTOR
+        TabRow(
+            selectedTabIndex = selectedTab,
+            containerColor = DarkSurface,
+            contentColor = CryptoGold,
+            indicator = { tabPositions ->
+                TabRowDefaults.SecondaryIndicator(
+                    modifier = Modifier.tabIndicatorOffset(tabPositions[selectedTab]),
+                    color = CryptoGold,
+                    height = 2.5.dp
+                )
+            },
+            divider = { HorizontalDivider(color = DarkBorder, thickness = 1.dp) }
+        ) {
+            Tab(
+                selected = selectedTab == 0,
+                onClick = { selectedTab = 0 },
+                modifier = Modifier.testTag("tab_strategy_settings"),
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Tune,
+                            contentDescription = null,
+                            tint = if (selectedTab == 0) CryptoGold else TextMuted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Cài Đặt Chiến Lược",
+                            fontSize = 12.sp,
+                            fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
+                            color = if (selectedTab == 0) CryptoGold else TextMuted
+                        )
+                    }
+                }
+            )
+
+            Tab(
+                selected = selectedTab == 1,
+                onClick = { selectedTab = 1 },
+                modifier = Modifier.testTag("tab_binance_api"),
+                text = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.VpnKey,
+                            contentDescription = null,
+                            tint = if (selectedTab == 1) CryptoGold else TextMuted,
+                            modifier = Modifier.size(15.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Kết Nối API Binance",
+                            fontSize = 12.sp,
+                            fontWeight = if (selectedTab == 1) FontWeight.Bold else FontWeight.Medium,
+                            color = if (selectedTab == 1) CryptoGold else TextMuted
+                        )
+                    }
+                }
+            )
+        }
+
+        // TAB CONTENT
+        if (selectedTab == 0) {
+            StrategySettingsContent(viewModel = viewModel, currentSettings = uiState.settings)
+        } else {
+            BinanceApiSettingsContent(viewModel = viewModel, apiConfig = apiConfig, isVerifying = isVerifying)
+        }
+    }
+}
+
+/**
+ * Tab Cài Đặt Chiến Lược Giao Dịch
+ * Đầy đủ bộ thông số tương tự Backtest, loại bỏ hoàn toàn SL, Fixed TP, Timeout, BTC Breaker.
+ * Đồng bộ 2 chiều tự động với Backtest.
+ */
+@Composable
+private fun StrategySettingsContent(
+    viewModel: MainViewModel,
+    currentSettings: TradeSettings
+) {
+    // Form state variables initialized with current settings
+    var simulatedBalanceText by remember(currentSettings.simulatedBalanceUsdt) {
+        mutableStateOf(currentSettings.simulatedBalanceUsdt.toInt().toString())
+    }
+    var perTradePctText by remember(currentSettings.perTradePct) {
+        mutableStateOf((currentSettings.perTradePct * 100.0).toString())
+    }
+    var maxAllocationPctText by remember(currentSettings.maxPortfolioAllocation) {
+        mutableStateOf((currentSettings.maxPortfolioAllocation * 100.0).toString())
+    }
+
+    var minQuoteVolumeText by remember(currentSettings.minQuoteVolume24h) {
+        mutableStateOf(currentSettings.minQuoteVolume24h.toLong().toString())
+    }
+    var minVolRatioText by remember(currentSettings.minVolRatio) {
+        mutableStateOf(currentSettings.minVolRatio.toString())
+    }
+    var minD1ChangePctText by remember(currentSettings.minD1ChangePct) {
+        mutableStateOf(currentSettings.minD1ChangePct.toString())
+    }
+    var maxD1ChangePctText by remember(currentSettings.maxD1ChangePct) {
+        mutableStateOf(currentSettings.maxD1ChangePct.toString())
+    }
+    var maxAtrPctText by remember(currentSettings.maxAtrPercent) {
+        mutableStateOf((currentSettings.maxAtrPercent * 100.0).toString())
+    }
+
+    var slotScanMode by remember(currentSettings.slotScanMode) {
+        mutableStateOf(currentSettings.slotScanMode)
+    }
+
+    // Pure Trailing Stop & FloorLock (KHÔNG CÒN STOP LOSS, TIMEOUT, TP CỐ ĐỊNH)
+    var enableTrailingStop by remember(currentSettings.enableTrailingStop) {
+        mutableStateOf(currentSettings.enableTrailingStop)
+    }
+    var enableFloorLock by remember(currentSettings.enableFloorLock) {
+        mutableStateOf(currentSettings.enableFloorLock)
+    }
+    var kTrailText by remember(currentSettings.kTrail) {
+        mutableStateOf(currentSettings.kTrail.toString())
+    }
+    var floorLockMinRoiText by remember(currentSettings.floorLockMinRoi) {
+        mutableStateOf((currentSettings.floorLockMinRoi * 100.0).toString())
+    }
+
+    var saveSuccessMsg by remember { mutableStateOf<String?>(null) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        // Banner thông báo đồng bộ 2 chiều
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(10.dp),
+            color = CryptoGold.copy(alpha = 0.12f),
+            border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+        ) {
+            Row(
+                modifier = Modifier.padding(10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Sync,
+                    contentDescription = null,
+                    tint = CryptoGold,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(modifier = Modifier.width(10.dp))
+                Column {
+                    Text(
+                        text = "Đồng Bộ 2 Chiều Tự Động Với Backtest",
+                        color = CryptoGold,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "Mọi thay đổi lưu tại đây tự động cập nhật sang Thẻ Backtest. Thoát lệnh đơn nhất: FloorLock (+0.5%) & ATR Trailing Stop.",
+                        color = Color.White.copy(alpha = 0.85f),
+                        fontSize = 10.5.sp,
+                        lineHeight = 14.sp
+                    )
+                }
+            }
+        }
+
+        // ==========================================
+        // NHÓM 1: KHUNG THỜI GIAN & SLOT QUÉT
+        // ==========================================
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("strategy_group_1_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.Schedule, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "1. Chế Độ Slot & Khung Nến Quét", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(text = "Chế độ Slot quét giỏ lệnh", color = TextMuted, fontSize = 11.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("DUAL" to "Dual (07h & 19h)", "PRIMARY_ONLY" to "Slot Chính (07h)", "SECONDARY_ONLY" to "Slot Phụ (19h)").forEach { (key, label) ->
+                        val isSel = slotScanMode == key
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp))
+                                .clickable { slotScanMode = key },
+                            color = if (isSel) CryptoGold.copy(alpha = 0.2f) else DarkSurface,
+                            border = BorderStroke(1.dp, if (isSel) CryptoGold else DarkBorder)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSel) CryptoGold else TextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(vertical = 8.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // NHÓM 2: QUẢN TRỊ VỐN & PHÂN BỔ (MAX 60% ALLOCATION)
+        // ==========================================
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("strategy_group_2_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "2. Quản Trị Vốn & Phân Bổ (Spot / Cross 1x)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(text = "Tổng vốn quản lý / Giả lập (USDT)", color = TextMuted, fontSize = 11.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = simulatedBalanceText,
+                    onValueChange = { simulatedBalanceText = it },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = CryptoGold,
+                        unfocusedBorderColor = DarkBorder,
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    )
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Vốn/Lệnh (%) (chuẩn 1.5%)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = perTradePctText,
+                            onValueChange = { perTradePctText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Trần danh mục (%) (Tối đa 60%)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = maxAllocationPctText,
+                            onValueChange = { maxAllocationPctText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
+                    }
+                }
+            }
+        }
+
+        // ==========================================
+        // NHÓM 3: BỘ LỌC MACRO & CHỌN COIN
+        // ==========================================
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("strategy_group_3_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, DarkBorder)
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.FilterAlt, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "3. Bộ Lọc Macro & Dòng Tiền", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Min Vol 24h (USDT)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = minQuoteVolumeText,
+                            onValueChange = { minQuoteVolumeText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Ngưỡng RVol(20) tối thiểu", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = minVolRatioText,
+                            onValueChange = { minVolRatioText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Biên độ D1 min (%)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = minD1ChangePctText,
+                            onValueChange = { minD1ChangePctText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Biên độ D1 max (%)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = maxD1ChangePctText,
+                            onValueChange = { maxD1ChangePctText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
+                Spacer(modifier = Modifier.height(4.dp))
+                OutlinedTextField(
+                    value = maxAtrPctText,
+                    onValueChange = { maxAtrPctText = it },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                )
+            }
+        }
+
+        // ==========================================
+        // NHÓM 4: CƠ CHẾ THOÁT LỆNH PURE TRAILING & FLOORLOCK
+        // (ĐÃ XÓA SL, TP CỐ ĐỊNH, TIMEOUT)
+        // ==========================================
+        Card(
+            modifier = Modifier.fillMaxWidth().testTag("strategy_group_4_card"),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+        ) {
+            Column(modifier = Modifier.padding(12.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(imageVector = Icons.Default.TrendingUp, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(text = "4. Cơ Chế Thoát Lệnh (Pure Trailing Stop)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = DarkSurface,
+                    border = BorderStroke(1.dp, DarkBorder)
+                ) {
+                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(
+                            text = "BẬT / TẮT CƠ CHẾ THOÁT LỆNH:",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = CryptoGold
+                        )
+
+                        // Toggle 1: Trailing Stop ATR
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("1. Trailing Stop ATR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableTrailingStop) CryptoGreen else TextMuted)
+                                Text("Bám đỉnh theo bước đệm ATR giỏ để chốt trọn sóng", fontSize = 10.sp, color = TextMuted)
+                            }
+                            Switch(
+                                checked = enableTrailingStop,
+                                onCheckedChange = { enableTrailingStop = it },
+                                modifier = Modifier.scale(0.72f).testTag("strategy_toggle_trailing_stop"),
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                            )
+                        }
+
+                        HorizontalDivider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
+
+                        // Toggle 2: Sàn khóa lãi FloorLock
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("2. Sàn khóa lãi FloorLock", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableFloorLock) CryptoGreen else TextMuted)
+                                Text("Khóa ngưỡng bảo toàn lãi net tối thiểu khi đã trailing", fontSize = 10.sp, color = TextMuted)
+                            }
+                            Switch(
+                                checked = enableFloorLock,
+                                onCheckedChange = { enableFloorLock = it },
+                                modifier = Modifier.scale(0.72f).testTag("strategy_toggle_floor_lock"),
+                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Hệ số Trượt Trailing (K_Trail)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = kTrailText,
+                            onValueChange = { kTrailText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Sàn khóa lãi tối thiểu (%)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        OutlinedTextField(
+                            value = floorLockMinRoiText,
+                            onValueChange = { floorLockMinRoiText = it },
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Thông báo thành công
+        saveSuccessMsg?.let { msg ->
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(8.dp),
+                color = CryptoGreen.copy(alpha = 0.15f),
+                border = BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.5f))
+            ) {
+                Row(
+                    modifier = Modifier.padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(imageVector = Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGreen, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(text = msg, color = CryptoGreen, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+        }
+
+        // ==========================================
+        // ACTION BUTTONS (LƯU, ĐỒNG BỘ, RESET)
+        // ==========================================
+        Button(
+            onClick = {
+                val parsedBalance = simulatedBalanceText.toDoubleOrNull() ?: currentSettings.simulatedBalanceUsdt
+                val parsedPerTrade = (perTradePctText.toDoubleOrNull() ?: 1.5) / 100.0
+                val parsedMaxAlloc = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0
+                val parsedMinQuote = minQuoteVolumeText.toDoubleOrNull() ?: currentSettings.minQuoteVolume24h
+                val parsedMinVolRatio = minVolRatioText.toDoubleOrNull() ?: currentSettings.minVolRatio
+                val parsedMinD1 = minD1ChangePctText.toDoubleOrNull() ?: currentSettings.minD1ChangePct
+                val parsedMaxD1 = maxD1ChangePctText.toDoubleOrNull() ?: currentSettings.maxD1ChangePct
+                val parsedMaxAtr = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0
+                val parsedKTrail = kTrailText.toDoubleOrNull() ?: currentSettings.kTrail
+                val parsedFloorRoi = (floorLockMinRoiText.toDoubleOrNull() ?: 0.5) / 100.0
+
+                val newSettings = currentSettings.copy(
+                    simulatedBalanceUsdt = parsedBalance,
+                    perTradePct = parsedPerTrade,
+                    maxPortfolioAllocation = parsedMaxAlloc,
+                    minQuoteVolume24h = parsedMinQuote,
+                    minVolRatio = parsedMinVolRatio,
+                    minD1ChangePct = parsedMinD1,
+                    maxD1ChangePct = parsedMaxD1,
+                    maxAtrPercent = parsedMaxAtr,
+                    slotScanMode = slotScanMode,
+                    enableTrailingStop = enableTrailingStop,
+                    enableFloorLock = enableFloorLock,
+                    kTrail = parsedKTrail,
+                    floorLockMinRoi = parsedFloorRoi,
+                    capitalPerTradeUsdt = parsedBalance * parsedPerTrade
+                )
+
+                viewModel.updateStrategySettingsAndSyncWithBacktest(newSettings)
+                saveSuccessMsg = "✓ Đã lưu cài đặt chiến lược & tự động đồng bộ sang thẻ Backtest!"
+            },
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(46.dp)
+                .testTag("btn_save_and_sync_strategy"),
+            colors = ButtonDefaults.buttonColors(containerColor = CryptoGold, contentColor = DarkBg),
+            shape = RoundedCornerShape(10.dp)
+        ) {
+            Icon(imageVector = Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(text = "LƯU & ĐỒNG BỘ VỚI BACKTEST", fontSize = 12.5.sp, fontWeight = FontWeight.Bold)
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedButton(
+                onClick = {
+                    viewModel.syncStrategySettingsFromBacktest()
+                    saveSuccessMsg = "✓ Đã nạp và cập nhật toàn bộ cấu hình từ thẻ Backtest!"
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .testTag("btn_copy_from_backtest"),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoGold),
+                border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f)),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Sync, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = "Lấy từ Backtest", fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            OutlinedButton(
+                onClick = {
+                    val defaultSettings = TradeSettings()
+                    viewModel.updateStrategySettingsAndSyncWithBacktest(defaultSettings)
+                    saveSuccessMsg = "✓ Đã khôi phục bộ thông số Dual Basket v2.0 mặc định!"
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .height(40.dp)
+                    .testTag("btn_reset_strategy_defaults"),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary),
+                border = BorderStroke(1.dp, DarkBorder),
+                shape = RoundedCornerShape(10.dp)
+            ) {
+                Icon(imageVector = Icons.Default.Restore, contentDescription = null, modifier = Modifier.size(14.dp))
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(text = "Khôi phục chuẩn", fontSize = 11.sp)
+            }
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+    }
+}
+
+/**
+ * Tab Kết Nối API Binance (Testnet & Mainnet)
+ */
+@Composable
+private fun BinanceApiSettingsContent(
+    viewModel: MainViewModel,
+    apiConfig: com.example.model.BinanceApiConfig,
+    isVerifying: Boolean
+) {
     val clipboardManager = LocalClipboardManager.current
 
-    // Form states initialized with current config or default testnet credentials
     val defaultInitKey = if (apiConfig.apiKey.isNotBlank()) apiConfig.apiKey else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY
     val defaultInitSecret = if (apiConfig.apiSecret.isNotBlank()) apiConfig.apiSecret else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET
 
@@ -107,60 +795,14 @@ fun ApiConfigScreen(
 
     var showSecret by remember { mutableStateOf(false) }
     var verificationResult by remember { mutableStateOf<BinanceAccountVerificationResult?>(null) }
-    var showSuccessToast by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(DarkBg)
             .verticalScroll(rememberScrollState())
-            .padding(16.dp)
+            .padding(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Top Title Row
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.VpnKey,
-                    contentDescription = null,
-                    tint = CryptoGold,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
-                Column {
-                    Text(
-                        text = "Kết Nối Binance Futures API",
-                        color = TextPrimary,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Text(
-                        text = "Giao thức HMAC-SHA256 bảo mật trực tiếp",
-                        color = TextSecondary,
-                        fontSize = 11.sp
-                    )
-                }
-            }
-
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = if (apiConfig.isConnected) CryptoGreen.copy(alpha = 0.18f) else DarkSurfaceHighlight
-            ) {
-                Text(
-                    text = if (apiConfig.isConnected) "ĐÃ KẾT NỐI ✓" else "CHƯA KẾT NỐI",
-                    color = if (apiConfig.isConnected) CryptoGreen else TextSecondary,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
-
         // Connection Status Banner
         if (apiConfig.isConnected) {
             Card(
@@ -170,12 +812,12 @@ fun ApiConfigScreen(
                 border = BorderStroke(1.dp, CryptoGreen.copy(alpha = 0.4f))
             ) {
                 Row(
-                    modifier = Modifier.padding(14.dp),
+                    modifier = Modifier.padding(12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(38.dp)
+                            .size(36.dp)
                             .background(CryptoGreen.copy(alpha = 0.25f), CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
@@ -183,184 +825,83 @@ fun ApiConfigScreen(
                             imageVector = Icons.Default.CheckCircle,
                             contentDescription = null,
                             tint = CryptoGreen,
-                            modifier = Modifier.size(22.dp)
+                            modifier = Modifier.size(20.dp)
                         )
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
                             text = if (apiConfig.isTestnet) "Tài Khoản Testnet Demo Binance" else "Tài Khoản Live Mainnet Binance",
                             color = CryptoGreen,
-                            fontSize = 13.sp,
+                            fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Spacer(modifier = Modifier.height(2.dp))
                         val bal = apiConfig.totalWalletBalance
                         Text(
                             text = if (bal != null) "Số dư ví: $${String.format(Locale.US, "%,.2f", bal)} USDT" else "Đã kết nối thành công",
                             color = TextPrimary,
-                            fontSize = 12.sp,
+                            fontSize = 11.5.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.SemiBold
                         )
                     }
                 }
             }
-            Spacer(modifier = Modifier.height(14.dp))
         }
-
-        // --- BOT MASTER TOGGLE SWITCH CARD ---
-        val isBotRunning = uiState.settings.autoTradeEnabled
-        Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .testTag("bot_master_switch_card"),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = if (isBotRunning) CryptoGreen.copy(alpha = 0.12f) else DarkSurfaceElevated
-            ),
-            border = BorderStroke(
-                width = if (isBotRunning) 1.5.dp else 1.dp,
-                color = if (isBotRunning) CryptoGreen else DarkBorder
-            )
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(14.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(42.dp)
-                            .background(
-                                color = if (isBotRunning) CryptoGreen.copy(alpha = 0.22f) else DarkSurfaceHighlight,
-                                shape = CircleShape
-                            ),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = if (isBotRunning) Icons.Default.AutoGraph else Icons.Default.Lock,
-                            contentDescription = null,
-                            tint = if (isBotRunning) CryptoGreen else TextMuted,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = "Kích Hoạt Bot Auto-Trade",
-                                color = TextPrimary,
-                                fontSize = 13.5.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Surface(
-                                shape = RoundedCornerShape(6.dp),
-                                color = if (isBotRunning) CryptoGreen else DarkSurfaceHighlight
-                            ) {
-                                Text(
-                                    text = if (isBotRunning) "ĐANG CHẠY" else "ĐÃ TẮT",
-                                    color = if (isBotRunning) DarkBg else TextSecondary,
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                )
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        Text(
-                            text = if (isBotRunning)
-                                "Bot đang quét tín hiệu và tự động vào lệnh Futures 24/7"
-                            else
-                                "Gạt công tắc để kích hoạt hệ thống tự động giao dịch",
-                            color = if (isBotRunning) CryptoGreen.copy(alpha = 0.95f) else TextSecondary,
-                            fontSize = 11.sp
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.width(8.dp))
-
-                Switch(
-                    checked = isBotRunning,
-                    onCheckedChange = { checked ->
-                        viewModel.toggleAutoTrade(checked)
-                    },
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = CryptoGreen,
-                        checkedBorderColor = CryptoGreen,
-                        uncheckedThumbColor = TextMuted,
-                        uncheckedTrackColor = DarkSurfaceHighlight,
-                        uncheckedBorderColor = DarkBorder
-                    ),
-                    modifier = Modifier.testTag("bot_toggle_switch")
-                )
-            }
-        }
-
-        Spacer(modifier = Modifier.height(14.dp))
 
         // Environment Selector: Testnet vs Mainnet
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = "1. Chọn Môi Trường Binance",
+                    text = "1. Môi Trường Binance Futures",
                     color = TextPrimary,
-                    fontSize = 13.sp,
+                    fontSize = 12.5.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     // Testnet Option
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable { isTestnet = true }
                             .border(
                                 1.dp,
                                 if (isTestnet) CryptoGold else DarkBorder,
-                                RoundedCornerShape(10.dp)
+                                RoundedCornerShape(8.dp)
                             ),
                         color = if (isTestnet) CryptoGold.copy(alpha = 0.12f) else DarkSurface
                     ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
+                        Column(modifier = Modifier.padding(8.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
-                                        .size(10.dp)
+                                        .size(8.dp)
                                         .background(if (isTestnet) CryptoGold else DarkSurfaceHighlight, CircleShape)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
                                     text = "Testnet (Demo)",
                                     color = if (isTestnet) CryptoGold else TextPrimary,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "testnet.binancefuture.com\nTiền giả lập, không rủi ro",
+                                text = "testnet.binancefuture.com\nTiền giả lập an toàn",
                                 color = TextSecondary,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp
+                                fontSize = 9.5.sp,
+                                lineHeight = 12.sp
                             )
                         }
                     }
@@ -369,36 +910,36 @@ fun ApiConfigScreen(
                     Surface(
                         modifier = Modifier
                             .weight(1f)
-                            .clip(RoundedCornerShape(10.dp))
+                            .clip(RoundedCornerShape(8.dp))
                             .clickable { isTestnet = false }
                             .border(
                                 1.dp,
                                 if (!isTestnet) CryptoGreen else DarkBorder,
-                                RoundedCornerShape(10.dp)
+                                RoundedCornerShape(8.dp)
                             ),
                         color = if (!isTestnet) CryptoGreen.copy(alpha = 0.12f) else DarkSurface
                     ) {
-                        Column(modifier = Modifier.padding(10.dp)) {
+                        Column(modifier = Modifier.padding(8.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Box(
                                     modifier = Modifier
-                                        .size(10.dp)
+                                        .size(8.dp)
                                         .background(if (!isTestnet) CryptoGreen else DarkSurfaceHighlight, CircleShape)
                                 )
-                                Spacer(modifier = Modifier.width(6.dp))
+                                Spacer(modifier = Modifier.width(5.dp))
                                 Text(
                                     text = "Live Mainnet",
                                     color = if (!isTestnet) CryptoGreen else TextPrimary,
-                                    fontSize = 12.sp,
+                                    fontSize = 11.5.sp,
                                     fontWeight = FontWeight.Bold
                                 )
                             }
-                            Spacer(modifier = Modifier.height(4.dp))
+                            Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "fapi.binance.com\nTiền thật tài khoản Binance",
+                                text = "fapi.binance.com\nKhớp tiền thật Binance",
                                 color = TextSecondary,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp
+                                fontSize = 9.5.sp,
+                                lineHeight = 12.sp
                             )
                         }
                     }
@@ -406,22 +947,20 @@ fun ApiConfigScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
         // API Credentials Input Card
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
+            shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Text(
-                    text = "2. Thông Tin Khóa API (API Credentials)",
+                    text = "2. Khóa API (HMAC-SHA256)",
                     color = TextPrimary,
-                    fontSize = 13.sp,
+                    fontSize = 12.5.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // API Key Field
                 Text(text = "Binance API Key", color = TextSecondary, fontSize = 11.sp)
@@ -429,19 +968,19 @@ fun ApiConfigScreen(
                 OutlinedTextField(
                     value = apiKey,
                     onValueChange = { apiKey = it.trim() },
-                    placeholder = { Text("Nhập 64 ký tự API Key...", fontSize = 12.sp) },
+                    placeholder = { Text("Nhập API Key...", fontSize = 11.sp) },
                     singleLine = true,
                     trailingIcon = {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             if (apiKey.isNotEmpty()) {
                                 IconButton(onClick = { apiKey = "" }) {
-                                    Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = TextMuted)
+                                    Icon(Icons.Default.Clear, contentDescription = "Xóa", tint = TextMuted, modifier = Modifier.size(16.dp))
                                 }
                             }
                             IconButton(onClick = {
                                 clipboardManager.getText()?.text?.let { apiKey = it.trim() }
                             }) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = "Dán", tint = CryptoGold)
+                                Icon(Icons.Default.ContentPaste, contentDescription = "Dán", tint = CryptoGold, modifier = Modifier.size(16.dp))
                             }
                         }
                     },
@@ -453,13 +992,11 @@ fun ApiConfigScreen(
                         focusedContainerColor = DarkSurface,
                         unfocusedContainerColor = DarkSurface
                     ),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("api_key_input")
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("api_key_input")
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
                 // API Secret Field
                 Text(text = "Binance API Secret", color = TextSecondary, fontSize = 11.sp)
@@ -467,7 +1004,7 @@ fun ApiConfigScreen(
                 OutlinedTextField(
                     value = apiSecret,
                     onValueChange = { apiSecret = it.trim() },
-                    placeholder = { Text("Nhập 64 ký tự Secret Key...", fontSize = 12.sp) },
+                    placeholder = { Text("Nhập Secret Key...", fontSize = 11.sp) },
                     singleLine = true,
                     visualTransformation = if (showSecret) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
@@ -475,7 +1012,8 @@ fun ApiConfigScreen(
                             Icon(
                                 imageVector = if (showSecret) Icons.Default.VisibilityOff else Icons.Default.Visibility,
                                 contentDescription = if (showSecret) "Ẩn Secret" else "Hiện Secret",
-                                tint = TextSecondary
+                                tint = TextSecondary,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     },
@@ -487,26 +1025,24 @@ fun ApiConfigScreen(
                         focusedContainerColor = DarkSurface,
                         unfocusedContainerColor = DarkSurface
                     ),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("api_secret_input")
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("api_secret_input")
                 )
 
-                Spacer(modifier = Modifier.height(10.dp))
+                Spacer(modifier = Modifier.height(8.dp))
 
-                // Access PIN Field (Optional extra security layer)
+                // Access PIN Field
                 Text(text = "Mã PIN Bảo Vệ (4-6 số)", color = TextSecondary, fontSize = 11.sp)
                 Spacer(modifier = Modifier.height(4.dp))
                 OutlinedTextField(
                     value = accessPin,
                     onValueChange = { if (it.length <= 6 && it.all { char -> char.isDigit() }) accessPin = it },
-                    placeholder = { Text("Nhập mã PIN xác nhận vào lệnh (mặc định: 1234)", fontSize = 12.sp) },
+                    placeholder = { Text("Mã PIN (mặc định: 1234)", fontSize = 11.sp) },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
                     visualTransformation = PasswordVisualTransformation(),
                     leadingIcon = {
-                        Icon(Icons.Default.Lock, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.Lock, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(14.dp))
                     },
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CryptoGold,
@@ -516,20 +1052,18 @@ fun ApiConfigScreen(
                         focusedContainerColor = DarkSurface,
                         unfocusedContainerColor = DarkSurface
                     ),
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("access_pin_input")
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth().testTag("access_pin_input")
                 )
 
                 if (!isTestnet) {
-                    Spacer(modifier = Modifier.height(12.dp))
+                    Spacer(modifier = Modifier.height(10.dp))
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
                             .background(DarkSurfaceHighlight)
-                            .padding(horizontal = 10.dp, vertical = 8.dp),
+                            .padding(horizontal = 10.dp, vertical = 6.dp),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
@@ -541,14 +1075,15 @@ fun ApiConfigScreen(
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Lệnh mua/bán sẽ khớp trực tiếp trên Binance",
+                                text = "Lệnh khớp trực tiếp trên sàn Binance Mainnet",
                                 color = CryptoRed.copy(alpha = 0.9f),
-                                fontSize = 10.sp
+                                fontSize = 9.5.sp
                             )
                         }
                         Switch(
                             checked = liveTradingEnabled,
                             onCheckedChange = { liveTradingEnabled = it },
+                            modifier = Modifier.scale(0.75f),
                             colors = SwitchDefaults.colors(
                                 checkedThumbColor = DarkBg,
                                 checkedTrackColor = CryptoGreen,
@@ -561,203 +1096,140 @@ fun ApiConfigScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(14.dp))
-
-        // Action Buttons: Direct Test Connection & Save
-        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            // Button: Test Direct Binance Connection
-            Button(
-                onClick = {
-                    if (apiKey.isEmpty() || apiSecret.isEmpty()) {
-                        verificationResult = BinanceAccountVerificationResult(
-                            isSuccess = false,
-                            errorMessage = "Vui lòng nhập đầy đủ API Key và API Secret trước khi kiểm tra."
-                        )
-                    } else {
-                        viewModel.saveAndVerifyApiCredentials(
-                            apiKey = apiKey,
-                            apiSecret = apiSecret,
-                            accessPin = accessPin,
-                            isTestnet = isTestnet,
-                            liveTradingEnabled = liveTradingEnabled
-                        ) { result ->
-                            verificationResult = result
-                        }
-                    }
-                },
-                enabled = !isVerifying,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp)
-                    .testTag("test_api_connection_button"),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = CryptoGold,
-                    contentColor = DarkBg
-                )
-            ) {
-                if (isVerifying) {
-                    CircularProgressIndicator(
-                        color = DarkBg,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "Đang kết nối máy chủ Binance Futures...",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
+        // Test Connection & Clear buttons
+        Button(
+            onClick = {
+                if (apiKey.isEmpty() || apiSecret.isEmpty()) {
+                    verificationResult = BinanceAccountVerificationResult(
+                        isSuccess = false,
+                        errorMessage = "Vui lòng nhập đầy đủ API Key và API Secret trước khi kiểm tra."
                     )
                 } else {
-                    Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "⚡ KIỂM TRA KẾT NỐI TRỰC TIẾP BINANCE",
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    viewModel.saveAndVerifyApiCredentials(
+                        apiKey = apiKey,
+                        apiSecret = apiSecret,
+                        accessPin = accessPin,
+                        isTestnet = isTestnet,
+                        liveTradingEnabled = liveTradingEnabled
+                    ) { result ->
+                        verificationResult = result
+                    }
                 }
-            }
-
-            // Button: Clear credentials
-            if (apiConfig.isConfigured || apiKey.isNotEmpty()) {
-                OutlinedButton(
-                    onClick = {
-                        apiKey = ""
-                        apiSecret = ""
-                        accessPin = "1234"
-                        verificationResult = null
-                        viewModel.clearApiCredentials()
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(42.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoRed),
-                    border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.5f))
-                ) {
-                    Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(14.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "Xóa thông tin API đã lưu", fontSize = 12.sp)
-                }
+            },
+            enabled = !isVerifying,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+                .testTag("test_api_connection_button"),
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(containerColor = CryptoGold, contentColor = DarkBg)
+        ) {
+            if (isVerifying) {
+                CircularProgressIndicator(color = DarkBg, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(text = "Đang kết nối Binance Futures...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+            } else {
+                Icon(Icons.Default.VpnKey, contentDescription = null, modifier = Modifier.size(15.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "KIỂM TRA KẾT NỐI BINANCE", fontSize = 12.sp, fontWeight = FontWeight.Bold)
             }
         }
 
-        // Direct Test Connection Result Card
+        if (apiConfig.isConfigured || apiKey.isNotEmpty()) {
+            OutlinedButton(
+                onClick = {
+                    apiKey = ""
+                    apiSecret = ""
+                    accessPin = "1234"
+                    verificationResult = null
+                    viewModel.clearApiCredentials()
+                },
+                modifier = Modifier.fillMaxWidth().height(38.dp),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoRed),
+                border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.5f))
+            ) {
+                Icon(Icons.Default.Clear, contentDescription = null, modifier = Modifier.size(13.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(text = "Xóa thông tin API đã lưu", fontSize = 11.sp)
+            }
+        }
+
+        // Verification Result Card
         verificationResult?.let { result ->
-            Spacer(modifier = Modifier.height(14.dp))
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(10.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = if (result.isSuccess) CryptoGreen.copy(alpha = 0.12f) else CryptoRed.copy(alpha = 0.12f)
                 ),
-                border = BorderStroke(
-                    1.dp,
-                    if (result.isSuccess) CryptoGreen.copy(alpha = 0.5f) else CryptoRed.copy(alpha = 0.5f)
-                )
+                border = BorderStroke(1.dp, if (result.isSuccess) CryptoGreen.copy(alpha = 0.5f) else CryptoRed.copy(alpha = 0.5f))
             ) {
-                Column(modifier = Modifier.padding(14.dp)) {
+                Column(modifier = Modifier.padding(12.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = if (result.isSuccess) Icons.Default.CheckCircle else Icons.Default.Error,
                             contentDescription = null,
                             tint = if (result.isSuccess) CryptoGreen else CryptoRed,
-                            modifier = Modifier.size(20.dp)
+                            modifier = Modifier.size(18.dp)
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (result.isSuccess) "KẾT NỐI THÀNH CÔNG!" else "LỖI KẾT NỐI BINANCE",
+                            text = if (result.isSuccess) "KẾT NỐI THÀNH CÔNG!" else "LỖI KẾT NỐI",
                             color = if (result.isSuccess) CryptoGreen else CryptoRed,
-                            fontSize = 13.sp,
+                            fontSize = 12.sp,
                             fontWeight = FontWeight.Bold
                         )
                     }
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
                     if (result.isSuccess) {
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "• Tổng số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT",
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                text = "• Số dư khả dụng: $${String.format(Locale.US, "%,.2f", result.availableBalance)} USDT",
-                                color = TextPrimary,
-                                fontSize = 12.sp,
-                                fontFamily = FontFamily.Monospace
-                            )
-                            Text(
-                                text = "• Quyền giao dịch Futures: ${if (result.canTrade) "HỢP LỆ ✓" else "Chưa kích hoạt"}",
-                                color = if (result.canTrade) CryptoGreen else CryptoGold,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                            Text(
-                                text = "• Môi trường: ${if (isTestnet) "Binance Futures Testnet (Demo)" else "Binance Futures Live Mainnet"}",
-                                color = TextSecondary,
-                                fontSize = 11.sp
-                            )
-                        }
+                        Text(
+                            text = "• Tổng số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT\n" +
+                                    "• Số dư khả dụng: $${String.format(Locale.US, "%,.2f", result.availableBalance)} USDT\n" +
+                                    "• Quyền Futures: ${if (result.canTrade) "HỢP LỆ ✓" else "Chưa kích hoạt"}",
+                            color = TextPrimary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            lineHeight = 15.sp
+                        )
                     } else {
                         Text(
                             text = result.errorMessage.ifEmpty { "Không thể xác thực khóa API với Binance." },
                             color = CryptoRed,
-                            fontSize = 12.sp
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = "Gợi ý: Kiểm tra lại API Key/Secret, chọn đúng môi trường Testnet/Mainnet và đảm bảo API đã tích chọn 'Enable Futures'.",
-                            color = TextSecondary,
-                            fontSize = 10.5.sp
+                            fontSize = 11.sp
                         )
                     }
                 }
             }
         }
 
-        Spacer(modifier = Modifier.height(16.dp))
-
-        // Guide Card for Binance API Security
+        // Security Guide
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
+            shape = RoundedCornerShape(10.dp),
             colors = CardDefaults.cardColors(containerColor = DarkSurface)
         ) {
-            Column(modifier = Modifier.padding(14.dp)) {
+            Column(modifier = Modifier.padding(12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        imageVector = Icons.Default.Security,
-                        contentDescription = null,
-                        tint = CryptoGold,
-                        modifier = Modifier.size(16.dp)
-                    )
+                    Icon(imageVector = Icons.Default.Security, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(15.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(
-                        text = "Hướng Dẫn Cấu Hình An Toàn",
-                        color = CryptoGold,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
-                    )
+                    Text(text = "Hướng Dẫn Bảo Mật Binance API", color = CryptoGold, fontSize = 11.5.sp, fontWeight = FontWeight.Bold)
                 }
-                Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "1. Truy cập Binance > Quản lý API (API Management)\n" +
-                            "2. Tạo khóa mới (System generated)\n" +
-                            "3. CHỈ tích chọn: 'Đọc (Read Only)' và 'Cho phép Hợp đồng tương lai (Enable Futures)'\n" +
-                            "4. TUYỆT ĐỐI KHÔNG tích chọn 'Cho phép rút tiền (Enable Withdrawals)'\n" +
-                            "5. API Key được lưu trữ mã hóa an toàn trên thiết bị của bạn.",
+                    text = "1. Truy cập Binance > Quản lý API > Tạo khóa mới\n" +
+                            "2. CHỈ cấp quyền: Đọc (Read) & Hợp đồng tương lai (Enable Futures)\n" +
+                            "3. TUYỆT ĐỐI KHÔNG cấp quyền Rút tiền (Enable Withdrawals)\n" +
+                            "4. Khóa API lưu trữ an toàn bằng EncryptedSharedPreferences.",
                     color = TextSecondary,
-                    fontSize = 11.sp,
-                    lineHeight = 16.sp
+                    fontSize = 10.sp,
+                    lineHeight = 14.sp
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
     }
 }

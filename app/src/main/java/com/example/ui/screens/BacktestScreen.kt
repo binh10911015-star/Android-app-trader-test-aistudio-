@@ -20,6 +20,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.AnimatedVisibility
@@ -60,21 +61,17 @@ fun BacktestScreen(
     // 3. Bộ lọc Macro & Chọn Coin
     var minQuoteVolumeText by remember { mutableStateOf(currentConfig.minQuoteVolume24h.toLong().toString()) }
     var minVolRatioText by remember { mutableStateOf(currentConfig.minVolRatio.toString()) }
+    var minD1ChangePctText by remember { mutableStateOf(currentConfig.minD1ChangePct.toString()) }
     var maxD1ChangePctText by remember { mutableStateOf(currentConfig.maxD1ChangePct.toString()) }
     var maxAtrPctText by remember { mutableStateOf((currentConfig.maxAtrPercent * 100).toString()) }
-    var btcPanicBreakerText by remember { mutableStateOf(currentConfig.btcPanicCircuitBreaker.toString()) }
 
-    // 4. Thoát lệnh động ATR & Timeout
-    var kTpText by remember { mutableStateOf(currentConfig.kTp.toString()) }
+    // 4. Thoát lệnh động ATR Trailing Stop & FloorLock
     var kTrailText by remember { mutableStateOf(currentConfig.kTrail.toString()) }
-    var kSlText by remember { mutableStateOf(currentConfig.kSl.toString()) }
-    var timeoutHoursText by remember { mutableStateOf(currentConfig.maxHoldingHours.toString()) }
+    var floorLockMinRoiText by remember { mutableStateOf((currentConfig.floorLockMinRoi * 100).toString()) }
 
-    // 4 TOGGLE BẬT/TẮT TỪNG CHỨC NĂNG THOÁT LỆNH ĐỘNG
+    // 2 TOGGLE BẬT/TẮT CƠ CHẾ THOÁT LỆNH
     var enableTrailingStop by remember { mutableStateOf(currentConfig.enableTrailingStop) }
     var enableFloorLock by remember { mutableStateOf(currentConfig.enableFloorLock) }
-    var enableStopLoss by remember { mutableStateOf(currentConfig.enableStopLoss) }
-    var enableTimeout by remember { mutableStateOf(currentConfig.enableTimeout) }
 
     // Quản lý Dialog giải thích thông số
     var infoDialogTitle by remember { mutableStateOf<String?>(null) }
@@ -89,17 +86,13 @@ fun BacktestScreen(
         maxAllocationPctText = (currentConfig.maxPortfolioAllocation * 100).toInt().toString()
         minQuoteVolumeText = currentConfig.minQuoteVolume24h.toLong().toString()
         minVolRatioText = currentConfig.minVolRatio.toString()
+        minD1ChangePctText = currentConfig.minD1ChangePct.toString()
         maxD1ChangePctText = currentConfig.maxD1ChangePct.toString()
         maxAtrPctText = (currentConfig.maxAtrPercent * 100).toString()
-        btcPanicBreakerText = currentConfig.btcPanicCircuitBreaker.toString()
-        kTpText = currentConfig.kTp.toString()
         kTrailText = currentConfig.kTrail.toString()
-        kSlText = currentConfig.kSl.toString()
-        timeoutHoursText = currentConfig.maxHoldingHours.toString()
+        floorLockMinRoiText = (currentConfig.floorLockMinRoi * 100).toString()
         enableTrailingStop = currentConfig.enableTrailingStop
         enableFloorLock = currentConfig.enableFloorLock
-        enableStopLoss = currentConfig.enableStopLoss
-        enableTimeout = currentConfig.enableTimeout
     }
 
     if (infoDialogTitle != null && infoDialogContent != null) {
@@ -155,51 +148,66 @@ fun BacktestScreen(
             .background(DarkSurface)
             .padding(horizontal = 14.dp)
             .testTag("backtest_screen"),
-        verticalArrangement = Arrangement.spacedBy(10.dp),
-        contentPadding = PaddingValues(top = 10.dp, bottom = 28.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        contentPadding = PaddingValues(top = 2.dp, bottom = 24.dp)
     ) {
-        // --- TIÊU ĐỀ MÀN HÌNH ---
+        // --- TIÊU ĐỀ MÀN HÌNH (GỌN GÀNG, VỪA VẶN VỚI CHỮ) ---
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("backtest_header_card"),
+                shape = RoundedCornerShape(10.dp),
+                color = DarkSurfaceElevated,
+                border = BorderStroke(1.dp, DarkBorder)
             ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            imageVector = Icons.Default.Science,
-                            contentDescription = null,
-                            tint = CryptoGold,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f, fill = false)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Science,
+                                contentDescription = null,
+                                tint = CryptoGold,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = "Thử Nghiệm & Tối Ưu Backtest",
+                                color = Color.White,
+                                fontSize = 14.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                         Text(
-                            text = "Thử Nghiệm & Tối Ưu Backtest",
-                            color = Color.White,
-                            fontSize = 17.sp,
-                            fontWeight = FontWeight.ExtraBold
+                            text = "Dual Basket Momentum v2.0 • Tự do bật tắt cơ chế thoát lệnh",
+                            color = TextMuted,
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                     }
-                    Text(
-                        text = "Chiến lược Dual Basket Momentum v2.0 • Tự do bật tắt cơ chế thoát lệnh",
-                        color = TextMuted,
-                        fontSize = 11.sp
-                    )
-                }
 
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = CryptoGold.copy(alpha = 0.15f),
-                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f))
-                ) {
-                    Text(
-                        text = "Dual Basket v2.0",
-                        color = CryptoGold,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = CryptoGold.copy(alpha = 0.15f),
+                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+                    ) {
+                        Text(
+                            text = "Dual Basket v2.0",
+                            color = CryptoGold,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
                 }
             }
         }
@@ -446,11 +454,11 @@ fun BacktestScreen(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Biên độ D1 tối thiểu (%)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = maxAtrPctText,
-                                onValueChange = { maxAtrPctText = it },
+                                value = minD1ChangePctText,
+                                onValueChange = { minD1ChangePctText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -460,11 +468,11 @@ fun BacktestScreen(
                         }
 
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "BTC Panic Breaker (%)", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Biên độ D1 tối đa (%)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = btcPanicBreakerText,
-                                onValueChange = { btcPanicBreakerText = it },
+                                value = maxD1ChangePctText,
+                                onValueChange = { maxD1ChangePctText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -473,12 +481,26 @@ fun BacktestScreen(
                             )
                         }
                     }
+
+                    Spacer(modifier = Modifier.height(10.dp))
+
+                    Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = maxAtrPctText,
+                        onValueChange = { maxAtrPctText = it },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
+                        textStyle = LocalTextStyle.current.copy(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                    )
                 }
             }
         }
 
         // =========================================================================
-        // NHÓM 4: CƠ CHẾ CHỐT LỜI & THOÁT LỆNH ĐỘNG (KÈM 4 TOGGLE & ICON INFO)
+        // NHÓM 4: CƠ CHẾ CHỐT LỜI ĐỘNG (FLOORLOCK & ATR TRAILING STOP)
         // =========================================================================
         item {
             Card(
@@ -496,12 +518,12 @@ fun BacktestScreen(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(imageVector = Icons.Default.TrendingUp, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text(text = "4. Cơ Chế Chốt Lời & Thoát Lệnh Động", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(text = "4. Cơ Chế Thoát Lệnh (Pure Trailing Stop)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                         }
                         IconButton(
                             onClick = {
-                                infoDialogTitle = "Cơ Chế Chốt Lời & Thoát Lệnh Động"
-                                infoDialogContent = "Bao gồm 4 cơ chế quản lý rủi ro độc lập:\n1. Trailing Stop ATR: Tự động dời chặn lãi bám theo đỉnh lợi nhuận.\n2. Sàn khóa lãi FloorLock: Đảm bảo lãi tối thiểu +0.5% net không bị trượt âm.\n3. Stop Loss: Cắt lỗ bảo vệ danh mục khi chạm ngưỡng.\n4. Timeout 72h: Bán dứt điểm giải phóng vốn khi giỏ đi ngang quá 3 ngày."
+                                infoDialogTitle = "Cơ Chế Chốt Lời Động (Pure Trailing Stop)"
+                                infoDialogContent = "Chiến lược Trend Following loại bỏ hoàn toàn Stop Loss, Timeout và TP cố định:\n• FloorLock: Sàn khóa lãi net tối thiểu (+0.5%) ngay khi giỏ có lãi dương để bảo vệ khỏi bị trượt âm.\n• Trailing Stop ATR: Bám sát đỉnh lợi nhuận cao nhất và chốt trọn sóng khi giá thoái lui K_Trail * ATR giỏ."
                             },
                             modifier = Modifier.size(24.dp)
                         ) {
@@ -511,7 +533,7 @@ fun BacktestScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // BẢNG 4 NÚT BẬT/TẮT TỪNG CHỨC NĂNG
+                    // BẢNG 2 NÚT BẬT/TẮT TỪNG CHỨC NĂNG
                     Surface(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(8.dp),
@@ -520,7 +542,7 @@ fun BacktestScreen(
                     ) {
                         Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(
-                                text = "BẬT / TẮT TỪNG CƠ CHẾ THỬ NGHIỆM:",
+                                text = "BẬT / TẮT CƠ CHẾ CHỐT LỜI:",
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = CryptoGold
@@ -534,7 +556,7 @@ fun BacktestScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("1. Trailing Stop ATR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableTrailingStop) CryptoGreen else TextMuted)
-                                    Text("Bám đỉnh theo bước đệm ATR (Tắt = Chốt lời cứng)", fontSize = 10.sp, color = TextMuted)
+                                    Text("Bám đỉnh theo bước đệm ATR giỏ để tối đa hóa lợi nhuận", fontSize = 10.sp, color = TextMuted)
                                 }
                                 Switch(
                                     checked = enableTrailingStop,
@@ -563,46 +585,6 @@ fun BacktestScreen(
                                     colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
                                 )
                             }
-
-                            Divider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-                            // Toggle 3: Stop Loss
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("3. Cắt lỗ ban đầu (Stop Loss)", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableStopLoss) CryptoGreen else TextMuted)
-                                    Text("Cắt lỗ danh mục ban đầu theo hệ số K_SL", fontSize = 10.sp, color = TextMuted)
-                                }
-                                Switch(
-                                    checked = enableStopLoss,
-                                    onCheckedChange = { enableStopLoss = it },
-                                    modifier = Modifier.scale(0.72f).testTag("toggle_stop_loss"),
-                                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
-                                )
-                            }
-
-                            Divider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-                            // Toggle 4: Timeout 72h
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text("4. Timeout 72h giải phóng vốn", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableTimeout) CryptoGreen else TextMuted)
-                                    Text("Đóng giỏ lệnh cưỡng chế sau 72h để giải phóng slot", fontSize = 10.sp, color = TextMuted)
-                                }
-                                Switch(
-                                    checked = enableTimeout,
-                                    onCheckedChange = { enableTimeout = it },
-                                    modifier = Modifier.scale(0.72f).testTag("toggle_timeout"),
-                                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
-                                )
-                            }
                         }
                     }
 
@@ -610,20 +592,6 @@ fun BacktestScreen(
 
                     // Các ô nhập hệ số
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Hệ số kích hoạt TP (K_TP)", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = kTpText,
-                                onValueChange = { kTpText = it },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-
                         Column(modifier = Modifier.weight(1f)) {
                             Text(text = "Bước đệm Trailing (K_Trail)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
@@ -637,34 +605,16 @@ fun BacktestScreen(
                                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                             )
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Hệ số Stop-Loss (K_SL)", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Sàn khóa lãi tối thiểu (%)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = kSlText,
-                                onValueChange = { kSlText = it },
+                                value = floorLockMinRoiText,
+                                onValueChange = { floorLockMinRoiText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Timeout giải phóng (Giờ)", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = timeoutHoursText,
-                                onValueChange = { timeoutHoursText = it },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White),
                                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                             )
@@ -687,18 +637,14 @@ fun BacktestScreen(
                         maxPortfolioAllocation = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0,
                         minQuoteVolume24h = minQuoteVolumeText.toDoubleOrNull() ?: 20_000_000.0,
                         minVolRatio = minVolRatioText.toDoubleOrNull() ?: 2.0,
+                        minD1ChangePct = minD1ChangePctText.toDoubleOrNull() ?: 2.0,
                         maxD1ChangePct = maxD1ChangePctText.toDoubleOrNull() ?: 10.0,
                         maxAtrPercent = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0,
-                        btcPanicCircuitBreaker = btcPanicBreakerText.toDoubleOrNull() ?: -3.5,
                         slotScanMode = slotScanMode,
-                        kTp = kTpText.toDoubleOrNull() ?: 0.50,
                         kTrail = kTrailText.toDoubleOrNull() ?: 0.25,
-                        kSl = kSlText.toDoubleOrNull() ?: 0.50,
-                        maxHoldingHours = timeoutHoursText.toIntOrNull() ?: 72,
                         enableTrailingStop = enableTrailingStop,
                         enableFloorLock = enableFloorLock,
-                        enableStopLoss = enableStopLoss,
-                        enableTimeout = enableTimeout
+                        floorLockMinRoi = (floorLockMinRoiText.toDoubleOrNull() ?: 0.5) / 100.0
                     )
                     viewModel.updateBacktestConfig(updatedCfg, days)
                     viewModel.runBasketStrategyBacktest(days = days, config = updatedCfg)

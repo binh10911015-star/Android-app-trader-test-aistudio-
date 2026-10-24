@@ -33,6 +33,7 @@ import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.Analytics
 import androidx.compose.material.icons.filled.AutoGraph
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.ShowChart
@@ -55,6 +57,7 @@ import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalTextStyle
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -97,7 +100,11 @@ import com.example.ui.components.FloatingAiButton
 import com.example.ui.components.PinVerificationDialog
 import com.example.ui.components.TradeAlertBanner
 import com.example.model.BacktestConfig
+import com.example.model.TradeAlert
 import com.example.model.TradingStrategyType
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import com.example.ui.screens.ApiConfigScreen
 import com.example.ui.screens.BacktestScreen
 import com.example.ui.screens.CoinDetailScreen
@@ -161,11 +168,25 @@ fun MainApp(viewModel: MainViewModel) {
 
     var showMainnetPinDialog by remember { mutableStateOf(false) }
     var showBotConfirmDialog by remember { mutableStateOf(false) }
+    var showQuickAlertsDialog by remember { mutableStateOf(false) }
     var showAiSheet by remember { mutableStateOf(false) }
     val aiViewModel: AiAssistantViewModel = viewModel()
 
     // Số lượng lệnh đang mở
     val openCount = if (apiConfig.isConnected) binancePortfolio.positions.size else openPositions.size
+    val unreadAlertsCount = uiState.alertHistory.size + (if (uiState.activeAlert != null) 1 else 0)
+
+    if (showQuickAlertsDialog) {
+        QuickAlertsDialog(
+            alerts = uiState.alertHistory,
+            activeAlert = uiState.activeAlert,
+            onDismiss = { showQuickAlertsDialog = false },
+            onClearAll = {
+                viewModel.clearAllAlerts()
+                showQuickAlertsDialog = false
+            }
+        )
+    }
 
     if (showMainnetPinDialog) {
         PinVerificationDialog(
@@ -215,7 +236,15 @@ fun MainApp(viewModel: MainViewModel) {
                     } else {
                         viewModel.toggleAutoTrade(false)
                     }
-                }
+                },
+                onOpenSettings = {
+                    previousScreen = currentScreen
+                    currentScreen = NavScreen.API_CONFIG
+                },
+                onOpenAlerts = {
+                    showQuickAlertsDialog = true
+                },
+                alertCount = unreadAlertsCount
             )
         },
         bottomBar = {
@@ -404,12 +433,6 @@ fun MainApp(viewModel: MainViewModel) {
                 LiveMainnetRiskWarningBanner()
             }
 
-            // Thanh thông báo lệnh nổi (Floating Alert Banner)
-            TradeAlertBanner(
-                alert = uiState.activeAlert,
-                onDismiss = { viewModel.dismissAlert() }
-            )
-
             // Khung nội dung màn hình chính
             Box(modifier = Modifier.weight(1f)) {
                 Crossfade(targetState = currentScreen, label = "ScreenTransition") { screen ->
@@ -537,13 +560,18 @@ fun MainApp(viewModel: MainViewModel) {
 }
 
 /**
- * Thanh tiêu đề ứng dụng hiển thị rõ ràng trạng thái bot (Đang chạy/Đang dừng)
- * và Toggle mới giúp người dùng bật/tắt bot tức thì.
+ * Thanh tiêu đề ứng dụng tích hợp gọn gàng:
+ * - Bên trái: Logo + Tiêu đề + Huy hiệu trạng thái
+ * - Bên phải: Hàng 1 gồm Icon Chuông Thông Báo (kèm số lượng) & Icon Cài Đặt.
+ *            Hàng 2 (nằm ngay dưới nút Cài Đặt) gồm Switch kích hoạt bot compact.
  */
 @Composable
 fun CryptoTraderTopBar(
     isBotRunning: Boolean,
     onToggleBot: (Boolean) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenAlerts: () -> Unit,
+    alertCount: Int,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -556,11 +584,12 @@ fun CryptoTraderTopBar(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 8.dp),
+                .statusBarsPadding()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
-            // Nhóm tiêu đề & Trạng thái Bot
+            // Nhóm tiêu đề & Trạng thái Bot bên trái
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -569,7 +598,7 @@ fun CryptoTraderTopBar(
                 // Logo ₿
                 Box(
                     modifier = Modifier
-                        .size(32.dp)
+                        .size(30.dp)
                         .clip(RoundedCornerShape(8.dp))
                         .background(CryptoGold.copy(alpha = 0.15f))
                         .border(1.dp, CryptoGold.copy(alpha = 0.4f), RoundedCornerShape(8.dp)),
@@ -578,7 +607,7 @@ fun CryptoTraderTopBar(
                     Text(
                         text = "₿",
                         color = CryptoGold,
-                        fontSize = 16.sp,
+                        fontSize = 15.sp,
                         fontWeight = FontWeight.Black
                     )
                 }
@@ -587,14 +616,14 @@ fun CryptoTraderTopBar(
                 Text(
                     text = "CryptoTrader",
                     color = Color.White,
-                    fontSize = 16.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.ExtraBold,
                     modifier = Modifier.testTag("app_title")
                 )
 
                 // Huy hiệu trạng thái Bot ngay cạnh tiêu đề
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(14.dp),
                     color = if (isBotRunning) CryptoGreen.copy(alpha = 0.15f) else Color.White.copy(alpha = 0.05f),
                     border = BorderStroke(
                         1.dp,
@@ -603,28 +632,21 @@ fun CryptoTraderTopBar(
                     modifier = Modifier.testTag("bot_status_badge")
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        horizontalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        // Icon trạng thái nhỏ thay đổi màu sắc tức thì (Xanh khi chạy / Đỏ khi dừng)
                         Box(
                             modifier = Modifier
-                                .size(8.dp)
+                                .size(7.dp)
                                 .clip(CircleShape)
                                 .background(if (isBotRunning) CryptoGreen else CryptoRed)
-                                .border(
-                                    1.dp,
-                                    if (isBotRunning) CryptoGreen.copy(alpha = 0.8f) else CryptoRed.copy(alpha = 0.8f),
-                                    CircleShape
-                                )
                                 .testTag("bot_status_icon")
                         )
-                        // Chữ thông báo trạng thái rõ ràng: Đang chạy / Đang dừng
                         Text(
                             text = if (isBotRunning) "Đang chạy" else "Đang dừng",
                             color = if (isBotRunning) CryptoGreen else CryptoRed.copy(alpha = 0.85f),
-                            fontSize = 11.sp,
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.testTag("bot_status_text")
                         )
@@ -632,30 +654,98 @@ fun CryptoTraderTopBar(
                 }
             }
 
-            // Toggle mới bật/tắt bot tức thì
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(2.dp)
+            // Bên phải: Cột gồm 2 hàng
+            // Hàng 1: Nút Chuông Thông Báo + Nút Cài Đặt
+            // Hàng 2: Nút Kích Hoạt Bot (ở ngay bên dưới nút Cài Đặt)
+            Column(
+                horizontalAlignment = Alignment.End,
+                verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
-                Text(
-                    text = "Bot",
-                    color = if (isBotRunning) CryptoGreen else TextMuted,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Switch(
-                    checked = isBotRunning,
-                    onCheckedChange = onToggleBot,
-                    modifier = Modifier
-                        .scale(0.72f)
-                        .testTag("bot_toggle_switch"),
-                    colors = SwitchDefaults.colors(
-                        checkedThumbColor = Color.White,
-                        checkedTrackColor = CryptoGreen,
-                        uncheckedThumbColor = TextMuted,
-                        uncheckedTrackColor = DarkSurface
+                // Hàng 1: Icon Chuông Thông Báo + Icon Cài Đặt
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    // Nút Chuông Thông Báo
+                    IconButton(
+                        onClick = onOpenAlerts,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("top_bar_alerts_btn")
+                    ) {
+                        BadgedBox(
+                            badge = {
+                                if (alertCount > 0) {
+                                    Badge(
+                                        containerColor = CryptoRed,
+                                        contentColor = Color.White
+                                    ) {
+                                        Text(
+                                            text = if (alertCount > 99) "99+" else "$alertCount",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Notifications,
+                                contentDescription = "Thông báo",
+                                tint = if (alertCount > 0) CryptoGold else TextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    // Nút Cài Đặt
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .testTag("top_bar_settings_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Cài đặt",
+                            tint = CryptoGold,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+
+                // Hàng 2: Nút Switch Kích Hoạt Bot (nằm ngay bên dưới nút Cài Đặt)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                    modifier = Modifier.padding(end = 2.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(6.dp)
+                            .clip(CircleShape)
+                            .background(if (isBotRunning) CryptoGreen else TextMuted)
                     )
-                )
+                    Text(
+                        text = "BOT",
+                        color = if (isBotRunning) CryptoGreen else TextMuted,
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Switch(
+                        checked = isBotRunning,
+                        onCheckedChange = onToggleBot,
+                        modifier = Modifier
+                            .scale(0.65f)
+                            .testTag("bot_toggle_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = Color.White,
+                            checkedTrackColor = CryptoGreen,
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = DarkSurface
+                        )
+                    )
+                }
             }
         }
     }
@@ -705,6 +795,174 @@ fun LiveMainnetRiskWarningBanner() {
     }
 }
 
+/**
+ * Hộp thoại xem nhanh thông báo cảnh báo giao dịch (Quick Alerts Dialog)
+ * Mở khi người dùng nhấn vào biểu tượng chuông trên thanh tiêu đề.
+ */
+@Composable
+fun QuickAlertsDialog(
+    alerts: List<TradeAlert>,
+    activeAlert: TradeAlert?,
+    onDismiss: () -> Unit,
+    onClearAll: () -> Unit
+) {
+    val combinedAlerts = remember(alerts, activeAlert) {
+        val list = mutableListOf<TradeAlert>()
+        if (activeAlert != null) list.add(activeAlert)
+        list.addAll(alerts.filter { it.id != activeAlert?.id })
+        list
+    }
+
+    val timeFormat = remember { SimpleDateFormat("HH:mm:ss dd/MM", Locale.getDefault()) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.Notifications,
+                        contentDescription = null,
+                        tint = CryptoGold,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Thông Báo Cảnh Báo",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+                if (combinedAlerts.isNotEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = CryptoRed.copy(alpha = 0.2f),
+                        border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            text = "${combinedAlerts.size}",
+                            color = CryptoRed,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
+            }
+        },
+        text = {
+            if (combinedAlerts.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = TextMuted,
+                            modifier = Modifier.size(36.dp)
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Text(
+                            text = "Hiện không có thông báo mới",
+                            color = TextSecondary,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 380.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    items(combinedAlerts.size) { index ->
+                        val alert = combinedAlerts[index]
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(8.dp),
+                            color = DarkSurface,
+                            border = BorderStroke(0.5.dp, DarkBorder)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Surface(
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = CryptoGold.copy(alpha = 0.2f)
+                                    ) {
+                                        Text(
+                                            text = alert.symbol,
+                                            color = CryptoGold,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                    Text(
+                                        text = timeFormat.format(Date(alert.timestamp)),
+                                        color = TextMuted,
+                                        fontSize = 10.sp
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = alert.title,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text(
+                                    text = alert.message,
+                                    color = TextSecondary,
+                                    fontSize = 11.sp,
+                                    lineHeight = 14.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(containerColor = CryptoGold, contentColor = DarkBg),
+                modifier = Modifier.testTag("btn_close_alerts_dialog")
+            ) {
+                Text("Đóng", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            }
+        },
+        dismissButton = {
+            if (combinedAlerts.isNotEmpty()) {
+                OutlinedButton(
+                    onClick = onClearAll,
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoRed),
+                    border = BorderStroke(1.dp, CryptoRed.copy(alpha = 0.5f)),
+                    modifier = Modifier.testTag("btn_clear_all_alerts")
+                ) {
+                    Text("Xóa tất cả", fontSize = 12.sp)
+                }
+            }
+        },
+        containerColor = DarkSurfaceElevated,
+        shape = RoundedCornerShape(14.dp)
+    )
+}
+
 @Composable
 fun BotParametersConfirmationDialog(
     initialConfig: BacktestConfig,
@@ -714,15 +972,12 @@ fun BotParametersConfirmationDialog(
     onFetchOptimalAiConfig: () -> BacktestConfig
 ) {
     var capitalText by remember { mutableStateOf(initialCapitalPerTrade.toInt().toString()) }
-    var kTpText by remember { mutableStateOf(initialConfig.kTp.toString()) }
     var kTrailText by remember { mutableStateOf(initialConfig.kTrail.toString()) }
-    var kSlText by remember { mutableStateOf(initialConfig.kSl.toString()) }
+    var floorLockRoiText by remember { mutableStateOf((initialConfig.floorLockMinRoi * 100.0).toString()) }
     var minVolRatioText by remember { mutableStateOf(initialConfig.minVolRatio.toString()) }
 
     var enableTrailing by remember { mutableStateOf(initialConfig.enableTrailingStop) }
     var enableFloorLock by remember { mutableStateOf(initialConfig.enableFloorLock) }
-    var enableStopLoss by remember { mutableStateOf(initialConfig.enableStopLoss) }
-    var enableTimeout by remember { mutableStateOf(initialConfig.enableTimeout) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -732,21 +987,22 @@ fun BotParametersConfirmationDialog(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 Icon(Icons.Default.Settings, contentDescription = null, tint = CryptoGold)
-                Text("Xác nhận thông số Bot v2.1", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                Text("Xác nhận thông số Bot v2.0", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 17.sp)
             }
         },
         text = {
             LazyColumn(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .heightIn(max = 440.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
+                    .heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 item {
                     Text(
-                        "Kiểm tra và tùy chỉnh thông số trước khi khởi động bot giao dịch tự động Dual Basket v2.1 (Pure Trend Following):",
+                        "Kiểm tra và tùy chỉnh thông số trước khi khởi động bot tự động (Dual Basket v2.0 - Pure Trailing Stop & FloorLock, không SL/Timeout/TP cố định):",
                         color = TextSecondary,
-                        fontSize = 12.sp
+                        fontSize = 11.5.sp,
+                        lineHeight = 15.sp
                     )
                 }
 
@@ -755,14 +1011,11 @@ fun BotParametersConfirmationDialog(
                     Button(
                         onClick = {
                             val optimal = onFetchOptimalAiConfig()
-                            kTpText = optimal.kTp.toString()
                             kTrailText = optimal.kTrail.toString()
-                            kSlText = optimal.kSl.toString()
+                            floorLockRoiText = (optimal.floorLockMinRoi * 100.0).toString()
                             minVolRatioText = optimal.minVolRatio.toString()
                             enableTrailing = optimal.enableTrailingStop
                             enableFloorLock = optimal.enableFloorLock
-                            enableStopLoss = optimal.enableStopLoss
-                            enableTimeout = optimal.enableTimeout
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = CryptoGold.copy(alpha = 0.2f)),
                         border = BorderStroke(1.dp, CryptoGold),
@@ -771,9 +1024,9 @@ fun BotParametersConfirmationDialog(
                             .testTag("apply_ai_config_btn"),
                         shape = RoundedCornerShape(8.dp)
                     ) {
-                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(15.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Điền bộ thông số tối ưu từ AI", color = CryptoGold, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        Text("Điền bộ thông số tối ưu từ AI", color = CryptoGold, fontSize = 11.5.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
 
@@ -795,27 +1048,13 @@ fun BotParametersConfirmationDialog(
                     )
                 }
 
-                // K_TP & K_Trail
+                // K_Trail & Sàn FloorLock (%)
                 item {
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(
-                            value = kTpText,
-                            onValueChange = { kTpText = it },
-                            label = { Text("K_TP (Kích hoạt)") },
-                            modifier = Modifier.weight(1f).testTag("bot_ktp_input"),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
-                            )
-                        )
-                        OutlinedTextField(
                             value = kTrailText,
                             onValueChange = { kTrailText = it },
-                            label = { Text("K_Trail (Trượt)") },
+                            label = { Text("K_Trail (Trượt ATR)") },
                             modifier = Modifier.weight(1f).testTag("bot_ktrail_input"),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -826,46 +1065,44 @@ fun BotParametersConfirmationDialog(
                                 unfocusedTextColor = Color.White
                             )
                         )
+                        OutlinedTextField(
+                            value = floorLockRoiText,
+                            onValueChange = { floorLockRoiText = it },
+                            label = { Text("Sàn khóa lãi (%)") },
+                            modifier = Modifier.weight(1f).testTag("bot_floorlock_roi_input"),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            )
+                        )
                     }
                 }
 
-                // K_SL & RVol
+                // RVol
                 item {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(
-                            value = kSlText,
-                            onValueChange = { kSlText = it },
-                            label = { Text("K_SL (Cắt lỗ)") },
-                            modifier = Modifier.weight(1f).testTag("bot_ksl_input"),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
-                            )
+                    OutlinedTextField(
+                        value = minVolRatioText,
+                        onValueChange = { minVolRatioText = it },
+                        label = { Text("Ngưỡng RVol(20) tối thiểu") },
+                        modifier = Modifier.fillMaxWidth().testTag("bot_rvol_input"),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CryptoGold,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
                         )
-                        OutlinedTextField(
-                            value = minVolRatioText,
-                            onValueChange = { minVolRatioText = it },
-                            label = { Text("RVol tối thiểu") },
-                            modifier = Modifier.weight(1f).testTag("bot_rvol_input"),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = CryptoGold,
-                                unfocusedBorderColor = DarkBorder,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
-                            )
-                        )
-                    }
+                    )
                 }
 
                 // Safety Toggles
                 item {
-                    Text("Cơ chế an toàn & thoát lệnh v2.1:", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text("Cơ chế thoát lệnh (Pure Trend Following):", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
 
                 item {
@@ -878,9 +1115,7 @@ fun BotParametersConfirmationDialog(
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
                         BotToggleRow("Trailing Stop ATR", "Bám theo xu hướng tối đa hóa lợi nhuận", enableTrailing) { enableTrailing = it }
-                        BotToggleRow("FloorLock (Khóa lãi >= +0.5%)", "Bảo toàn lãi ròng khi đã vào trailing", enableFloorLock) { enableFloorLock = it }
-                        BotToggleRow("Cắt lỗ động K_SL 0.75", "Bảo vệ vốn nếu xu hướng đảo chiều", enableStopLoss) { enableStopLoss = it }
-                        BotToggleRow("Giới hạn thời gian (Timeout 144h)", "Thoát vị thế đi ngang không phát triển", enableTimeout) { enableTimeout = it }
+                        BotToggleRow("FloorLock (Khóa lãi >= +0.5%)", "Bảo toàn lãi ròng tối thiểu khi đã vào trailing", enableFloorLock) { enableFloorLock = it }
                     }
                 }
             }
@@ -889,14 +1124,11 @@ fun BotParametersConfirmationDialog(
             Button(
                 onClick = {
                     val finalConfig = initialConfig.copy(
-                        kTp = kTpText.toDoubleOrNull() ?: initialConfig.kTp,
                         kTrail = kTrailText.toDoubleOrNull() ?: initialConfig.kTrail,
-                        kSl = kSlText.toDoubleOrNull() ?: initialConfig.kSl,
+                        floorLockMinRoi = (floorLockRoiText.toDoubleOrNull() ?: 0.5) / 100.0,
                         minVolRatio = minVolRatioText.toDoubleOrNull() ?: initialConfig.minVolRatio,
                         enableTrailingStop = enableTrailing,
-                        enableFloorLock = enableFloorLock,
-                        enableStopLoss = enableStopLoss,
-                        enableTimeout = enableTimeout
+                        enableFloorLock = enableFloorLock
                     )
                     val finalCapital = capitalText.toDoubleOrNull() ?: initialCapitalPerTrade
                     onConfirmAndStart(finalConfig, finalCapital)
@@ -917,7 +1149,7 @@ fun BotParametersConfirmationDialog(
             }
         },
         containerColor = DarkSurfaceElevated,
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(14.dp)
     )
 }
 

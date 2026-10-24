@@ -124,7 +124,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
 
         val invested = investedUsdt ?: settings.calculatePositionVolume()
         val amount = exactAmount ?: (invested / effectiveEntryPrice)
-        val tpPrice = settings.takeProfitPercent?.let { effectiveEntryPrice * (1.0 + it / 100.0) }
+        val tpPrice: Double? = null
 
         val position = TradePosition(
             symbol = symbol,
@@ -132,7 +132,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             currentPrice = currentPrice,
             amount = amount,
             investedUsdt = invested,
-            takeProfitPrice = tpPrice,
+            takeProfitPrice = null,
             stopLossPrice = null,
             entryTime = System.currentTimeMillis(),
             status = TradePosition.STATUS_OPEN,
@@ -147,11 +147,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         tradeDao.insert(position)
 
         val priceStr = formatPrice(effectiveEntryPrice)
-        val tpStr = if (tpPrice != null && settings.takeProfitPercent != null) {
-            "$$${formatPrice(tpPrice)} (+${settings.takeProfitPercent}%)"
-        } else {
-            "Không thiết lập"
-        }
+        val tpStr = "Theo Trailing Stop ATR & FloorLock"
 
         val volStr = if (invested % 1.0 == 0.0) "${invested.toInt()} USDT" else "${String.format(Locale.US, "%.1f", invested)} USDT"
         val fixPrefix = if (!autoFixNote.isNullOrBlank()) "[$autoFixNote] " else ""
@@ -625,38 +621,19 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 }
 
                 val currentRoi = if (basket.totalInvested > 0) unrealizedPnL / basket.totalInvested else 0.0
-                val isTimedOut = (currentTime - basket.openTime) >= basket.maxHoldingMillis
 
                 var exitReason: String? = null
                 var executedGrossRoi = 0.0
                 val slippage = 0.0005 // Trượt giá khớp lệnh 0.05%
 
                 when (basket.status) {
-                    // TRẠNG THÁI 1: OPEN (Đang chạy, chờ kích hoạt Trailing hoặc SL/Timeout)
+                    // TRẠNG THÁI 1: OPEN (Đang chạy, chờ chạm FloorLock +0.5% net để kích hoạt Trailing Stop)
                     BasketStatus.OPEN -> {
                         val floorRoi = if (config.enableFloorLock) basket.floorLockRoi else -0.99
-                        when {
-                            // Kích hoạt Trailing Stop khi ROI giỏ đạt mốc activationRoi (tối thiểu +1.5%)
-                            config.enableTrailingStop && currentRoi >= basket.activationRoi -> {
-                                basket.status = BasketStatus.TRAILING_ACTIVE
-                                basket.peakRoi = currentRoi
-                                basket.currentTrailingStopRoi = maxOf(floorRoi, currentRoi - basket.trailStepRoi)
-                            }
-                            // Nếu tắt Trailing Stop: Chốt lời mục tiêu cố định khi đạt activationRoi
-                            !config.enableTrailingStop && currentRoi >= basket.activationRoi -> {
-                                exitReason = "TP_TARGET_HIT"
-                                executedGrossRoi = basket.activationRoi - slippage
-                            }
-                            // Cắt lỗ ban đầu (Stop-Loss) khi chưa kích hoạt Trailing Stop
-                            config.enableStopLoss && currentRoi <= basket.initialStopLossRoi -> {
-                                exitReason = "SL_HIT_RELAXED"
-                                executedGrossRoi = basket.initialStopLossRoi - slippage
-                            }
-                            // Hết hạn thời gian 144h khi chưa đạt điều kiện kích hoạt
-                            config.enableTimeout && isTimedOut -> {
-                                exitReason = "TIMEOUT_144H"
-                                executedGrossRoi = currentRoi - slippage
-                            }
+                        if (config.enableTrailingStop && currentRoi >= basket.floorLockRoi) {
+                            basket.status = BasketStatus.TRAILING_ACTIVE
+                            basket.peakRoi = currentRoi
+                            basket.currentTrailingStopRoi = maxOf(floorRoi, currentRoi - basket.trailStepRoi)
                         }
                     }
 
@@ -769,7 +746,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 ema
             } else btcSma20
             val btcD1Change = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
-            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50 && btcD1Change > config.btcPanicCircuitBreaker
+            val isBtcBullish = currentBtc.close > btcSma20 && currentBtc.close > btcEma50
 
             if (hasAvailableSlot && isBtcBullish) {
                 val totalRunningInvested = (primaryBasket?.totalInvested ?: 0.0) + (secondaryBasket?.totalInvested ?: 0.0)
@@ -823,10 +800,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                             openTime = currentTime,
                             positions = positions,
                             totalInvested = perTradeUsdt * positions.size,
-                            maxHoldingMillis = config.maxHoldingHours * 3600 * 1000L,
-                            kTp = config.kTp,
-                            kTrail = config.kTrail,
-                            kSl = config.kSl
+                            kTrail = config.kTrail
                         )
 
                         if (assignedSlot == BasketSlotId.PRIMARY) primaryBasket = newBasket else secondaryBasket = newBasket

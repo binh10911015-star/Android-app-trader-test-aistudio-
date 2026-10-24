@@ -45,6 +45,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -127,6 +128,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var klinePollJob: Job? = null
     private var schedulerJob: Job? = null
     private var webSocketClient: com.example.network.BinanceWebSocketClient? = null
+    private val pendingWsUpdates = java.util.concurrent.ConcurrentHashMap<String, com.example.network.MiniTickerUpdate>()
+    private var lastWsFlushTime: Long = 0L
+    private var lastPositionsUpdateTime: Long = 0L
 
     private val _searchQueryFlow = MutableStateFlow("")
 
@@ -171,14 +175,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 timestamp = System.currentTimeMillis() - 86400000L * 2,
                 days = 180,
                 config = BacktestConfig(
-                    kTp = 0.50,
                     kTrail = 0.25,
-                    kSl = 0.50,
                     minVolRatio = 2.0,
                     enableTrailingStop = true,
                     enableFloorLock = true,
-                    enableStopLoss = true,
-                    enableTimeout = true
+                    floorLockMinRoi = 0.005
                 ),
                 netProfitUsdt = 3420.50,
                 netProfitPercent = 34.21,
@@ -187,22 +188,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 totalCycles = 16,
                 winCycles = 13,
                 lossCycles = 3,
-                trailingHits = 12,
-                slHits = 2,
-                timeoutHits = 2
+                trailingHits = 13
             ),
             BacktestHistoryRecord(
                 timestamp = System.currentTimeMillis() - 86400000L * 5,
                 days = 90,
                 config = BacktestConfig(
-                    kTp = 0.40,
                     kTrail = 0.20,
-                    kSl = 0.40,
                     minVolRatio = 2.5,
                     enableTrailingStop = true,
                     enableFloorLock = true,
-                    enableStopLoss = true,
-                    enableTimeout = false
+                    floorLockMinRoi = 0.005
                 ),
                 netProfitUsdt = 1850.00,
                 netProfitPercent = 18.50,
@@ -211,9 +207,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 totalCycles = 12,
                 winCycles = 9,
                 lossCycles = 3,
-                trailingHits = 9,
-                slHits = 3,
-                timeoutHits = 0
+                trailingHits = 9
             )
         )
     )
@@ -407,13 +401,31 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun handleWebSocketTickers(updates: List<com.example.network.MiniTickerUpdate>) {
         if (updates.isEmpty()) return
-        val updateMap = updates.associateBy { it.symbol }
 
-        // Cập nhật giá nến và tickers trong bộ nhớ (0 REST weight)
+        // 1. Lưu giá mới nhất vào pendingWsUpdates map (nhanh O(1), không nghẽn luồng)
+        for (u in updates) {
+            pendingWsUpdates[u.symbol] = u
+        }
+
+        // 2. Throttle cập nhật danh sách tickers lên UI: Tối đa 1 lần mỗi 2.5s để chống giật lag
+        val now = System.currentTimeMillis()
+        if (now - lastWsFlushTime >= 2500L) {
+            lastWsFlushTime = now
+            flushThrottledTickerUpdates()
+        }
+    }
+
+    private fun flushThrottledTickerUpdates() {
         val currentTickers = _uiState.value.tickers
-        if (currentTickers.isNotEmpty()) {
+        if (currentTickers.isEmpty() || pendingWsUpdates.isEmpty()) return
+
+        viewModelScope.launch(Dispatchers.Default) {
+            val snapshot = HashMap(pendingWsUpdates)
+            pendingWsUpdates.clear()
+
+            // Cập nhật giá nến và tickers trên background thread Dispatchers.Default
             val updated = currentTickers.map { ticker ->
-                val u = updateMap[ticker.symbol]
+                val u = snapshot[ticker.symbol]
                 if (u != null) {
                     val changePct = if (u.openPrice > 0.0) ((u.closePrice - u.openPrice) / u.openPrice) * 100.0 else ticker.priceChangePercent
                     ticker.copy(
@@ -427,22 +439,64 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     ticker
                 }
             }
-            _uiState.value = _uiState.value.copy(tickers = updated)
-            applyFilters()
-        }
 
-        // Cập nhật giá thời gian thực cho các vị thế mở để tính TP/SL tức thì
-        val priceMap = updates.associate { it.symbol to it.closePrice }
-        viewModelScope.launch(Dispatchers.IO) {
-            val res = repository.updatePositionsWithPrices(priceMap)
-            for (alert in res.alerts) {
-                triggerAlert(alert)
+            // Tính toán danh sách filtered trên background thread
+            val current = _uiState.value
+            val query = _searchQueryFlow.value
+            val openSymbols = openPositions.value.map { it.symbol }.toSet()
+            val cleanQuery = com.example.util.SearchUtils.stripUsdtSuffix(query).uppercase()
+            val rawQuery = query.trim().uppercase()
+            val activeSignalSymbols = current.scannedD1BreakoutTickers.map { it.symbol }.toSet()
+
+            val filtered = updated.filter { ticker ->
+                val baseSymbol = ticker.symbol.removeSuffix("USDT")
+                val fullSymbol = ticker.symbol
+
+                val matchesQuery = if (cleanQuery.isEmpty()) {
+                    if (rawQuery.isNotEmpty()) {
+                        fullSymbol.endsWith("USDT", ignoreCase = true)
+                    } else {
+                        true
+                    }
+                } else {
+                    baseSymbol.contains(cleanQuery, ignoreCase = true) ||
+                    fullSymbol.contains(cleanQuery, ignoreCase = true) ||
+                    baseSymbol.removePrefix("1000").contains(cleanQuery, ignoreCase = true) ||
+                    (cleanQuery.startsWith("1000") && baseSymbol.contains(cleanQuery.removePrefix("1000"), ignoreCase = true))
+                }
+
+                val matchesFilter = if (cleanQuery.isNotEmpty() || rawQuery.isNotEmpty()) {
+                    true
+                } else {
+                    when (current.filterMode) {
+                        MarketFilter.ALL -> true
+                        MarketFilter.BULLISH_SIGNAL -> activeSignalSymbols.contains(ticker.symbol)
+                        MarketFilter.OPEN_POSITIONS -> openSymbols.contains(ticker.symbol)
+                    }
+                }
+                matchesQuery && matchesFilter
             }
-            if (res.totalReturnedCapital > 0.0) {
-                val newBal = _uiState.value.settings.simulatedBalanceUsdt + res.totalReturnedCapital
-                _uiState.value = _uiState.value.copy(
-                    settings = _uiState.value.settings.updateBalance(newBal)
-                )
+
+            // Cập nhật StateFlow MỘT LẦN DUY NHẤT cho cả tickers & filteredTickers
+            _uiState.update { it.copy(tickers = updated, filteredTickers = filtered) }
+
+            // Cập nhật giá cho các vị thế mở: chỉ thực hiện khi CÓ VỊ THẾ MỞ và cách nhau ít nhất 3s
+            val nowTime = System.currentTimeMillis()
+            if (openPositions.value.isNotEmpty() && (nowTime - lastPositionsUpdateTime >= 3000L)) {
+                lastPositionsUpdateTime = nowTime
+                val priceMap = snapshot.mapValues { it.value.closePrice }
+                withContext(Dispatchers.IO) {
+                    val res = repository.updatePositionsWithPrices(priceMap)
+                    for (alert in res.alerts) {
+                        triggerAlert(alert)
+                    }
+                    if (res.totalReturnedCapital > 0.0) {
+                        val newBal = _uiState.value.settings.simulatedBalanceUsdt + res.totalReturnedCapital
+                        _uiState.update { state ->
+                            state.copy(settings = state.settings.updateBalance(newBal))
+                        }
+                    }
+                }
             }
         }
     }
@@ -1359,11 +1413,13 @@ fun toggleAutoTrade(enabled: Boolean) {
                 val now = System.currentTimeMillis()
                 val target = _uiState.value.nextScanTimestamp
                 val countdown = ScanScheduler.formatCountdown(target, now)
-                _uiState.value = _uiState.value.copy(countdownText = countdown)
+                if (_uiState.value.countdownText != countdown) {
+                    _uiState.update { it.copy(countdownText = countdown) }
+                }
 
                 if (now >= target) {
                     val nextTarget = ScanScheduler.getNextScanTimestamp(now + 60000)
-                    _uiState.value = _uiState.value.copy(nextScanTimestamp = nextTarget)
+                    _uiState.update { it.copy(nextScanTimestamp = nextTarget) }
                     scanAllFuturesCoins(isAutoScheduled = true)
                 }
 
@@ -1478,6 +1534,10 @@ fun toggleAutoTrade(enabled: Boolean) {
         _uiState.value = _uiState.value.copy(activeAlert = null)
     }
 
+    fun clearAllAlerts() {
+        _uiState.value = _uiState.value.copy(activeAlert = null, alertHistory = emptyList())
+    }
+
     private fun triggerAlert(alert: TradeAlert) {
         val history = listOf(alert) + _uiState.value.alertHistory.take(29)
         _uiState.value = _uiState.value.copy(
@@ -1571,9 +1631,6 @@ fun toggleAutoTrade(enabled: Boolean) {
                 val winCount = report.cycles.count { it.realizedProfitUsdt > 0 }
                 val lossCount = report.cycles.count { it.realizedProfitUsdt <= 0 }
                 val trailingCount = report.cycles.count { it.exitReason == "TRAILING_STOP_HIT" }
-                val slCount = report.cycles.count { it.exitReason == "SL_HIT" }
-                val timeoutCount = report.cycles.count { it.exitReason.startsWith("TIMEOUT") }
-
                 val record = BacktestHistoryRecord(
                     days = days,
                     config = config,
@@ -1584,9 +1641,7 @@ fun toggleAutoTrade(enabled: Boolean) {
                     totalCycles = report.totalCycles,
                     winCycles = winCount,
                     lossCycles = lossCount,
-                    trailingHits = trailingCount,
-                    slHits = slCount,
-                    timeoutHits = timeoutCount
+                    trailingHits = trailingCount
                 )
                 _backtestHistory.value = listOf(record) + _backtestHistory.value
             }
@@ -1602,14 +1657,44 @@ fun toggleAutoTrade(enabled: Boolean) {
         if (days != null) _backtestDays.value = days
     }
 
+    fun updateStrategySettingsAndSyncWithBacktest(newSettings: TradeSettings) {
+        _uiState.value = _uiState.value.copy(settings = newSettings)
+        val bConfig = newSettings.toBacktestConfig()
+        _backtestConfig.value = bConfig
+        triggerAlert(
+            TradeAlert(
+                symbol = "SETTINGS",
+                title = "ĐÃ ĐỒNG BỘ CÀI ĐẶT & BACKTEST",
+                message = "Bộ thông số chiến lược mới đã được lưu và tự động đồng bộ 2 chiều với thẻ Backtest.",
+                type = AlertType.INFO
+            )
+        )
+    }
+
+    fun syncStrategySettingsFromBacktest() {
+        val currentB = _backtestConfig.value
+        val updatedSettings = _uiState.value.settings.syncFromBacktestConfig(currentB)
+        _uiState.value = _uiState.value.copy(settings = updatedSettings)
+        triggerAlert(
+            TradeAlert(
+                symbol = "SETTINGS",
+                title = "ĐÃ NẠP TỪ THẺ BACKTEST",
+                message = "Đã sao chép cấu hình từ thẻ Backtest vào Cài đặt chiến lược.",
+                type = AlertType.INFO
+            )
+        )
+    }
+
     fun applyRecommendedConfig(config: BacktestConfig, days: Int? = null) {
         _backtestConfig.value = config
         if (days != null) _backtestDays.value = days
+        val syncedSettings = _uiState.value.settings.syncFromBacktestConfig(config)
+        _uiState.value = _uiState.value.copy(settings = syncedSettings)
         triggerAlert(
             TradeAlert(
                 symbol = "AI_COPILOT",
                 title = "ĐÃ ÁP DỤNG CẤU HÌNH ĐỀ XUẤT",
-                message = "Đã cập nhật bộ thông số tối ưu từ AI vào cấu hình Backtest & Bot.",
+                message = "Đã cập nhật bộ thông số tối ưu từ AI vào cả cấu hình Backtest và Cài đặt Bot.",
                 type = AlertType.INFO
             )
         )
@@ -1624,14 +1709,11 @@ fun toggleAutoTrade(enabled: Boolean) {
             (it.winratePercent * 0.45) + (it.netProfitPercent * 0.40) - (it.maxDrawdownPercent * 0.15)
         }
         return best?.config ?: BacktestConfig(
-            kTp = 0.50,
             kTrail = 0.25,
-            kSl = 0.50,
             minVolRatio = 2.0,
             enableTrailingStop = true,
             enableFloorLock = true,
-            enableStopLoss = true,
-            enableTimeout = true
+            floorLockMinRoi = 0.005
         )
     }
 
@@ -1640,7 +1722,7 @@ fun toggleAutoTrade(enabled: Boolean) {
      */
     fun saveCustomBotConfigAndStart(
         config: BacktestConfig,
-        capitalPerTrade: Double = 50.0,
+        capitalPerTrade: Double = 150.0,
         strategyType: com.example.model.TradingStrategyType = com.example.model.TradingStrategyType.DUAL_BASKET_MOMENTUM_V2
     ) {
         val newSettings = _uiState.value.settings.copy(
@@ -1648,8 +1730,11 @@ fun toggleAutoTrade(enabled: Boolean) {
             leverage = 1,
             selectedStrategy = strategyType,
             capitalPerTradeUsdt = capitalPerTrade,
-            volumeMultiplierThreshold = config.minVolRatio,
-            portfolioTakeProfitPercent = config.targetPortfolioRoi * 100.0,
+            kTrail = config.kTrail,
+            minVolRatio = config.minVolRatio,
+            enableTrailingStop = config.enableTrailingStop,
+            enableFloorLock = config.enableFloorLock,
+            floorLockMinRoi = config.floorLockMinRoi,
             enableDualBasket = true
         )
         _uiState.value = _uiState.value.copy(settings = newSettings)
@@ -1662,7 +1747,7 @@ fun toggleAutoTrade(enabled: Boolean) {
             TradeAlert(
                 symbol = "BOT",
                 title = "ĐÃ KÍCH HOẠT BOT VỚI BỘ THÔNG SỐ XÁC NHẬN",
-                message = "Bot bắt đầu chạy: Vốn $capitalPerTrade USDT/lệnh • K_TP: ${config.kTp} • K_Trail: ${config.kTrail} • SL: ${config.kSl} • RVol: ${config.minVolRatio}x.",
+                message = "Bot bắt đầu chạy: Vốn $capitalPerTrade USDT/lệnh • K_Trail: ${config.kTrail} • FloorLock: +${config.floorLockMinRoi * 100}% • RVol: ${config.minVolRatio}x.",
                 type = AlertType.INFO
             )
         )

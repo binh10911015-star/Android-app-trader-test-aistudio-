@@ -57,7 +57,6 @@ import com.example.repository.CryptoRepository
 import com.example.ui.MainViewModel
 import com.example.ui.MarketFilter
 import com.example.ui.UiState
-import com.example.ui.components.SettingsDialog
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
 import com.example.ui.theme.CryptoRed
@@ -82,8 +81,6 @@ fun MarketScreen(
     onOpenApiConfig: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    var showSettingsDialog by remember { mutableStateOf(false) }
-
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -135,32 +132,17 @@ fun MarketScreen(
                 )
             }
 
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Surface(
-                    modifier = Modifier.clip(CircleShape).clickable { viewModel.refreshTickers() },
-                    color = DarkSurfaceElevated,
-                    border = BorderStroke(1.dp, DarkBorder)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Refresh,
-                        contentDescription = "Làm mới",
-                        tint = TextSecondary,
-                        modifier = Modifier.padding(8.dp).size(16.dp)
-                    )
-                }
-
-                Surface(
-                    modifier = Modifier.clip(CircleShape).clickable { showSettingsDialog = true },
-                    color = DarkSurfaceElevated,
-                    border = BorderStroke(1.dp, DarkBorder)
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Cài đặt",
-                        tint = TextSecondary,
-                        modifier = Modifier.padding(8.dp).size(16.dp)
-                    )
-                }
+            Surface(
+                modifier = Modifier.clip(CircleShape).clickable { viewModel.refreshTickers() },
+                color = DarkSurfaceElevated,
+                border = BorderStroke(1.dp, DarkBorder)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Refresh,
+                    contentDescription = "Làm mới",
+                    tint = TextSecondary,
+                    modifier = Modifier.padding(8.dp).size(16.dp)
+                )
             }
         }
 
@@ -353,23 +335,6 @@ fun MarketScreen(
                 )
             }
         }
-    }
-
-    if (showSettingsDialog) {
-        SettingsDialog(
-            currentSettings = uiState.settings,
-            apiConfig = apiConfig,
-            onDismiss = { showSettingsDialog = false },
-            onSave = { updated ->
-                viewModel.updateSettings(updated)
-                showSettingsDialog = false
-            },
-            onResetAccount = { viewModel.resetAccountBalance() },
-            onSaveApiCredentials = { key, sec, pin, testnet, live, onResult ->
-                viewModel.saveAndVerifyApiCredentials(key, sec, pin, testnet, live, onResult)
-            },
-            onOpenApiConfig = onOpenApiConfig ?: {}
-        )
     }
 }
 

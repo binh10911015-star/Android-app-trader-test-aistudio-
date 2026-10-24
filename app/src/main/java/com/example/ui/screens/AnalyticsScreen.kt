@@ -60,13 +60,10 @@ fun AnalyticsScreen(
     var minVolRatioText by remember { mutableStateOf(currentConfig.minVolRatio.toString()) }
     var maxD1ChangePctText by remember { mutableStateOf(currentConfig.maxD1ChangePct.toString()) }
     var maxAtrPctText by remember { mutableStateOf((currentConfig.maxAtrPercent * 100).toString()) }
-    var btcPanicBreakerText by remember { mutableStateOf(currentConfig.btcPanicCircuitBreaker.toString()) }
 
-    // 4. Thoát lệnh động ATR & Timeout
-    var kTpText by remember { mutableStateOf(currentConfig.kTp.toString()) }
+    // 4. Thoát lệnh Pure Trailing & FloorLock
     var kTrailText by remember { mutableStateOf(currentConfig.kTrail.toString()) }
-    var kSlText by remember { mutableStateOf(currentConfig.kSl.toString()) }
-    var timeoutHoursText by remember { mutableStateOf(currentConfig.maxHoldingHours.toString()) }
+    var floorLockMinRoiText by remember { mutableStateOf((currentConfig.floorLockMinRoi * 100).toString()) }
 
     // Lắng nghe khi có đề xuất AI 1-chạm được áp dụng
     LaunchedEffect(currentConfig, currentDays) {
@@ -79,11 +76,8 @@ fun AnalyticsScreen(
         minVolRatioText = currentConfig.minVolRatio.toString()
         maxD1ChangePctText = currentConfig.maxD1ChangePct.toString()
         maxAtrPctText = (currentConfig.maxAtrPercent * 100).toString()
-        btcPanicBreakerText = currentConfig.btcPanicCircuitBreaker.toString()
-        kTpText = currentConfig.kTp.toString()
         kTrailText = currentConfig.kTrail.toString()
-        kSlText = currentConfig.kSl.toString()
-        timeoutHoursText = currentConfig.maxHoldingHours.toString()
+        floorLockMinRoiText = (currentConfig.floorLockMinRoi * 100).toString()
     }
 
     LazyColumn(
@@ -501,54 +495,28 @@ fun AnalyticsScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = maxAtrPctText,
-                                onValueChange = { maxAtrPctText = it },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = CryptoGold,
-                                    unfocusedBorderColor = DarkBorder,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White
-                                ),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "BTC Panic Breaker (%)", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = btcPanicBreakerText,
-                                onValueChange = { btcPanicBreakerText = it },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = CryptoGold,
-                                    unfocusedBorderColor = DarkBorder,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White
-                                ),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-                    }
+                    Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    OutlinedTextField(
+                        value = maxAtrPctText,
+                        onValueChange = { maxAtrPctText = it },
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = CryptoGold,
+                            unfocusedBorderColor = DarkBorder,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+                    )
                 }
             }
         }
 
         // ==========================================
-        // NHÓM 4: CƠ CHẾ CHỐT LỜI & THOÁT LỆNH ĐỘNG
+        // NHÓM 4: CƠ CHẾ CHỐT LỜI PURE TRAILING & FLOORLOCK
         // ==========================================
         item {
             Card(
@@ -567,7 +535,7 @@ fun AnalyticsScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "4. Cơ Chế Chốt Lời & Thoát Lệnh Động",
+                            text = "4. Cơ Chế Thoát Lệnh (Pure Trailing Stop & FloorLock)",
                             color = Color.White,
                             fontSize = 13.sp,
                             fontWeight = FontWeight.Bold
@@ -580,25 +548,6 @@ fun AnalyticsScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Hệ số kích hoạt TP (K_TP)", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = kTpText,
-                                onValueChange = { kTpText = it },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = CryptoGold,
-                                    unfocusedBorderColor = DarkBorder,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White
-                                ),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-
                         Column(modifier = Modifier.weight(1f)) {
                             Text(text = "Bước đệm Trailing (K_Trail)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
@@ -617,42 +566,16 @@ fun AnalyticsScreen(
                                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                             )
                         }
-                    }
 
-                    Spacer(modifier = Modifier.height(10.dp))
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Hệ số Stop-Loss (K_SL)", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Sàn khóa lãi FloorLock (%)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = kSlText,
-                                onValueChange = { kSlText = it },
+                                value = floorLockMinRoiText,
+                                onValueChange = { floorLockMinRoiText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedBorderColor = CryptoGold,
-                                    unfocusedBorderColor = DarkBorder,
-                                    focusedTextColor = Color.White,
-                                    unfocusedTextColor = Color.White
-                                ),
-                                textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Timeout giải phóng (Giờ)", color = TextMuted, fontSize = 11.sp)
-                            Spacer(modifier = Modifier.height(4.dp))
-                            OutlinedTextField(
-                                value = timeoutHoursText,
-                                onValueChange = { timeoutHoursText = it.filter { c -> c.isDigit() } },
-                                modifier = Modifier.fillMaxWidth().height(48.dp),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                 colors = OutlinedTextFieldDefaults.colors(
                                     focusedBorderColor = CryptoGold,
                                     unfocusedBorderColor = DarkBorder,
@@ -681,12 +604,8 @@ fun AnalyticsScreen(
                     val minRvol = minVolRatioText.toDoubleOrNull() ?: 2.0
                     val maxD1 = maxD1ChangePctText.toDoubleOrNull() ?: 10.0
                     val maxAtr = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0
-                    val btcPanic = btcPanicBreakerText.toDoubleOrNull() ?: -3.5
-
-                    val kTp = kTpText.toDoubleOrNull() ?: 0.50
                     val kTrail = kTrailText.toDoubleOrNull() ?: 0.25
-                    val kSl = kSlText.toDoubleOrNull() ?: 0.50
-                    val timeoutHours = timeoutHoursText.toIntOrNull() ?: 72
+                    val floorLockRoi = (floorLockMinRoiText.toDoubleOrNull() ?: 0.5) / 100.0
 
                     val customConfig = BacktestConfig(
                         initialCapital = initCap,
@@ -696,12 +615,11 @@ fun AnalyticsScreen(
                         minVolRatio = minRvol,
                         maxD1ChangePct = maxD1,
                         maxAtrPercent = maxAtr,
-                        btcPanicCircuitBreaker = btcPanic,
                         slotScanMode = slotScanMode,
-                        kTp = kTp,
                         kTrail = kTrail,
-                        kSl = kSl,
-                        maxHoldingHours = timeoutHours
+                        enableTrailingStop = true,
+                        enableFloorLock = true,
+                        floorLockMinRoi = floorLockRoi
                     )
 
                     viewModel.updateBacktestConfig(customConfig, days)

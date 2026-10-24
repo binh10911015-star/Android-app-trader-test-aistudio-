@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch triển khai nâng cấp toàn diện AI Cố Vấn: Động cơ tối ưu hóa thông số thích ứng đa mục tiêu (Tối đa Lợi nhuận, Giảm Max DD, Cân bằng), tích hợp lịch sử backtest đa kỳ vào ngữ cảnh, kết nối Gemini API và bộ suy luận dữ liệu tự động.",
-  "updatedAt":  "2026-10-23T11:48:10.128169507Z",
+  "summary":  "Kế hoạch cập nhật: Loại bỏ hoàn toàn BTC Panic Circuit Breaker theo yêu cầu. Chiến lược trở nên tinh gọn và thuần khiết: DUY NHẤT 1 CƠ CHẾ THOÁT LỆNH LÀ FLOORLOCK & ATR TRAILING STOP. Tinh gọn thông báo cạnh Cài đặt, nút kích hoạt Bot dưới Cài đặt, đồng bộ 2 chiều Cài đặt - Backtest và thu nhỏ giao diện.",
+  "updatedAt":  "2026-10-23T16:43:10.904074185Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

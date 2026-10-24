@@ -28,12 +28,11 @@ object ScreenContextBuilder {
                 json.put("investedUsdt", basket.totalInvested)
                 json.put("coinsCount", basket.positions.size)
                 json.put("basketAtrPercent", basket.basketAtrPercent)
-                json.put("activationRoi", basket.activationRoi)
+                json.put("floorLockRoi", basket.floorLockRoi)
                 json.put("currentTrailingStopRoi", basket.currentTrailingStopRoi)
                 json.put("peakRoi", basket.peakRoi)
                 val hours = (System.currentTimeMillis() - basket.openTime) / 3600000.0
                 json.put("holdingHours", hours)
-                json.put("isTimedOut", hours >= (basket.maxHoldingMillis / 3600000.0))
                 val arr = JSONArray()
                 basket.positions.forEach { arr.put(it.symbol) }
                 json.put("symbols", arr)
@@ -57,15 +56,10 @@ object ScreenContextBuilder {
             cJson.put("minVolRatio", currentBacktestConfig.minVolRatio)
             cJson.put("maxD1ChangePct", currentBacktestConfig.maxD1ChangePct)
             cJson.put("maxAtrPercent", currentBacktestConfig.maxAtrPercent)
-            cJson.put("btcPanicCircuitBreaker", currentBacktestConfig.btcPanicCircuitBreaker)
-            cJson.put("kTp", currentBacktestConfig.kTp)
             cJson.put("kTrail", currentBacktestConfig.kTrail)
-            cJson.put("kSl", currentBacktestConfig.kSl)
-            cJson.put("maxHoldingHours", currentBacktestConfig.maxHoldingHours)
             cJson.put("enableTrailingStop", currentBacktestConfig.enableTrailingStop)
             cJson.put("enableFloorLock", currentBacktestConfig.enableFloorLock)
-            cJson.put("enableStopLoss", currentBacktestConfig.enableStopLoss)
-            cJson.put("enableTimeout", currentBacktestConfig.enableTimeout)
+            cJson.put("floorLockMinRoi", currentBacktestConfig.floorLockMinRoi)
             root.put("backtestConfig", cJson)
         }
 
@@ -79,11 +73,7 @@ object ScreenContextBuilder {
             bJson.put("avgHoldingDays", backtestReport.averageHoldingDays)
             bJson.put("finalEquity", backtestReport.finalEquity)
 
-            val slHits = backtestReport.cycles.count { it.exitReason == "SL_HIT" }
-            val timeoutHits = backtestReport.cycles.count { it.exitReason.contains("TIMEOUT") }
             val trailingHits = backtestReport.cycles.count { it.exitReason == "TRAILING_STOP_HIT" }
-            bJson.put("slHits", slHits)
-            bJson.put("timeoutHits", timeoutHits)
             bJson.put("trailingHits", trailingHits)
 
             root.put("backtestReport", bJson)
@@ -101,14 +91,9 @@ object ScreenContextBuilder {
                 rJson.put("maxDrawdownPercent", rec.maxDrawdownPercent)
                 rJson.put("totalCycles", rec.totalCycles)
                 rJson.put("trailingHits", rec.trailingHits)
-                rJson.put("slHits", rec.slHits)
-                rJson.put("timeoutHits", rec.timeoutHits)
 
                 val cfg = JSONObject()
-                cfg.put("kTp", rec.config.kTp)
                 cfg.put("kTrail", rec.config.kTrail)
-                cfg.put("kSl", rec.config.kSl)
-                cfg.put("maxHoldingHours", rec.config.maxHoldingHours)
                 cfg.put("perTradePct", rec.config.perTradePct)
                 cfg.put("maxPortfolioAllocation", rec.config.maxPortfolioAllocation)
                 cfg.put("minQuoteVolume24h", rec.config.minQuoteVolume24h)
@@ -116,8 +101,6 @@ object ScreenContextBuilder {
                 cfg.put("maxD1ChangePct", rec.config.maxD1ChangePct)
                 cfg.put("enableTrailingStop", rec.config.enableTrailingStop)
                 cfg.put("enableFloorLock", rec.config.enableFloorLock)
-                cfg.put("enableStopLoss", rec.config.enableStopLoss)
-                cfg.put("enableTimeout", rec.config.enableTimeout)
                 rJson.put("config", cfg)
 
                 hArr.put(rJson)
