@@ -307,6 +307,7 @@ fun MainApp(viewModel: MainViewModel) {
                     onClick = {
                         previousScreen = currentScreen
                         currentScreen = NavScreen.POSITIONS
+                        viewModel.refreshBinancePortfolio()
                     },
                     icon = {
                         BadgedBox(

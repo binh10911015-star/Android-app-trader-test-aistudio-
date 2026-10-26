@@ -355,7 +355,7 @@ object BinanceFuturesApiVerifier {
         approxPrice: Double,
         apiKey: String,
         apiSecret: String,
-        isTestnet: Boolean = true,
+        isTestnet: Boolean = false,
         reduceOnly: Boolean = false,
         exactQuantity: Double? = null
     ): BinanceOrderPlacementResult = withContext(Dispatchers.IO) {
@@ -386,13 +386,13 @@ object BinanceFuturesApiVerifier {
         // BẮT BUỘC DÙNG ABS() ĐỂ LUÔN GỬI SỐ DƯƠNG CHO BINANCE DÙ LÀ ĐÓNG LỆNH SHORT
         var calculatedQty = kotlin.math.abs(exactQuantity ?: (workingAmount / approxPrice))
 
-        if (calculatedQty < filter.minQty) {
+        if (!reduceOnly && calculatedQty < filter.minQty) {
             calculatedQty = filter.minQty
             autoFixes.add("Chỉnh lên lượng Min Qty: ${filter.minQty}")
         }
 
         var formattedQty = roundToStepSize(calculatedQty, filter.stepSize)
-        if ((formattedQty.toDoubleOrNull() ?: 0.0) < filter.minQty) {
+        if (!reduceOnly && (formattedQty.toDoubleOrNull() ?: 0.0) < filter.minQty) {
             formattedQty = BigDecimal(filter.minQty.toString()).stripTrailingZeros().toPlainString()
         }
 
@@ -514,7 +514,7 @@ suspend fun setLeverage(
         BinanceTpSlResult(tpSuccess = tpOrderId != null, slSuccess = slOrderId != null, tpOrderId = tpOrderId, slOrderId = slOrderId, errorMessage = if (errors.isNotEmpty()) errors.joinToString() else null)
     }
 
-    suspend fun postMarketCloseOrder(symbol: String, amount: Double, approxPrice: Double, apiKey: String, apiSecret: String, isTestnet: Boolean = true, side: String = "SELL"): BinanceOrderPlacementResult {
+    suspend fun postMarketCloseOrder(symbol: String, amount: Double, approxPrice: Double, apiKey: String, apiSecret: String, isTestnet: Boolean = false, side: String = "SELL"): BinanceOrderPlacementResult {
         // Tự động tính giá trị Dương an toàn tuyệt đối
         val absAmount = kotlin.math.abs(amount)
         return postMarketOrder(

@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch điều chỉnh: Xóa bỏ hoàn toàn chế độ Binance Demo/Testnet (chỉ giữ Mainnet Live), bổ sung 2 mốc quét tín hiệu hàng ngày (07:00 AM và 07:00 PM UTC+7), làm rõ quy trình vận hành Single-Position ATR Engine với vốn 5.1 USDT/lệnh và hiển thị IP Whitelist Binance.",
-  "updatedAt":  "2026-10-26T09:59:50.940778293Z",
+  "summary":  "Kế hoạch chuyển đổi toàn diện Thẻ Vị Thế sang Binance Futures Mainnet (tiền thật), kiểm tra và tối ưu hóa 100% logic vào lệnh chuẩn sàn Binance (Cross 1x, StepSize, MinNotional, Timestamp Offset) và đồng bộ trực tiếp dữ liệu ví/vị thế với Room Database.",
+  "updatedAt":  "2026-10-26T10:47:25.415522926Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

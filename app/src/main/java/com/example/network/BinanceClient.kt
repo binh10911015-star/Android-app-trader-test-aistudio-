@@ -69,19 +69,21 @@ object BinanceClient {
     }
 
     fun setCrossMarginAndLeverage1x(symbol: String, apiKey: String, apiSecret: String, isTestnet: Boolean = false): Boolean {
-        val baseUrl = if (isTestnet) "https://testnet.binancefuture.com" else "https://fapi.binance.com"
+        val baseUrl = "https://fapi.binance.com"
         val emptyBody = "".toRequestBody("application/x-www-form-urlencoded".toMediaTypeOrNull())
 
         try {
-            val ts1 = System.currentTimeMillis()
+            val ts1 = BinanceFuturesApiVerifier.getSyncedTimestamp()
             val queryMargin = "symbol=${symbol.uppercase()}&marginType=CROSSED&timestamp=$ts1&recvWindow=60000"
             val sigMargin = hmacSha256(apiSecret, queryMargin)
             val requestMargin = Request.Builder().url("$baseUrl/fapi/v1/marginType?$queryMargin&signature=$sigMargin").header("X-MBX-APIKEY", apiKey).post(emptyBody).build()
-            okHttpClient.newCall(requestMargin).execute().use { }
+            okHttpClient.newCall(requestMargin).execute().use { resp ->
+                // Mã -4046 nghĩa là Margin Type đã là CROSSED sẵn rồi, hoàn toàn hợp lệ
+            }
         } catch (_: Exception) {}
 
         try {
-            val ts2 = System.currentTimeMillis()
+            val ts2 = BinanceFuturesApiVerifier.getSyncedTimestamp()
             val queryLev = "symbol=${symbol.uppercase()}&leverage=1&timestamp=$ts2&recvWindow=60000"
             val sigLev = hmacSha256(apiSecret, queryLev)
             val requestLev = Request.Builder().url("$baseUrl/fapi/v1/leverage?$queryLev&signature=$sigLev").header("X-MBX-APIKEY", apiKey).post(emptyBody).build()

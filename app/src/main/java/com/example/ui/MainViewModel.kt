@@ -217,7 +217,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val loadedConfig = secureApiStorage.loadConfig()
-        BinanceClient.isTestnet = loadedConfig.isTestnet 
+        BinanceClient.isTestnet = false
 
         if (loadedConfig.isProxyEnabled) {
             BinanceClient.updateProxy(
@@ -755,7 +755,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (isLive) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                val netLabel = if (isTestnet) "Testnet Demo" else "Mainnet"
+                val netLabel = "Binance Mainnet"
                 val cleanSymbol = symbol.trim().uppercase()
 
                 // Lưu ánh xạ giỏ cho vị thế Binance Live
@@ -926,48 +926,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun toggleTradingMode(toLiveMainnet: Boolean) {
         val current = _apiConfig.value
-        val newTestnet = !toLiveMainnet
-        val newLiveTrading = toLiveMainnet
+        BinanceClient.isTestnet = false
 
-        BinanceClient.isTestnet = !toLiveMainnet
-
-        val (apiKey, apiSecret) = if (toLiveMainnet) {
-            secureApiStorage.getMainnetCredentials()
-        } else {
-            secureApiStorage.getTestnetCredentials()
-        }
+        val (apiKey, apiSecret) = secureApiStorage.getMainnetCredentials()
 
         secureApiStorage.saveCredentials(
             apiKey = apiKey,
             apiSecret = apiSecret,
             accessPin = current.accessPin.ifBlank { "1234" },
-            isTestnet = newTestnet,
-            liveTradingEnabled = newLiveTrading
+            isTestnet = false,
+            liveTradingEnabled = true
         )
         _apiConfig.value = secureApiStorage.loadConfig()
-        webSocketClient?.start(isTestnet = newTestnet)
-
-        if (toLiveMainnet) {
-            autoLoginMainnet()
-            triggerAlert(
-                TradeAlert(
-                    symbol = "MAINNET",
-                    title = "⚠️ ĐÃ BẬT CHẾ ĐỘ LIVE MAINNET",
-                    message = "CẢNH BÁO: Đang ở chế độ LIVE MAINNET! Mọi thao tác đặt lệnh sẽ sử dụng tiền thật trên Binance Futures.",
-                    type = AlertType.INFO
-                )
-            )
-        } else {
-            autoLoginTestnet()
-            triggerAlert(
-                TradeAlert(
-                    symbol = "SIMULATION",
-                    title = "🛡️ ĐÃ CHUYỂN VỀ BINANCE DEMO",
-                    message = "Đã chuyển sang môi trường Binance Testnet Demo an toàn.",
-                    type = AlertType.INFO
-                )
-            )
-        }
+        webSocketClient?.start(isTestnet = false)
+        autoLoginMainnet()
     }
 
     fun setPositionTpSl(
@@ -1286,9 +1258,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (newlyOpened > 0) {
                         _uiState.value = _uiState.value.copy(
-                            openingPositionsProgress = "Đã mở $newlyOpened vị thế ($targetBasketSlot). Chờ 5s trước khi mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
+                            openingPositionsProgress = "Đã mở $newlyOpened vị thế ($targetBasketSlot). Chuẩn bị mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
                         )
-                        delay(5000L)
+                        delay(1200L)
                     }
                     if (!isActive || (isAuto && !_uiState.value.settings.autoTradeEnabled)) break
 
@@ -1972,8 +1944,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         apiKey: String,
         apiSecret: String,
         accessPin: String = "",
-        isTestnet: Boolean = true,
-        liveTradingEnabled: Boolean = false,
+        isTestnet: Boolean = false,
+        liveTradingEnabled: Boolean = true,
         onResult: (BinanceAccountVerificationResult) -> Unit
     ) {
         viewModelScope.launch {
