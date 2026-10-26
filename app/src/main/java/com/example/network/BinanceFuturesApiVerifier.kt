@@ -26,13 +26,13 @@ import javax.crypto.spec.SecretKeySpec
 object BinanceFuturesApiVerifier {
 
     private const val MAINNET_BASE_URL = "https://fapi.binance.com"
-    private const val TESTNET_BASE_URL = "https://testnet.binancefuture.com"
+    private const val TESTNET_BASE_URL = "https://fapi.binance.com"
 
     private var serverTimeOffset: Long = 0L
     private var lastTimeSync: Long = 0L
     private val symbolFiltersCache = ConcurrentHashMap<String, SymbolExchangeFilter>()
 
-    suspend fun syncServerTimeOffset(baseUrl: String = TESTNET_BASE_URL): Long = withContext(Dispatchers.IO) {
+    suspend fun syncServerTimeOffset(baseUrl: String = MAINNET_BASE_URL): Long = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder().url("$baseUrl/fapi/v1/time").get().build()
             val response = BinanceClient.okHttpClient.newCall(request).execute()

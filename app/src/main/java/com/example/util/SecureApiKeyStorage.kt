@@ -118,9 +118,9 @@ class SecureApiKeyStorage(context: Context) {
     }
 
     fun loadConfig(): BinanceApiConfig {
-        val isTestnet = prefs.getBoolean(KEY_IS_TESTNET, true)
-        val defaultKey = if (isTestnet) PRECONFIGURED_TESTNET_API_KEY else PRECONFIGURED_MAINNET_API_KEY
-        val defaultSecret = if (isTestnet) PRECONFIGURED_TESTNET_API_SECRET else PRECONFIGURED_MAINNET_API_SECRET
+        val isTestnet = false
+        val defaultKey = PRECONFIGURED_MAINNET_API_KEY
+        val defaultSecret = PRECONFIGURED_MAINNET_API_SECRET
 
         val apiKey = prefs.getString(KEY_API_KEY, defaultKey) ?: defaultKey
         val apiSecret = prefs.getString(KEY_API_SECRET, defaultSecret) ?: defaultSecret
@@ -135,7 +135,7 @@ class SecureApiKeyStorage(context: Context) {
         return BinanceApiConfig(
             apiKey = apiKey,
             apiSecret = apiSecret,
-            isTestnet = isTestnet,
+            isTestnet = false,
             isConfigured = apiKey.isNotBlank() && apiSecret.isNotBlank(),
             liveTradingEnabled = liveEnabled,
             accessPin = pin,

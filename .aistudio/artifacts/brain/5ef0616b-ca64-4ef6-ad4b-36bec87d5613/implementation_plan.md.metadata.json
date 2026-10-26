@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch triển khai hoàn tất cập nhật phiên bản v2.2 Dual Basket Momentum: Bộ lọc BTC Macro Regime & Circuit Breaker, và Cơ chế Smart Timeout linh hoạt.",
-  "updatedAt":  "2026-10-24T17:03:37.392867847Z",
+  "summary":  "Kế hoạch điều chỉnh: Xóa bỏ hoàn toàn chế độ Binance Demo/Testnet (chỉ giữ Mainnet Live), bổ sung 2 mốc quét tín hiệu hàng ngày (07:00 AM và 07:00 PM UTC+7), làm rõ quy trình vận hành Single-Position ATR Engine với vốn 5.1 USDT/lệnh và hiển thị IP Whitelist Binance.",
+  "updatedAt":  "2026-10-26T09:59:50.940778293Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

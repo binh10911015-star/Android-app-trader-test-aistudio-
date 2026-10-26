@@ -36,9 +36,7 @@ object BinanceClient {
         "https://fapi3.binance.com"
     )
 
-    fun getTradeBaseUrl(): String {
-        return if (isTestnet) "https://testnet.binancefuture.com" else "https://fapi.binance.com"
-    }
+    fun getTradeBaseUrl(): String = "https://fapi.binance.com"
 
     @Volatile
     private var activeProxyHost: String = ""
@@ -99,11 +97,7 @@ object BinanceClient {
             return activePerpetualSymbols.keys
         }
 
-        val urlsToTry = if (isTestnet) {
-            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
-        } else {
-            MAINNET_PUBLIC_URLS
-        }
+        val urlsToTry = MAINNET_PUBLIC_URLS
 
         for (baseUrl in urlsToTry) {
             try {
@@ -187,11 +181,7 @@ object BinanceClient {
     }
 
     fun fetchTickersWithFallback(): List<BinanceTicker> {
-        val urlsToTry = if (isTestnet) {
-            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
-        } else {
-            MAINNET_PUBLIC_URLS
-        }
+        val urlsToTry = MAINNET_PUBLIC_URLS
         for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/ticker/24hr").build()
@@ -210,11 +200,7 @@ object BinanceClient {
     }
 
     fun fetchMarkPricesWithFallback(): Map<String, Double> {
-        val urlsToTry = if (isTestnet) {
-            listOf("https://testnet.binancefuture.com") + MAINNET_PUBLIC_URLS
-        } else {
-            MAINNET_PUBLIC_URLS
-        }
+        val urlsToTry = MAINNET_PUBLIC_URLS
         for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/premiumIndex").build()

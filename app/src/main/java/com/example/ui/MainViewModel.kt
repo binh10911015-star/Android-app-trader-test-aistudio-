@@ -233,11 +233,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         startKlinePolling()
         startScanScheduler()
         fetchPublicIpAddress()
-        if (loadedConfig.isTestnet) {
-            autoLoginTestnet()
-        } else {
-            autoLoginMainnet()
-        }
+        autoLoginMainnet()
 
         viewModelScope.launch {
             openPositions.collect { list ->
@@ -1266,8 +1262,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         maxOf(0.0, _uiState.value.settings.simulatedBalanceUsdt - used)
                     }
 
+                    val totalWallet = if (isLive) {
+                        val tw = _binancePortfolio.value.totalWalletBalance
+                        if (tw > 0.0) tw else _uiState.value.settings.simulatedBalanceUsdt
+                    } else {
+                        _uiState.value.settings.simulatedBalanceUsdt
+                    }
+                    val maxPortfolioCap = totalWallet * _uiState.value.settings.maxPortfolioAllocation
+                    val currentlyAllocated = openPositions.value.sumOf { it.investedUsdt } + totalInvested
+
                     val volume = _uiState.value.settings.calculateDynamicVolume(availableBal)
                     if (availableBal < volume || volume <= 0.0) break
+                    // Dừng mở thêm lệnh khi chạm trần danh mục quy định (mặc định 60% Equity)
+                    if (currentlyAllocated + volume > maxPortfolioCap) break
                     
                     val tickerPrice = currentTickers.find { it.symbol == symbol }?.lastPrice
                     val klinePrice = if (symbol == _uiState.value.selectedSymbol) _uiState.value.klineData.lastOrNull()?.candle?.close else null
@@ -1910,9 +1917,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getEffectiveApiCredentials(): Triple<String, String, Boolean> {
         val config = _apiConfig.value
-        val isTestnet = config.isTestnet
-        val defaultKey = if (isTestnet) SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY else SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY
-        val defaultSecret = if (isTestnet) SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET else SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET
+        val isTestnet = false
+        val defaultKey = SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY
+        val defaultSecret = SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET
         val apiKey = config.apiKey.ifBlank { defaultKey }
         val apiSecret = config.apiSecret.ifBlank { defaultSecret }
         return Triple(apiKey, apiSecret, isTestnet)
@@ -1957,50 +1964,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun autoLoginTestnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
-        viewModelScope.launch {
-            val (apiKey, apiSecret) = secureApiStorage.getTestnetCredentials()
-            val isTestnet = true
-            BinanceClient.isTestnet = true
-
-            _isVerifyingApi.value = true
-            val result = BinanceFuturesApiVerifier.verifyAccount(apiKey, apiSecret, isTestnet)
-
-            secureApiStorage.saveCredentials(
-                apiKey = apiKey,
-                apiSecret = apiSecret,
-                accessPin = _apiConfig.value.accessPin.ifBlank { "1234" },
-                isTestnet = isTestnet,
-                liveTradingEnabled = true
-            )
-            secureApiStorage.updateVerificationResult(result)
-            val updated = secureApiStorage.loadConfig()
-            _apiConfig.value = updated
-            _isVerifyingApi.value = false
-
-            refreshTickers()
-
-            if (result.isSuccess) {
-                refreshBinancePortfolio()
-                triggerAlert(
-                    TradeAlert(
-                        symbol = "BINANCE_TESTNET",
-                        title = "ĐÃ ĐĂNG NHẬP BINANCE TESTNET THÀNH CÔNG",
-                        message = "Tự động đăng nhập Binance Futures Testnet thành công! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
-                        type = AlertType.INFO
-                    )
-                )
-            } else {
-                triggerAlert(
-                    TradeAlert(
-                        symbol = "BINANCE_TESTNET",
-                        title = "KẾT NỐI BINANCE TESTNET",
-                        message = "Đã nhập API Key & Secret Testnet. ${result.errorMessage ?: "Vui lòng kiểm tra lại kết nối mạng"}",
-                        type = AlertType.INFO
-                    )
-                )
-            }
-            onResult?.invoke(result)
-        }
+        // Chuyển toàn bộ sang Mainnet theo yêu cầu loại bỏ Testnet
+        autoLoginMainnet(onResult)
     }
 
     fun saveAndVerifyApiCredentials(

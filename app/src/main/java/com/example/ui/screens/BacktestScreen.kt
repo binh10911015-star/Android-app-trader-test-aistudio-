@@ -55,6 +55,7 @@ fun BacktestScreen(
 
     // 2. Quản trị vốn & Phân bổ
     var initialCapitalText by remember { mutableStateOf(currentConfig.initialCapital.toInt().toString()) }
+    var capitalPerTradeUsdtText by remember { mutableStateOf(if (currentConfig.capitalPerTradeUsdt > 0.0) currentConfig.capitalPerTradeUsdt.toString() else "5.1") }
     var perTradePctText by remember { mutableStateOf((currentConfig.perTradePct * 100).toString()) }
     var maxAllocationPctText by remember { mutableStateOf((currentConfig.maxPortfolioAllocation * 100).toInt().toString()) }
 
@@ -94,6 +95,7 @@ fun BacktestScreen(
         daysText = currentDays.toString()
         slotScanMode = currentConfig.slotScanMode
         initialCapitalText = currentConfig.initialCapital.toInt().toString()
+        capitalPerTradeUsdtText = if (currentConfig.capitalPerTradeUsdt > 0.0) currentConfig.capitalPerTradeUsdt.toString() else "5.1"
         perTradePctText = (currentConfig.perTradePct * 100).toString()
         maxAllocationPctText = (currentConfig.maxPortfolioAllocation * 100).toInt().toString()
         minQuoteVolumeText = currentConfig.minQuoteVolume24h.toLong().toString()
@@ -283,6 +285,30 @@ fun BacktestScreen(
                         textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                     )
 
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(180 to "180 ngày (~6T)", 365 to "365 ngày (1 năm)", 730 to "730 ngày (2 năm)").forEach { (d, label) ->
+                            val isSel = daysText == d.toString()
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { daysText = d.toString() },
+                                color = if (isSel) CryptoGold.copy(alpha = 0.25f) else DarkSurface,
+                                border = BorderStroke(0.5.dp, if (isSel) CryptoGold else DarkBorder)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSel) CryptoGold else TextSecondary,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(vertical = 5.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+
                     Spacer(modifier = Modifier.height(10.dp))
 
                     Text(text = "Chế độ Slot Quét", color = TextMuted, fontSize = 11.sp)
@@ -365,11 +391,11 @@ fun BacktestScreen(
 
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Vốn/Lệnh (%) (Tối đa 2%)", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Vốn vào mỗi lệnh (USDT)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = perTradePctText,
-                                onValueChange = { perTradePctText = it },
+                                value = capitalPerTradeUsdtText,
+                                onValueChange = { capitalPerTradeUsdtText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -400,6 +426,32 @@ fun BacktestScreen(
                                 ),
                                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(text = "Chọn nhanh vốn/lệnh (USDT):", color = TextMuted, fontSize = 10.sp)
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(5.1 to "5.1$ (Chuẩn)", 10.0 to "10$", 20.0 to "20$", 50.0 to "50$", 100.0 to "100$").forEach { (amt, label) ->
+                            val isSelected = capitalPerTradeUsdtText == amt.toString()
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { capitalPerTradeUsdtText = amt.toString() },
+                                color = if (isSelected) CryptoGold.copy(alpha = 0.25f) else DarkSurface,
+                                border = BorderStroke(0.5.dp, if (isSelected) CryptoGold else DarkBorder)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSelected) CryptoGold else TextSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(vertical = 5.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
                         }
                     }
                 }
@@ -863,14 +915,18 @@ fun BacktestScreen(
             Button(
                 onClick = {
                     val days = daysText.toIntOrNull() ?: 180
+                    val parsedCapitalPerTrade = capitalPerTradeUsdtText.toDoubleOrNull() ?: 5.1
+                    val parsedInitialCapital = initialCapitalText.toDoubleOrNull() ?: 10000.0
                     val updatedCfg = BacktestConfig(
-                        initialCapital = initialCapitalText.toDoubleOrNull() ?: 10000.0,
-                        perTradePct = (perTradePctText.toDoubleOrNull() ?: 1.5) / 100.0,
+                        initialCapital = parsedInitialCapital,
+                        capitalPerTradeUsdt = parsedCapitalPerTrade,
+                        useFixedCapitalPerTrade = true,
+                        perTradePct = if (parsedInitialCapital > 0) parsedCapitalPerTrade / parsedInitialCapital else 0.015,
                         maxPortfolioAllocation = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0,
-                        minQuoteVolume24h = minQuoteVolumeText.toDoubleOrNull() ?: 20_000_000.0,
+                        minQuoteVolume24h = minQuoteVolumeText.toDoubleOrNull() ?: 5_000_000.0,
                         minVolRatio = minVolRatioText.toDoubleOrNull() ?: 2.0,
                         minD1ChangePct = minD1ChangePctText.toDoubleOrNull() ?: 2.0,
-                        maxD1ChangePct = maxD1ChangePctText.toDoubleOrNull() ?: 10.0,
+                        maxD1ChangePct = maxD1ChangePctText.toDoubleOrNull() ?: 17.5,
                         maxAtrPercent = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0,
                         slotScanMode = slotScanMode,
                         kTrail = kTrailText.toDoubleOrNull() ?: 0.25,
@@ -883,7 +939,7 @@ fun BacktestScreen(
                         enableBtcCircuitBreaker = enableBtcCircuitBreaker,
                         btcCircuitBreakerPct = btcCircuitBreakerPctText.toDoubleOrNull() ?: -3.5,
                         enableSmartTimeout = enableSmartTimeout,
-                        timeoutDays = timeoutDaysText.toIntOrNull() ?: 6,
+                        timeoutDays = timeoutDaysText.toIntOrNull() ?: 7,
                         disableTimeoutWhenTrailing = disableTimeoutWhenTrailing
                     )
                     viewModel.updateBacktestConfig(updatedCfg, days)

@@ -7,6 +7,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -258,8 +259,8 @@ private fun StrategySettingsContent(
     var simulatedBalanceText by remember(currentSettings.simulatedBalanceUsdt) {
         mutableStateOf(currentSettings.simulatedBalanceUsdt.toInt().toString())
     }
-    var perTradePctText by remember(currentSettings.perTradePct) {
-        mutableStateOf((currentSettings.perTradePct * 100.0).toString())
+    var capitalPerTradeUsdtText by remember(currentSettings.capitalPerTradeUsdt) {
+        mutableStateOf(if (currentSettings.capitalPerTradeUsdt > 0.0) currentSettings.capitalPerTradeUsdt.toString() else "5.1")
     }
     var maxAllocationPctText by remember(currentSettings.maxPortfolioAllocation) {
         mutableStateOf((currentSettings.maxPortfolioAllocation * 100.0).toString())
@@ -426,11 +427,11 @@ private fun StrategySettingsContent(
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Vốn/Lệnh (%) (chuẩn 1.5%)", color = TextMuted, fontSize = 11.sp)
+                        Text(text = "Vốn vào mỗi lệnh (USDT)", color = TextMuted, fontSize = 11.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
-                            value = perTradePctText,
-                            onValueChange = { perTradePctText = it },
+                            value = capitalPerTradeUsdtText,
+                            onValueChange = { capitalPerTradeUsdtText = it },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -459,6 +460,32 @@ private fun StrategySettingsContent(
                                 unfocusedTextColor = Color.White
                             )
                         )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(text = "Chọn nhanh vốn/lệnh (USDT):", color = TextMuted, fontSize = 10.sp)
+                Spacer(modifier = Modifier.height(3.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(5.1 to "5.1$ (Chuẩn)", 10.0 to "10$", 20.0 to "20$", 50.0 to "50$", 100.0 to "100$").forEach { (amt, label) ->
+                        val isSelected = capitalPerTradeUsdtText == amt.toString()
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { capitalPerTradeUsdtText = amt.toString() },
+                            color = if (isSelected) CryptoGold.copy(alpha = 0.25f) else DarkSurface,
+                            border = BorderStroke(0.5.dp, if (isSelected) CryptoGold else DarkBorder)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) CryptoGold else TextSecondary,
+                                fontSize = 9.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(vertical = 5.dp),
+                                textAlign = TextAlign.Center
+                            )
+                        }
                     }
                 }
             }
@@ -685,7 +712,7 @@ private fun StrategySettingsContent(
         Button(
             onClick = {
                 val parsedBalance = simulatedBalanceText.toDoubleOrNull() ?: currentSettings.simulatedBalanceUsdt
-                val parsedPerTrade = (perTradePctText.toDoubleOrNull() ?: 1.5) / 100.0
+                val parsedCapitalPerTrade = capitalPerTradeUsdtText.toDoubleOrNull() ?: 5.1
                 val parsedMaxAlloc = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0
                 val parsedMinQuote = minQuoteVolumeText.toDoubleOrNull() ?: currentSettings.minQuoteVolume24h
                 val parsedMinVolRatio = minVolRatioText.toDoubleOrNull() ?: currentSettings.minVolRatio
@@ -697,7 +724,10 @@ private fun StrategySettingsContent(
 
                 val newSettings = currentSettings.copy(
                     simulatedBalanceUsdt = parsedBalance,
-                    perTradePct = parsedPerTrade,
+                    capitalPerTradeUsdt = parsedCapitalPerTrade,
+                    fixedVolumeUsdt = parsedCapitalPerTrade,
+                    volumeType = com.example.model.VolumeType.FIXED_AMOUNT,
+                    perTradePct = if (parsedBalance > 0) (parsedCapitalPerTrade / parsedBalance) else 0.015,
                     maxPortfolioAllocation = parsedMaxAlloc,
                     minQuoteVolume24h = parsedMinQuote,
                     minVolRatio = parsedMinVolRatio,
@@ -708,8 +738,7 @@ private fun StrategySettingsContent(
                     enableTrailingStop = enableTrailingStop,
                     enableFloorLock = enableFloorLock,
                     kTrail = parsedKTrail,
-                    floorLockMinRoi = parsedFloorRoi,
-                    capitalPerTradeUsdt = parsedBalance * parsedPerTrade
+                    floorLockMinRoi = parsedFloorRoi
                 )
 
                 viewModel.updateStrategySettingsAndSyncWithBacktest(newSettings)
@@ -783,15 +812,18 @@ private fun BinanceApiSettingsContent(
     isVerifying: Boolean
 ) {
     val clipboardManager = LocalClipboardManager.current
+    val publicIpAddress by viewModel.publicIpAddress.collectAsState()
+    val isFetchingIp by viewModel.isFetchingIp.collectAsState()
+    var isIpCopied by remember { mutableStateOf(false) }
 
-    val defaultInitKey = if (apiConfig.apiKey.isNotBlank()) apiConfig.apiKey else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY
-    val defaultInitSecret = if (apiConfig.apiSecret.isNotBlank()) apiConfig.apiSecret else com.example.util.SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET
+    val defaultInitKey = if (apiConfig.apiKey.isNotBlank()) apiConfig.apiKey else com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY
+    val defaultInitSecret = if (apiConfig.apiSecret.isNotBlank()) apiConfig.apiSecret else com.example.util.SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET
 
     var apiKey by remember(apiConfig) { mutableStateOf(defaultInitKey) }
     var apiSecret by remember(apiConfig) { mutableStateOf(defaultInitSecret) }
     var accessPin by remember(apiConfig) { mutableStateOf(apiConfig.accessPin.ifBlank { "1234" }) }
-    var isTestnet by remember(apiConfig) { mutableStateOf(apiConfig.isTestnet) }
-    var liveTradingEnabled by remember(apiConfig) { mutableStateOf(apiConfig.liveTradingEnabled) }
+    val isTestnet = false
+    var liveTradingEnabled by remember(apiConfig) { mutableStateOf(true) }
 
     var showSecret by remember { mutableStateOf(false) }
     var verificationResult by remember { mutableStateOf<BinanceAccountVerificationResult?>(null) }
@@ -831,7 +863,7 @@ private fun BinanceApiSettingsContent(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = if (apiConfig.isTestnet) "Tài Khoản Testnet Demo Binance" else "Tài Khoản Live Mainnet Binance",
+                            text = "Tài Khoản Live Mainnet Binance (fapi.binance.com)",
                             color = CryptoGreen,
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold
@@ -849,99 +881,142 @@ private fun BinanceApiSettingsContent(
             }
         }
 
-        // Environment Selector: Testnet vs Mainnet
+        // 1. THẺ ĐỊA CHỈ IP WHITELIST BINANCE
         Card(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().testTag("card_ip_whitelist"),
             shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated)
+            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
+            border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = "1. Môi Trường Binance Futures",
-                    color = TextPrimary,
-                    fontSize = 12.5.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    // Testnet Option
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { isTestnet = true }
-                            .border(
-                                1.dp,
-                                if (isTestnet) CryptoGold else DarkBorder,
-                                RoundedCornerShape(8.dp)
-                            ),
-                        color = if (isTestnet) CryptoGold.copy(alpha = 0.12f) else DarkSurface
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            tint = CryptoGold,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "1. Địa Chỉ IP Của App (Để Whitelist Binance)",
+                            color = CryptoGold,
+                            fontSize = 12.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    IconButton(
+                        onClick = {
+                            isIpCopied = false
+                            viewModel.fetchPublicIpAddress(forceRefresh = true)
+                        },
+                        modifier = Modifier.size(28.dp).testTag("btn_refresh_ip")
                     ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(if (isTestnet) CryptoGold else DarkSurfaceHighlight, CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = "Testnet (Demo)",
-                                    color = if (isTestnet) CryptoGold else TextPrimary,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
-                            Text(
-                                text = "testnet.binancefuture.com\nTiền giả lập an toàn",
-                                color = TextSecondary,
-                                fontSize = 9.5.sp,
-                                lineHeight = 12.sp
+                        if (isFetchingIp) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = CryptoGold
+                            )
+                        } else {
+                            Icon(
+                                imageVector = Icons.Default.Refresh,
+                                contentDescription = "Làm mới IP",
+                                tint = CryptoGold,
+                                modifier = Modifier.size(16.dp)
                             )
                         }
                     }
+                }
 
-                    // Mainnet Option
-                    Surface(
-                        modifier = Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { isTestnet = false }
-                            .border(
-                                1.dp,
-                                if (!isTestnet) CryptoGreen else DarkBorder,
-                                RoundedCornerShape(8.dp)
-                            ),
-                        color = if (!isTestnet) CryptoGreen.copy(alpha = 0.12f) else DarkSurface
+                Spacer(modifier = Modifier.height(6.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = DarkSurface,
+                    border = BorderStroke(1.dp, DarkBorder),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Column(modifier = Modifier.padding(8.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .background(if (!isTestnet) CryptoGreen else DarkSurfaceHighlight, CircleShape)
-                                )
-                                Spacer(modifier = Modifier.width(5.dp))
-                                Text(
-                                    text = "Live Mainnet",
-                                    color = if (!isTestnet) CryptoGreen else TextPrimary,
-                                    fontSize = 11.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(2.dp))
+                        Column {
                             Text(
-                                text = "fapi.binance.com\nKhớp tiền thật Binance",
-                                color = TextSecondary,
-                                fontSize = 9.5.sp,
-                                lineHeight = 12.sp
+                                text = "Outbound Public IP:",
+                                color = TextMuted,
+                                fontSize = 10.sp
+                            )
+                            Text(
+                                text = publicIpAddress ?: if (isFetchingIp) "Đang truy vấn IP..." else "Chưa lấy được IP (Bấm làm mới)",
+                                color = if (publicIpAddress != null) CryptoGreen else CryptoGold,
+                                fontSize = 14.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
                             )
                         }
+
+                        Button(
+                            onClick = {
+                                publicIpAddress?.let { ip ->
+                                    clipboardManager.setText(androidx.compose.ui.text.AnnotatedString(ip))
+                                    isIpCopied = true
+                                }
+                            },
+                            enabled = publicIpAddress != null,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isIpCopied) CryptoGreen else CryptoGold,
+                                contentColor = DarkBg
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(32.dp).testTag("btn_copy_ip")
+                        ) {
+                            Icon(
+                                imageVector = if (isIpCopied) Icons.Default.Check else Icons.Default.ContentPaste,
+                                contentDescription = null,
+                                modifier = Modifier.size(13.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = if (isIpCopied) "ĐÃ SAO CHÉP" else "SAO CHÉP IP",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = CryptoGold.copy(alpha = 0.08f),
+                    border = BorderStroke(0.5.dp, CryptoGold.copy(alpha = 0.25f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(8.dp),
+                        verticalAlignment = Alignment.Top
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = CryptoGold,
+                            modifier = Modifier.size(14.dp).padding(top = 1.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "Hướng dẫn Whitelist: Vào Binance > API Management > Chỉnh sửa API Key > Chọn 'Restrict access to trusted IPs only' và dán IP này vào. Điều này giúp API không bị lỗi từ chối IP và bảo vệ an toàn số dư tài khoản.",
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontSize = 10.sp,
+                            lineHeight = 13.5.sp
+                        )
                     }
                 }
             }

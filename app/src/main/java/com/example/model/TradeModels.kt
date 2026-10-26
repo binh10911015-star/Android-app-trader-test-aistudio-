@@ -55,7 +55,7 @@ data class BinanceApiConfig(
     val apiKey: String = "",
     val apiSecret: String = "",
     val accessPin: String = "",
-    val isTestnet: Boolean = true,
+    val isTestnet: Boolean = false,
     val liveTradingEnabled: Boolean = false,
     val isConnected: Boolean = false,
     val proxyHost: String = "",
@@ -289,7 +289,7 @@ data class TradeSettings(
     val simulatedBalanceUsdt: Double = 10000.0,
     val leverage: Int = 1,
     // Thông số chiến lược toàn diện (đồng bộ 2 chiều với BacktestConfig, không có SL/TP/Timeout)
-    val capitalPerTradeUsdt: Double = 150.0,
+    val capitalPerTradeUsdt: Double = 5.1,
     val perTradePct: Double = 0.015,
     val maxPortfolioAllocation: Double = 0.60,
     val minQuoteVolume24h: Double = 5_000_000.0,
@@ -310,7 +310,7 @@ data class TradeSettings(
     val btcCircuitBreakerPct: Double = -3.5,
     // V2.2: CƠ CHẾ SMART TIMEOUT LINH HOẠT
     val enableSmartTimeout: Boolean = true,
-    val timeoutDays: Int = 6,
+    val timeoutDays: Int = 7,
     val disableTimeoutWhenTrailing: Boolean = true,
     val timeoutLossFloorPct: Double = -0.025,
     val kTpAtr: Double = 0.50,
@@ -318,9 +318,9 @@ data class TradeSettings(
     // Trường tương thích phụ
     val volumeMultiplierThreshold: Double = 2.0,
     val portfolioTakeProfitPercent: Double = 4.0,
-    val volumeType: VolumeType = VolumeType.PERCENT_OF_BALANCE,
+    val volumeType: VolumeType = VolumeType.FIXED_AMOUNT,
     val volumePercentOfBalance: Double = 1.5,
-    val fixedVolumeUsdt: Double = 150.0,
+    val fixedVolumeUsdt: Double = 5.1,
     val enableDualBasket: Boolean = true,
     val timeframe: String = "1d"
 ) {
@@ -349,7 +349,9 @@ data class TradeSettings(
             disableTimeoutWhenTrailing = disableTimeoutWhenTrailing,
             timeoutLossFloorPct = timeoutLossFloorPct,
             kTpAtr = kTpAtr,
-            minActivationRoi = minActivationRoi
+            minActivationRoi = minActivationRoi,
+            capitalPerTradeUsdt = capitalPerTradeUsdt,
+            useFixedCapitalPerTrade = true
         )
     }
 
@@ -379,7 +381,8 @@ data class TradeSettings(
             timeoutLossFloorPct = config.timeoutLossFloorPct,
             kTpAtr = config.kTpAtr,
             minActivationRoi = config.minActivationRoi,
-            capitalPerTradeUsdt = config.initialCapital * config.perTradePct,
+            capitalPerTradeUsdt = if (config.capitalPerTradeUsdt > 0.0) config.capitalPerTradeUsdt else 5.1,
+            fixedVolumeUsdt = if (config.capitalPerTradeUsdt > 0.0) config.capitalPerTradeUsdt else 5.1,
             volumeMultiplierThreshold = config.minVolRatio
         )
     }
@@ -389,28 +392,31 @@ data class TradeSettings(
             VolumeType.PERCENT_OF_BALANCE -> {
                 val pct = if (volumePercentOfBalance > 0.0) volumePercentOfBalance / 100.0 else perTradePct
                 val calculated = customBalance * pct
-                if (calculated > 0.0) calculated else 50.0
+                if (calculated > 0.0) calculated else 5.1
             }
             VolumeType.FIXED_AMOUNT -> {
-                if (fixedVolumeUsdt > 0.0) fixedVolumeUsdt else 50.0
+                val target = if (capitalPerTradeUsdt > 0.0) capitalPerTradeUsdt else fixedVolumeUsdt
+                if (target > 0.0) target else 5.1
             }
         }
     }
 
     /**
-     * Vốn vào lệnh động theo % vốn khả dụng thực tế của tài khoản (vốn còn lại chưa ký quỹ).
-     * Đảm bảo: Khởi đầu 1000$ -> 5 lệnh x 2% = 100$ (còn 900$). Đợt sau 10 lệnh x 2% của 900$ = 180$.
+     * Vốn vào lệnh theo số USDT cố định (mặc định 5.1 USDT/lệnh) hoặc % vốn khả dụng.
+     * Chặn trần khi số dư khả dụng thực tế không đủ.
      */
     fun calculateDynamicVolume(availableBalance: Double): Double {
-        if (availableBalance <= 0.0) return 10.0
+        if (availableBalance <= 0.0) return 5.1
         return when (volumeType) {
             VolumeType.PERCENT_OF_BALANCE -> {
                 val pct = if (volumePercentOfBalance > 0.0) volumePercentOfBalance / 100.0 else perTradePct
                 val raw = availableBalance * pct
-                maxOf(5.0, raw)
+                maxOf(5.1, raw)
             }
             VolumeType.FIXED_AMOUNT -> {
-                if (fixedVolumeUsdt > 0.0) minOf(availableBalance, fixedVolumeUsdt) else 50.0
+                val target = if (capitalPerTradeUsdt > 0.0) capitalPerTradeUsdt else fixedVolumeUsdt
+                val amount = if (target > 0.0) target else 5.1
+                minOf(availableBalance, amount)
             }
         }
     }
@@ -513,13 +519,15 @@ data class BacktestConfig(
     // TÍNH NĂNG MỚI V2.2: CƠ CHẾ SMART TIMEOUT LINH HOẠT
     // ========================================================
     val enableSmartTimeout: Boolean = true,         // Bật/Tắt tự động tất toán theo thời gian
-    val timeoutDays: Int = 6,                       // Số ngày nắm giữ tối đa (Mặc định: 6 ngày = 144h)
+    val timeoutDays: Int = 7,                       // Số ngày nắm giữ tối đa (Mặc định: 7 ngày = 168h)
     val disableTimeoutWhenTrailing: Boolean = true, // Không cắt nếu giỏ đang ở trạng thái TRAILING_ACTIVE (đang có lãi bám đỉnh)
     val timeoutLossFloorPct: Double = -0.025,       // Giới hạn lỗ tối đa cho phép khi dập Timeout (-2.5%)
 
     // THAM SỐ TRAILING ATR
     val kTpAtr: Double = 0.50,                      // Hệ số kích hoạt Trailing TP
-    val minActivationRoi: Double = 0.015            // Mức kích hoạt sàn (+1.5%)
+    val minActivationRoi: Double = 0.015,           // Mức kích hoạt sàn (+1.5%)
+    val capitalPerTradeUsdt: Double = 5.1,          // Vốn vào lệnh cố định (mặc định 5.1 USDT)
+    val useFixedCapitalPerTrade: Boolean = true     // Ưu tiên vốn cố định USDT
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"
@@ -662,5 +670,37 @@ data class BasketBacktestReport(
     val netProfitPercent: Double = 0.0,
     val cycles: List<BasketCycleResult> = emptyList(),
     val equityCurve: List<Pair<Long, Double>> = emptyList(),
+    val errorMessage: String? = null,
+    val singleTrades: List<SingleTradeRecord> = emptyList()
+)
+
+data class SingleTradeRecord(
+    val id: String = java.util.UUID.randomUUID().toString(),
+    val symbol: String,
+    val entryPrice: Double,
+    val exitPrice: Double,
+    val margin: Double,
+    val grossPnl: Double,
+    val fee: Double,
+    val netPnl: Double,
+    val roiPercent: Double,
+    val openDayIdx: Int,
+    val closeDayIdx: Int,
+    val holdingDays: Int,
+    val exitReason: String // "TRAILING_STOP_TP" or "TIMEOUT_7D"
+)
+
+data class SinglePositionBacktestReport(
+    val totalTrades: Int = 0,
+    val winTrades: Int = 0,
+    val lossTrades: Int = 0,
+    val winratePercent: Double = 0.0,
+    val netProfitUsdt: Double = 0.0,
+    val netProfitPercent: Double = 0.0,
+    val maxDrawdownPercent: Double = 0.0,
+    val finalEquity: Double = 10000.0,
+    val trailingHits: Int = 0,
+    val timeoutHits: Int = 0,
+    val trades: List<SingleTradeRecord> = emptyList(),
     val errorMessage: String? = null
 )

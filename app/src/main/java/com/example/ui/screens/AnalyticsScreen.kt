@@ -52,6 +52,7 @@ fun AnalyticsScreen(
 
     // 2. Quản trị vốn & Phân bổ
     var initialCapitalText by remember { mutableStateOf(currentConfig.initialCapital.toInt().toString()) }
+    var capitalPerTradeUsdtText by remember { mutableStateOf(if (currentConfig.capitalPerTradeUsdt > 0.0) currentConfig.capitalPerTradeUsdt.toString() else "5.1") }
     var perTradePctText by remember { mutableStateOf((currentConfig.perTradePct * 100).toString()) }
     var maxAllocationPctText by remember { mutableStateOf((currentConfig.maxPortfolioAllocation * 100).toInt().toString()) }
 
@@ -82,6 +83,7 @@ fun AnalyticsScreen(
         daysText = currentDays.toString()
         slotScanMode = currentConfig.slotScanMode
         initialCapitalText = currentConfig.initialCapital.toInt().toString()
+        capitalPerTradeUsdtText = if (currentConfig.capitalPerTradeUsdt > 0.0) currentConfig.capitalPerTradeUsdt.toString() else "5.1"
         perTradePctText = (currentConfig.perTradePct * 100).toString()
         maxAllocationPctText = (currentConfig.maxPortfolioAllocation * 100).toInt().toString()
         minQuoteVolumeText = currentConfig.minQuoteVolume24h.toLong().toString()
@@ -199,7 +201,13 @@ fun AnalyticsScreen(
                             textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                         )
 
-                        listOf("60", "90", "180", "360").forEach { d ->
+                        listOf("180", "365", "730").forEach { d ->
+                            val label = when(d) {
+                                "180" -> "180d (~6T)"
+                                "365" -> "365d (1N)"
+                                "730" -> "730d (2N)"
+                                else -> "${d}d"
+                            }
                             Surface(
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
@@ -208,11 +216,11 @@ fun AnalyticsScreen(
                                 border = BorderStroke(0.5.dp, if (daysText == d) CryptoGold else DarkBorder)
                             ) {
                                 Text(
-                                    text = "${d}d",
+                                    text = label,
                                     color = if (daysText == d) Color.Black else Color.White,
-                                    fontSize = 11.sp,
+                                    fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp)
                                 )
                             }
                         }
@@ -351,11 +359,11 @@ fun AnalyticsScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text(text = "Vốn/Lệnh (%) (Tối đa 2%)", color = TextMuted, fontSize = 11.sp)
+                            Text(text = "Vốn vào mỗi lệnh (USDT)", color = TextMuted, fontSize = 11.sp)
                             Spacer(modifier = Modifier.height(4.dp))
                             OutlinedTextField(
-                                value = perTradePctText,
-                                onValueChange = { perTradePctText = it },
+                                value = capitalPerTradeUsdtText,
+                                onValueChange = { capitalPerTradeUsdtText = it },
                                 modifier = Modifier.fillMaxWidth().height(48.dp),
                                 singleLine = true,
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
@@ -386,6 +394,32 @@ fun AnalyticsScreen(
                                 ),
                                 textStyle = LocalTextStyle.current.copy(fontSize = 13.sp, fontFamily = FontFamily.Monospace)
                             )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Text(text = "Chọn nhanh vốn/lệnh (USDT):", color = TextMuted, fontSize = 10.sp)
+                    Spacer(modifier = Modifier.height(3.dp))
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        listOf(5.1 to "5.1$ (Chuẩn)", 10.0 to "10$", 20.0 to "20$", 50.0 to "50$", 100.0 to "100$").forEach { (amt, label) ->
+                            val isSelected = capitalPerTradeUsdtText == amt.toString()
+                            Surface(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { capitalPerTradeUsdtText = amt.toString() },
+                                color = if (isSelected) CryptoGold.copy(alpha = 0.25f) else DarkSurface,
+                                border = BorderStroke(0.5.dp, if (isSelected) CryptoGold else DarkBorder)
+                            ) {
+                                Text(
+                                    text = label,
+                                    color = if (isSelected) CryptoGold else TextSecondary,
+                                    fontSize = 9.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    modifier = Modifier.padding(vertical = 5.dp),
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
                         }
                     }
                 }
@@ -810,17 +844,20 @@ fun AnalyticsScreen(
                 onClick = {
                     val days = daysText.toIntOrNull() ?: 180
                     val initCap = initialCapitalText.toDoubleOrNull() ?: 10000.0
-                    val perTrade = (perTradePctText.toDoubleOrNull() ?: 1.5) / 100.0
+                    val capitalPerTrade = capitalPerTradeUsdtText.toDoubleOrNull() ?: 5.1
+                    val perTrade = if (initCap > 0) capitalPerTrade / initCap else 0.015
                     val maxAlloc = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0
-                    val minVol = minQuoteVolumeText.toDoubleOrNull() ?: 20_000_000.0
+                    val minVol = minQuoteVolumeText.toDoubleOrNull() ?: 5_000_000.0
                     val minRvol = minVolRatioText.toDoubleOrNull() ?: 2.0
-                    val maxD1 = maxD1ChangePctText.toDoubleOrNull() ?: 10.0
+                    val maxD1 = maxD1ChangePctText.toDoubleOrNull() ?: 17.5
                     val maxAtr = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0
                     val kTrail = kTrailText.toDoubleOrNull() ?: 0.25
                     val floorLockRoi = (floorLockMinRoiText.toDoubleOrNull() ?: 0.5) / 100.0
 
                     val customConfig = BacktestConfig(
                         initialCapital = initCap,
+                        capitalPerTradeUsdt = capitalPerTrade,
+                        useFixedCapitalPerTrade = true,
                         perTradePct = perTrade,
                         maxPortfolioAllocation = maxAlloc,
                         minQuoteVolume24h = minVol,
@@ -838,7 +875,7 @@ fun AnalyticsScreen(
                         enableBtcCircuitBreaker = enableBtcCircuitBreaker,
                         btcCircuitBreakerPct = btcCircuitBreakerPctText.toDoubleOrNull() ?: -3.5,
                         enableSmartTimeout = enableSmartTimeout,
-                        timeoutDays = timeoutDaysText.toIntOrNull() ?: 6,
+                        timeoutDays = timeoutDaysText.toIntOrNull() ?: 7,
                         disableTimeoutWhenTrailing = disableTimeoutWhenTrailing
                     )
 

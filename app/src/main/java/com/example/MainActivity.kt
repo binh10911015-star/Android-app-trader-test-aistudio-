@@ -426,7 +426,7 @@ fun MainApp(viewModel: MainViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            val isLiveMainnet = !apiConfig.isTestnet && apiConfig.liveTradingEnabled
+            val isLiveMainnet = apiConfig.isConnected && apiConfig.liveTradingEnabled
 
             // Cảnh báo màu đỏ khi giao dịch Live Mainnet
             if (isLiveMainnet) {
