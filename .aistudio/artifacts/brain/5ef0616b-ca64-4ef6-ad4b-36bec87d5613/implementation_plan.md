@@ -1,113 +1,129 @@
-# Kế hoạch Triển khai: Kích Hoạt Giao Dịch Tiền Thật Binance Futures Mainnet & Chuẩn Hóa Thẻ Vị Thế
+# Kế Hoạch Triển Khai: Chandelier Exit Engine Theo Giá Tuyệt Đối Từ Đỉnh D1 & Cơ Chế Crash Recovery
 
-Kế hoạch thực thi chi tiết dựa trên yêu cầu giao dịch tiền thật của bạn và kết quả phản hồi làm rõ:
-1. **Kiểm tra và hoàn thiện toàn bộ logic vào lệnh thật**: Đảm bảo 100% an toàn kỹ thuật (Cross 1x, StepSize, MinNotional >= 5.0 USDT, Timestamp Offset đồng bộ sàn, kiểm tra trần vốn 60%).
-2. **Chuyển đổi hoàn toàn Thẻ Vị Thế sang Binance Futures Mainnet**: Loại bỏ nhãn Paper Trade/Mô phỏng, hiển thị trực tiếp số dư ví thật, danh sách vị thế thật từ Binance, kèm nút đóng vị thế tức thì trên sàn.
-3. **Đồng bộ 2 chiều với Database (Room DB)**: Lấy dữ liệu vị thế từ `/fapi/v2/positionRisk` và lưu trữ cục bộ để duy trì lịch sử lệnh và máy trạng thái Trailing ATR.
-4. **Cơ chế bắn lệnh ngay lập tức**: Bắn lệnh tức thời khi hệ thống quét thấy tín hiệu hoặc khi người dùng bấm nút mà không bị cản trở bởi popup xác nhận PIN.
+Triển khai chuyển đổi toàn diện logic Trailing Stop sang **Chandelier Exit Engine theo đơn vị giá tuyệt đối** cho từng vị thế riêng lẻ (`Single Position`), áp dụng nguyên tắc **Ratchet (chỉ tiến lên theo đỉnh, không bao giờ lùi)**, bộ đệm Debounce 2 chu kỳ chống râu nến, và module **Crash Recovery** tự động dựng lại đỉnh lịch sử từ nến 1H khi khởi động lại ứng dụng.
 
 ---
 
-## I. Kiểm Tra & Thẩm Định Toàn Bộ Logic Vào Lệnh Thật (Mainnet Pre-Flight Checklist)
+## User Review & Critical Decisions
 
-Trước khi thực hiện bất kỳ lệnh tiền thật nào, hệ thống phải vượt qua toàn bộ các khâu kiểm soát an toàn sau:
+> [!IMPORTANT]
+> **Các nguyên tắc cốt lõi đã được chuẩn hóa theo đặc tả kỹ thuật:**
+> 1. **Giá trị ATR(14) D1 cố định**: Lưu trữ trường `atr14D1` trực tiếp vào bảng `trade_positions` của Room DB khi mở vị thế. Giá trị này được giữ nguyên suốt vòng đời của lệnh để làm mốc biên độ tuyệt đối.
+> 2. **Chuyển đổi hoàn toàn sang Giá Tuyệt Đối**: Thay thế công thức tính theo % ROI trước đây bằng công thức giá đô-la tuyệt đối:
+>    - Ngưỡng kích hoạt: $\text{activationPrice} = \text{entryPrice} + 1.5 \times \text{atr14D1}$
+>    - Sàn khóa lãi net: $\text{floorLockPrice} = \text{entryPrice} \times 1.005$ (+0.5% net)
+>    - Mức Stop Chandelier ($k=2.0$): $\text{calculatedStopPrice} = \text{highestHighPrice} - 2.0 \times \text{atr14D1}$
+>    - Nguyên tắc Ratchet: $\text{trailingStopPrice} = \max(\text{trailingStopPrice},\; \max(\text{floorLockPrice}, \text{calculatedStopPrice}))$
+> 3. **Crash Recovery an toàn**: Khởi động lại hệ thống sẽ tự động quét nến 1H (`1h`) từ `entryTime`, cập nhật `highestHighPrice`, tính sẵn `trailingStopPrice` và lưu Room DB trước khi bật luồng Realtime Polling.
+> 4. **Debounce 2 chu kỳ (6 – 10s)**: Chỉ đóng lệnh khi giá duy trì $\le \text{trailingStopPrice}$ qua 2 chu kỳ liên tiếp; nếu giá giật rút chân lên trên Stop, reset `debounceCounter = 0`.
+> 5. **Thoát lệnh tuần tự**: Giãn cách 1.200 ms giữa các lệnh `ORDER_TYPE_MARKET` (`side = "SELL"`, `reduceOnly = true`).
+
+---
+
+## 1. Overview & Core Concept
+
+- **Mục tiêu**: Loại bỏ hoàn toàn sự phụ thuộc vào % ROI tương đối vốn dễ bị méo mó do biến động biên độ nến khác nhau giữa các coin; thay vào đó sử dụng biến động thực tế nến ngày $ATR(14)_{D1}$ của chính coin đó để tính toán mức chặn dừng lỗ trượt (Chandelier Exit).
+- **Vòng đời vị thế (Single Position Lifecycle)**:
+  - Khởi tạo: Mở lệnh 5.1 USDT (Long Cross 1x) $\to$ Lưu `entryPrice`, `atr14D1`, `highestHighPrice = entryPrice`, `trailingStopPrice = 0.0`, `isTrailingActive = false`, `debounceCounter = 0`.
+  - Giám sát thời gian thực: Cập nhật đỉnh cao nhất theo Mark Price từ `GET /fapi/v1/premiumIndex`.
+  - Kích hoạt Trailing: Khi `markPrice >= entryPrice + 1.5 * atr14D1`.
+  - Neo Stop một chiều: Khi đỉnh lập mức cao mới, đường Stop tự động kéo lên theo mốc $\text{highestHighPrice} - 2.0 \times \text{atr14D1}$ (nhưng không thấp hơn $\text{entryPrice} \times 1.005$).
+  - Thoát lệnh an toàn: Debounce 2 chu kỳ hoặc Smart Timeout 7 ngày (168 giờ) nếu vị thế đang lỗ.
+
+---
+
+## 2. User Experience & Visual Design
+
+- **Màn hình Danh sách Vị Thế (`PositionsScreen.kt`)**:
+  - **Mức đỉnh cao nhất**: Hiển thị rõ giá trị đỉnh đã đạt được (`Đỉnh: $X.XXXX`).
+  - **Trạng thái Chandelier Exit**:
+    - Khi chưa kích hoạt: Hiển thị mốc cần chạm để kích hoạt (`Kích hoạt tại: $X.XXXX`).
+    - Khi đã kích hoạt (`isTrailingActive == true`): Hiển thị huy hiệu `CHANDELIER ACTIVE` kèm mức giá dừng lãi hiện tại (`Stop: $X.XXXX`).
+  - **Chỉ báo Debounce lọc râu nến**: Khi giá chạm ngưỡng Stop ở chu kỳ 1, hiển thị cảnh báo `Đang lọc râu ảo (1/2)`.
+- **Cập nhật Cài đặt & Thông báo**:
+  - Thông báo Alert rõ ràng lý do thoát: `CHANDELIER_TRAILING_HIT` hoặc `TIMEOUT_7D_LOSS_CUT`.
+
+---
+
+## 3. Key Product Decisions & Trade-Offs
+
+- **Quyết định 1: Cấu trúc thực thể Room DB**:
+  - Bổ sung 5 trường vào `@Entity data class TradePosition`: `atr14D1`, `highestHighPrice`, `trailingStopPrice`, `isTrailingActive`, `debounceCounter`.
+  - Nâng `AppDatabase` lên `version = 4` với `fallbackToDestructiveMigration()`.
+- **Quyết định 2: Điểm neo Chandelier tính theo giá tuyệt đối**:
+  - *Ưu điểm*: Chính xác tuyệt đối theo biên độ dao động thị trường của từng coin, không bị phụ thuộc vào đòn bẩy hay vốn mở lệnh.
+- **Quyết định 3: Nguyên tắc Ratchet**:
+  - Giá trailing stop chỉ tăng, không bao giờ giảm kể cả khi giá coin điều chỉnh giảm mạnh sau khi lập đỉnh.
+
+---
+
+## 4. Technical Architecture & Data Strategy
 
 ```
-[BẮT ĐẦU VÀO LỆNH THẬT]
-         │
-         ├── 1. KIỂM TRA API & KẾT NỐI:
-         │      • API Key & Secret Key không rỗng, đã lưu an toàn trong EncryptedSharedPreferences.
-         │      • Endpoint cố định: https://fapi.binance.com (Mainnet).
-         │
-         ├── 2. ĐỒNG BỘ THỜI GIAN (CHỐNG LỖI -1021 TIMESTAMP OUTSIDE RECVWINDOW):
-         │      • Lấy thời gian chuẩn từ Binance qua /fapi/v1/time.
-         │      • Áp dụng serverTimeOffset + recvWindow=60000ms cho mọi request ký HMAC SHA256.
-         │
-         ├── 3. THIẾT LẬP CHẾ ĐỘ KÝ QUỸ & ĐÒN BẨY:
-         │      • Gọi POST /fapi/v1/marginType: Ép cứng CROSSED (bỏ qua nếu sàn trả về -4046 "No need to change").
-         │      • Gọi POST /fapi/v1/leverage: Ép cứng leverage = 1.
-         │
-         ├── 4. KIỂM TRA HẠN MỨC TRẦN VỐN DANH MỤC:
-         │      • Tổng vốn các vị thế đang mở + Vốn lệnh mới <= 60% Tổng Equity Ví.
-         │      • Nếu vượt trần 60%: Từ chối mở thêm để bảo toàn tài khoản.
-         │
-         ├── 5. TÍNH TOÁN KHỐI LƯỢNG (CHỐNG LỖI -1111 LOT_SIZE & -4164 MIN_NOTIONAL):
-         │      • Lấy ExchangeInfo của coin (stepSize, minQty, minNotional).
-         │      • Vốn lệnh = 5.1 USDT (hoặc cấu hình người dùng). Luôn đảm bảo >= minNotional (5.0 USDT).
-         │      • Khối lượng Qty = Vốn / Giá_thị_trường.
-         │      • Làm tròn Qty chuẩn xác theo stepSize (làm tròn xuống RoundingMode.DOWN).
-         │      • Đảm bảo Qty >= minQty.
-         │
-         ├── 6. BẮN LỆNH THỊ TRƯỜNG (MARKET BUY):
-         │      • Gửi POST /fapi/v1/order: side=BUY, type=MARKET, quantity=formattedQty.
-         │      • Kiểm tra trạng thái phản hồi từ Binance: OrderId, status=FILLED, executedQty, avgPrice.
-         │
-         └── 7. LƯU DATABASE & THEO DÕI:
-                • Lưu TradePosition vào Room SQLite (isLiveBinanceOrder = true, binanceOrderId, exactPrice, exactQty).
-                • Bắt đầu theo dõi Trailing ATR độc lập và đồng hồ đếm ngược 7 ngày timeout.
+┌────────────────────────────────────────────────────────┐
+│            REALTIME REST POLLING (3.5s/lần)            │
+│            GET /fapi/v1/premiumIndex                   │
+└──────────────────────────┬─────────────────────────────┘
+                           │ Lấy markPrice từng coin
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 1. Cập nhật Đỉnh cao nhất:                             │
+│    markPrice > highestHighPrice                        │
+│    -> highestHighPrice = markPrice                     │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 2. Kiểm tra Kích hoạt Trailing (Mốc A):                │
+│    activationPrice = entryPrice + (1.5 * atr14D1)      │
+│    markPrice >= activationPrice -> isTrailingActive=true│
+└──────────────────────────┬─────────────────────────────┘
+                           │ Khi isTrailingActive == true
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 3. Tính mức Chandelier Stop & Nguyên tắc Ratchet:      │
+│    floorLockPrice = entryPrice * 1.005                 │
+│    calculatedStop = highestHighPrice - (2.0 * atr14D1) │
+│    newStop = max(floorLockPrice, calculatedStop)       │
+│    if (newStop > trailingStopPrice)                    │
+│        trailingStopPrice = newStop                     │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 4. Bộ đệm Debounce chống râu ảo (6 - 10s):             │
+│    markPrice <= trailingStopPrice:                     │
+│      - Chu kỳ 1: debounceCounter = 1 (Chờ)             │
+│      - Chu kỳ 2: debounceCounter = 2                   │
+│        -> enqueueExitOrder("CHANDELIER_TRAILING_HIT")  │
+│    markPrice > trailingStopPrice:                      │
+│      - debounceCounter = 0 (Reset)                     │
+└──────────────────────────┬─────────────────────────────┘
+                           │
+                           ▼
+┌────────────────────────────────────────────────────────┐
+│ 5. Thoát lệnh tuần tự (Sequential Market Exit):        │
+│    • Lệnh POST /fapi/v1/order: type=MARKET, side=SELL, │
+│      reduceOnly=true                                   │
+│    • Giãn cách an toàn 1.2s giữa các lệnh              │
+│    • Cập nhật Room DB status = "CLOSED"                │
+└────────────────────────────────────────────────────────┘
 ```
 
----
+### Các bước chỉnh sửa mã nguồn cụ thể:
 
-## II. Chi Tiết Các Hạng Mục Cần Triển Khai
-
-### 1. Nâng Cấp `BinanceFuturesApiVerifier.kt` & `BinanceClient.kt`
-- **Đồng bộ thời gian triệt để**: Sử dụng `getSyncedTimestamp()` trong hàm thiết lập `marginType` và `leverage` của `BinanceClient.kt`, loại bỏ hoàn toàn `System.currentTimeMillis()` trần để ngăn lỗi lệch giờ máy.
-- **Xử lý mã phản hồi sàn**: Khi gọi `marginType=CROSSED`, nếu nhận mã `-4046` (đã ở chế độ CROSSED), coi như thành công và tiếp tục đặt lệnh.
-- **Bảo vệ an toàn giá 0**: Ngăn chặn tuyệt đối việc chia cho 0 hoặc giá âm trước khi tính khối lượng.
-
-### 2. Thiết Kế Lại Thẻ Vị Thế (`PositionsScreen.kt`) Sang 100% Binance Mainnet
-- **Thẻ Tổng Quan Ví Mainnet (Top Header)**:
-  - Thay đổi toàn bộ nhãn "SỐ DƯ PAPER TRADE" thành: **"VÍ BINANCE FUTURES MAINNET (TIỀN THẬT)"**.
-  - Hiển thị 3 chỉ số cốt lõi:
-    - **Tổng số dư ví (Wallet Balance)**: Số tiền USDT thực tế trên Binance.
-    - **Số dư khả dụng (Available Margin)**: Số tiền có thể dùng để mở thêm lệnh mới.
-    - **Lãi/Lỗ chưa chốt (Unrealized PnL & ROI%)**: Tính tổng từ các vị thế đang chạy trên Binance với màu Xanh/Đỏ trực quan.
-- **Danh Sách Vị Thế Mở (Active Positions)**:
-  - Loại bỏ hoàn toàn khối phân tích giỏ Paper Trade.
-  - Hiển thị trực tiếp danh sách vị thế Live từ Binance (đồng bộ với Room DB):
-    - Tên cặp tiền (ví dụ: `BTCUSDT`, `SOLUSDT`).
-    - Huy hiệu nổi bật: **"BINANCE LIVE (LONG CROSS 1X)"**.
-    - **Giá vào lệnh (Entry Price)** và **Giá đánh dấu (Mark Price)** cập nhật thời gian thực.
-    - **Ký quỹ (Margin USDT)** và **Khối lượng (Quantity)**.
-    - **PnL (USDT)** và **Tỷ lệ sinh lời (ROI %)**.
-    - **Giá thanh lý (Liq Price)**.
-    - Nút **"Đóng vị thế (Thị trường)"**: Bấm một chạm để gửi ngay lệnh Market Close (`reduceOnly=true`) lên sàn Binance và xóa/cập nhật trạng thái trong database.
-- **Nút "Đóng Tất Cả Vị Thế"**:
-  - Gửi lệnh đóng toàn bộ các vị thế đang mở trên sàn Binance Mainnet.
-
-### 3. Đồng Bộ Dữ Liệu Vị Thế Với Database Room (`MainViewModel.kt` & `CryptoRepository.kt`)
-- Khi kết nối API thành công và gọi `refreshBinancePortfolio()`, hệ thống:
-  - Quét danh sách vị thế từ `/fapi/v2/positionRisk`.
-  - Với các vị thế có `positionAmt != 0`: Đồng bộ hoặc thêm mới vào bảng `trade_positions` của Room DB với cờ `isLiveBinanceOrder = true`.
-  - Với các vị thế đã đóng trên sàn (`positionAmt == 0` nhưng trong DB vẫn mở): Tự động cập nhật trạng thái trong DB thành `STATUS_CLOSED`.
-- Người dùng có thể xem lại lịch sử lệnh đầy đủ trong Tab "Lịch Sử".
-
-### 4. Cơ Chế Bắn Lệnh Trực Tiếp (Không Bị Chặn Bởi PIN)
-- Theo đúng câu trả lời làm rõ của bạn: Hệ thống sẽ **bắn lệnh ngay lập tức** khi:
-  - Quét định kỳ chạm mốc 07:00 AM hoặc 19:00 PM UTC+7 tìm thấy coin thỏa mãn bộ lọc.
-  - Người dùng bấm nút "Mở Tất Cả Vị Thế (Long 1x)" trên màn hình Thị Trường/Tín Hiệu.
-  - Người dùng bấm mở vị thế đơn lẻ của một coin cụ thể.
-- Bỏ qua bước xác nhận PIN nhập lại nhiều lần, chỉ yêu cầu API Key hợp lệ và còn đủ hạn mức giải ngân.
-
----
-
-## III. Các Tệp Sẽ Chỉnh Sửa
-
-| Tệp tin | Nội dung chỉnh sửa chính |
-|---------|-------------------------|
-| `app/src/main/java/com/example/network/BinanceClient.kt` | Áp dụng `getSyncedTimestamp()` cho marginType/leverage, bỏ qua lỗi -4046, bỏ URL testnet còn sót. |
-| `app/src/main/java/com/example/network/BinanceFuturesApiVerifier.kt` | Kiểm tra độ chính xác làm tròn stepSize, minNotional, xử lý lệnh Market Close an toàn tuyệt đối. |
-| `app/src/main/java/com/example/ui/screens/PositionsScreen.kt` | Chuyển đổi toàn bộ giao diện thành Binance Futures Mainnet, hiển thị số dư ví thật, danh sách vị thế thật và nút đóng lệnh sàn. |
-| `app/src/main/java/com/example/ui/MainViewModel.kt` | Tích hợp đồng bộ tự động giữa `/fapi/v2/positionRisk` và Room DB, đảm bảo bắn lệnh trực tiếp khi có tín hiệu. |
-| `app/src/main/java/com/example/repository/CryptoRepository.kt` | Bổ sung hàm đồng bộ trạng thái Live Position với SQLite để lưu trữ bền vững. |
-
----
-
-## IV. Kế Hoạch Xác Minh Sau Khi Thực Hiện
-
-1. Chạy biên dịch toàn bộ dự án bằng `compile_applet` để đảm bảo 0 lỗi biên dịch Kotlin/Compose.
-2. Kiểm tra giao diện Thẻ Vị Thế:
-   - Khi đã nhập API Binance: Hiển thị ngay số dư ví thật, lãi lỗ thật, danh sách vị thế thật từ Binance Mainnet.
-   - Thao tác đóng vị thế: Thực hiện trực tiếp trên Binance Mainnet và phản ánh tức thì lên UI.
-3. Kiểm tra logic mở lệnh: Vốn 5.1 USDT, đòn bẩy Cross 1x, làm tròn số lượng theo chuẩn Binance, không bị lỗi -1021 hay -1111.
+1. **`TradeModels.kt` & `AppDatabase.kt`**:
+   - Thêm `atr14D1: Double = 0.0`, `highestHighPrice: Double = entryPrice`, `trailingStopPrice: Double = 0.0`, `isTrailingActive: Boolean = false`, `debounceCounter: Int = 0` vào `TradePosition`.
+   - Nâng cấp `AppDatabase` version = 4.
+2. **`BinanceClient.kt`**:
+   - Thêm hỗ trợ tham số `startTime: Long? = null` vào hàm `fetchKlinesWithFallback(symbol, interval, limit, startTime)`.
+3. **`CryptoRepository.kt`**:
+   - Trong `executeSimulatedBuy`: Nhận và lưu `atr14D1` thực tế của coin.
+   - Thêm hàm `recoverOpenPositionsChandelierState()`: Duyệt qua các vị thế `OPEN`, fetch nến 1H từ `entryTime`, tính `highestHighPrice = maxOf(highestHighPrice, maxHistoricalHigh)`, tính `trailingStopPrice` theo Chandelier Stop, và lưu vào Room DB.
+4. **`MainViewModel.kt`**:
+   - Khi khởi động (`init`), gọi `recoverOpenPositionsChandelierState()` để phục hồi đỉnh trước khi polling.
+   - Viết lại hàm `evaluateSinglePositionExits()` tuân thủ 100% công thức Chandelier Exit theo giá tuyệt đối từ đỉnh, Ratchet rule, Debounce 2 chu kỳ, và Smart Timeout 7 ngày.
+   - Viết hàm `executeSequentialExits()` với độ trễ 1.200 ms an toàn.
+5. **`PositionsScreen.kt`**:
+   - Cập nhật giao diện thẻ vị thế hiển thị đầy đủ: `highestHighPrice`, `trailingStopPrice`, nhãn `CHANDELIER ACTIVE` và trạng thái `Debounce (1/2)`.
+6. **Biên dịch & Xác minh**: Chạy `compile_applet` để đảm bảo 0 lỗi biên dịch.

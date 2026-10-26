@@ -41,13 +41,13 @@ object ScanScheduler {
     fun getNextScanSlot(targetTimestamp: Long): String {
         val cal = Calendar.getInstance(TIMEZONE_UTC7).apply { timeInMillis = targetTimestamp }
         val hour = cal.get(Calendar.HOUR_OF_DAY)
-        return if (hour == 7) "PRIMARY" else "SECONDARY"
+        return if (hour == 7) "SESSION_07AM" else "SESSION_19PM"
     }
 
     fun getNextScanHourText(targetTimestamp: Long): String {
         val cal = Calendar.getInstance(TIMEZONE_UTC7).apply { timeInMillis = targetTimestamp }
         val hour = cal.get(Calendar.HOUR_OF_DAY)
-        return if (hour == 7) "07:00 UTC+7 (Giỏ Chính)" else "19:00 UTC+7 (Giỏ Phụ)"
+        return if (hour == 7) "07:00 UTC+7 (Đóng nến D1)" else "19:00 UTC+7 (Đầu phiên Mỹ)"
     }
 
     fun formatCountdown(targetTimestamp: Long, currentTimestamp: Long = System.currentTimeMillis()): String {

@@ -357,33 +357,35 @@ private fun StrategySettingsContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Schedule, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "1. Chế Độ Slot & Khung Nến Quét", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "1. Kiến Trúc Vị Thế Độc Lập (Single Position)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                Text(text = "Chế độ Slot quét giỏ lệnh", color = TextMuted, fontSize = 11.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    listOf("DUAL" to "Dual (07h & 19h)", "PRIMARY_ONLY" to "Slot Chính (07h)", "SECONDARY_ONLY" to "Slot Phụ (19h)").forEach { (key, label) ->
-                        val isSel = slotScanMode == key
-                        Surface(
-                            modifier = Modifier
-                                .weight(1f)
-                                .clip(RoundedCornerShape(8.dp))
-                                .clickable { slotScanMode = key },
-                            color = if (isSel) CryptoGold.copy(alpha = 0.2f) else DarkSurface,
-                            border = BorderStroke(1.dp, if (isSel) CryptoGold else DarkBorder)
-                        ) {
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    color = CryptoGold.copy(alpha = 0.1f),
+                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = label,
-                                color = if (isSel) CryptoGold else TextSecondary,
-                                fontSize = 10.sp,
-                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                textAlign = TextAlign.Center
+                                text = "CHẾ ĐỘ QUẢN LÝ TỪNG LỆNH ĐỘC LẬP",
+                                color = CryptoGold,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
                             )
                         }
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(
+                            text = "• Vốn cố định: Đúng 5.1 USDT / vị thế (Long Cross 1x)\n• Khống chế trần: Tổng margin < 60% Total Equity\n• Lịch quét: 07:00:00 AM (nến D1 đóng) & 19:00:00 PM UTC+7\n• Thoát lệnh độc lập: ATR Trailing + Debounce 2 chu kỳ (6-10s) + Timeout 7 ngày (168h) chỉ khi lỗ",
+                            color = TextSecondary,
+                            fontSize = 11.sp,
+                            lineHeight = 16.sp
+                        )
                     }
                 }
             }

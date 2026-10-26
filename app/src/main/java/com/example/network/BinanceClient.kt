@@ -232,13 +232,22 @@ object BinanceClient {
     /**
      * Tải nến thật 100% từ mạng lưới Binance
      */
-    fun fetchKlinesWithFallback(symbol: String, interval: String = "4h", limit: Int = 100): List<Candle> {
+    fun fetchKlinesWithFallback(
+        symbol: String,
+        interval: String = "4h",
+        limit: Int = 100,
+        startTime: Long? = null
+    ): List<Candle> {
         val cleanSymbol = symbol.trim().uppercase()
         if (cleanSymbol.isEmpty()) return emptyList()
 
         for (endpoint in CANDLE_DATA_ENDPOINTS) {
             try {
-                val url = "$endpoint?symbol=$cleanSymbol&interval=$interval&limit=$limit"
+                val url = if (startTime != null && startTime > 0) {
+                    "$endpoint?symbol=$cleanSymbol&interval=$interval&startTime=$startTime&limit=$limit"
+                } else {
+                    "$endpoint?symbol=$cleanSymbol&interval=$interval&limit=$limit"
+                }
                 val request = Request.Builder().url(url).build()
                 okHttpClient.newCall(request).execute().use { res ->
                     if (res.isSuccessful) {

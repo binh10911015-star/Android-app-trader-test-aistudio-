@@ -117,7 +117,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         exactAmount: Double? = null,
         exactEntryPrice: Double? = null,
         autoFixNote: String? = null,
-        basketSlot: String = "PRIMARY"
+        basketSlot: String = "PRIMARY",
+        atr14D1: Double = 0.0
     ): TradeAlert? = withContext(Dispatchers.IO) {
         val effectiveEntryPrice = if (exactEntryPrice != null && exactEntryPrice > 0.0) exactEntryPrice else currentPrice
         if (effectiveEntryPrice <= 0.0) return@withContext null
@@ -144,7 +145,12 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             isLiveBinanceOrder = isLiveBinanceOrder,
             binanceStatus = binanceStatus ?: if (isLiveBinanceOrder) "FILLED" else null,
             binanceUpdateTime = if (isLiveBinanceOrder) System.currentTimeMillis() else null,
-            basketSlot = basketSlot
+            basketSlot = basketSlot,
+            atr14D1 = atr14D1,
+            highestHighPrice = effectiveEntryPrice,
+            trailingStopPrice = 0.0,
+            isTrailingActive = false,
+            debounceCounter = 0
         )
 
         tradeDao.insert(position)
@@ -243,6 +249,76 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val pos = tradeDao.getPositionById(positionId) ?: return@withContext
         val updated = pos.copy(takeProfitPrice = tpPrice, stopLossPrice = slPrice)
         tradeDao.update(updated)
+    }
+
+    suspend fun updatePosition(position: TradePosition) = withContext(Dispatchers.IO) {
+        tradeDao.update(position)
+    }
+
+    suspend fun recoverOpenPositionsChandelierState(): List<TradePosition> = withContext(Dispatchers.IO) {
+        val openPositions = tradeDao.getOpenPositionsList()
+        if (openPositions.isEmpty()) return@withContext emptyList()
+
+        val recoveredList = mutableListOf<TradePosition>()
+
+        for (pos in openPositions) {
+            try {
+                // 1. Fallback nếu atr14D1 chưa được lưu (vị thế cũ): tính từ nến D1 lịch sử
+                var atrVal = pos.atr14D1
+                if (atrVal <= 0.0) {
+                    val d1Candles = BinanceClient.fetchKlinesWithFallback(pos.symbol, "1d", 25)
+                    if (d1Candles.size >= 14) {
+                        val trList = d1Candles.takeLast(14).map { 
+                            maxOf(it.high - it.low, Math.abs(it.high - it.close), Math.abs(it.low - it.close)) 
+                        }
+                        atrVal = trList.average()
+                    }
+                    if (atrVal <= 0.0) {
+                        atrVal = pos.entryPrice * 0.05 // 5% fallback nếu không tải được nến D1
+                    }
+                }
+
+                // 2. Gọi API Klines nến 1H từ mốc entryTime
+                val klines1h = BinanceClient.fetchKlinesWithFallback(
+                    symbol = pos.symbol,
+                    interval = "1h",
+                    limit = 500,
+                    startTime = pos.entryTime
+                )
+
+                // 3. Dựng lại đỉnh cao nhất từ lịch sử
+                val maxHistoricalHigh = klines1h.maxOfOrNull { it.high } ?: pos.entryPrice
+                val newHighest = maxOf(pos.highestHighPrice, maxHistoricalHigh, pos.entryPrice)
+
+                // 4. Cập nhật lại trạng thái Trailing & Mức chặn lãi (Chandelier Stop)
+                val activationPrice = pos.entryPrice + (1.5 * atrVal)
+                val isTrailing = pos.isTrailingActive || (newHighest >= activationPrice)
+
+                val finalTrailingStop = if (isTrailing) {
+                    val floorLockPrice = pos.entryPrice * 1.005
+                    val chandelierStop = newHighest - (2.0 * atrVal)
+                    val calculatedStop = maxOf(floorLockPrice, chandelierStop)
+                    maxOf(pos.trailingStopPrice, calculatedStop) // Ratchet: chỉ tiến lên theo đỉnh
+                } else {
+                    pos.trailingStopPrice
+                }
+
+                val recoveredPos = pos.copy(
+                    atr14D1 = atrVal,
+                    highestHighPrice = newHighest,
+                    isTrailingActive = isTrailing,
+                    trailingStopPrice = finalTrailingStop,
+                    debounceCounter = 0
+                )
+
+                tradeDao.update(recoveredPos)
+                recoveredList.add(recoveredPos)
+            } catch (_: Exception) {
+                // Giữ nguyên đỉnh cao nhất hiện có và tiếp tục chạy
+                recoveredList.add(pos)
+            }
+        }
+        recoveredList
     }
 
     suspend fun closePositionManually(positionId: Long, currentMarketPrice: Double): TradeAlert? = withContext(Dispatchers.IO) {
@@ -572,6 +648,55 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         return if (list.isNotEmpty()) list else tickers.map { it.symbol }.filter { it.endsWith("USDT") && !it.contains("_") }
     }
 
+    data class CandidateEvaluation(
+        val isQualified: Boolean,
+        val score: Double,
+        val volumeRatio: Double,
+        val deltaPrice: Double,
+        val atrPercent: Double,
+        val clv: Double,
+        val sign: Double
+    )
+
+    fun evaluateD1MomentumCandidate(
+        candles: List<Candle>,
+        quoteVolume24h: Double = 0.0
+    ): CandidateEvaluation {
+        if (candles.size < 22) {
+            return CandidateEvaluation(false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        }
+        if (quoteVolume24h > 0 && quoteVolume24h < 5_000_000.0) {
+            return CandidateEvaluation(false, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+        }
+
+        val k1 = candles[candles.size - 1] // t-1 (nến D1 hôm qua)
+        val k2 = candles[candles.size - 2] // t-2
+        val prev20 = candles.takeLast(20) // 20 nến D1 từ (t-20) đến (t-1)
+        val sma20Volume = prev20.map { it.volume }.average()
+        val sma20Close = prev20.map { it.close }.average()
+
+        val deltaPrice = if (k1.open > 0) ((k1.close - k1.open) / k1.open) * 100.0 else 0.0
+
+        val trList = candles.takeLast(14).map { maxOf(it.high - it.low, Math.abs(it.high - it.close), Math.abs(it.low - it.close)) }
+        val atr14 = trList.average()
+        val atrPercent = if (k1.close > 0) atr14 / k1.close else 0.05
+        val atrPercent100 = atrPercent * 100.0
+
+        val epsilon = 1e-6
+        val volumeRatio = k1.volume / (sma20Volume + epsilon)
+        val clv = ((k1.close - k1.low) / (k1.high - k1.low + epsilon)).coerceIn(0.0, 1.0)
+        val sign = if (k1.close > k1.open && k1.close > k2.close) 1.0 else 0.0
+        val score = volumeRatio * clv * sign
+
+        val isTrendUp = k1.close > sma20Close
+        val isVolSpike = sma20Volume > 0 && k1.volume >= 2.0 * sma20Volume
+        val isDeltaOk = deltaPrice in 2.0..17.5
+        val isAtrOk = atrPercent100 <= 12.0
+
+        val isQualified = isTrendUp && isVolSpike && isDeltaOk && isAtrOk && score > 0.0
+        return CandidateEvaluation(isQualified, score, volumeRatio, deltaPrice, atrPercent, clv, sign)
+    }
+
     /**
      * Helper tính Exponential Moving Average (EMA) theo chuẩn v2.2
      */
@@ -653,10 +778,15 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 var exitReason: String? = null
                 var exitPrice = candleToday.close
 
-                // 1. Kiểm tra Smart Timeout 7 ngày (168 giờ) -> Đóng lệnh giải phóng vốn ngay lập tức
+                // 1. Kiểm tra Smart Timeout 7 ngày (168 giờ):
+                // Nếu ROI < 0.0 (đang lỗ): Thoát lệnh cưỡng chế cắt lỗ giải phóng vốn.
+                // Nếu ROI >= 0.0 (hòa hoặc đang lãi): KHÔNG cắt lỗ, tiếp tục thả nổi để Trailing Stop bám đỉnh.
                 if (config.enableSmartTimeout && holdingDays >= config.timeoutDays) {
-                    exitReason = "TIMEOUT_7D"
-                    exitPrice = candleToday.close
+                    val closeRoi = if (pos.entryPrice > 0.0) (candleToday.close - pos.entryPrice) / pos.entryPrice else 0.0
+                    if (closeRoi < 0.0) {
+                        exitReason = "TIMEOUT_7D_LOSS"
+                        exitPrice = candleToday.close
+                    }
                 } else if (config.enableTrailingStop) {
                     // 2. Kiểm tra ATR Trailing Stop độc lập cho từng vị thế
                     val highRoi = if (pos.entryPrice > 0.0) (candleToday.high - pos.entryPrice) / pos.entryPrice else 0.0
@@ -812,32 +942,45 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 for ((sym, candles) in klinesMap) {
                     if (sym in runningSymbols) continue // LỌC TRÙNG VỊ THẾ ĐANG MỞ
                     val cIdx = candles.indexOfFirst { it.openTime == currentTime }
-                    if (cIdx < 25) continue
+                    if (cIdx < 22) continue // BỎ QUA HOÀN TOÀN nếu số lượng nến D1 < 22
 
                     val k1 = candles[cIdx - 1]
                     val k2 = candles[cIdx - 2]
-                    val prev20 = candles.subList(cIdx - 21, cIdx - 1)
-                    val sma20 = prev20.map { it.close }.average()
-                    val rvol = if (k2.volume > 0) k1.volume / k2.volume else 1.0
-                    val changePct = if (k1.open > 0) ((k1.close - k1.open) / k1.open) * 100.0 else 0.0
+                    val prev20 = candles.subList(cIdx - 20, cIdx) // 20 nến D1 từ (t-20) đến (t-1)
+                    val sma20Volume = prev20.map { it.volume }.average()
+                    val sma20Close = prev20.map { it.close }.average()
+                    val deltaPrice = if (k1.open > 0) ((k1.close - k1.open) / k1.open) * 100.0 else 0.0
 
                     // Tính biến động ATR(14)
-                    val atr14 = candles.subList(cIdx - 15, cIdx - 1).map { maxOf(it.high - it.low, Math.abs(it.high - it.close)) }.average()
+                    val atr14 = candles.subList(cIdx - 14, cIdx).map { maxOf(it.high - it.low, Math.abs(it.high - it.close), Math.abs(it.low - it.close)) }.average()
                     val atrPct = if (k1.close > 0) atr14 / k1.close else 0.05
+                    val atrPct100 = atrPct * 100.0
 
-                    // Bộ lọc cứng: QuoteVol >= 5M, Close > SMA20, Vol >= 2.0x, Change in [2%, 17.5%], ATR <= 12%
-                    if (k1.close > sma20 &&
-                        rvol >= config.minVolRatio &&
-                        changePct in config.minD1ChangePct..config.maxD1ChangePct &&
-                        atrPct <= config.maxAtrPercent) {
-                        val score = rvol * (1.0 + ((k1.close - k1.open) / maxOf(1e-8, k1.high - k1.low)))
-                        candidates.add(ScoredCoin(sym, score, candles[cIdx].open, rvol, changePct, atrPct))
+                    // 1. Close_{t-1} > SMA20(Close)
+                    // 2. Volume_{t-1} >= 2.0 * sma20Volume
+                    // 3. Delta Price D1 in [2.0%, 17.5%]
+                    // 4. %ATR(14) <= 12.0%
+                    val isTrendUp = k1.close > sma20Close
+                    val isVolSpike = sma20Volume > 0 && k1.volume >= 2.0 * sma20Volume
+                    val isDeltaOk = deltaPrice in 2.0..17.5
+                    val isAtrOk = atrPct100 <= 12.0
+
+                    if (isTrendUp && isVolSpike && isDeltaOk && isAtrOk) {
+                        val epsilon = 1e-6
+                        val volumeRatio = k1.volume / (sma20Volume + epsilon)
+                        val clv = ((k1.close - k1.low) / (k1.high - k1.low + epsilon)).coerceIn(0.0, 1.0)
+                        val sign = if (k1.close > k1.open && k1.close > k2.close) 1.0 else 0.0
+                        val score = volumeRatio * clv * sign
+
+                        if (score > 0.0) {
+                            candidates.add(ScoredCoin(sym, score, candles[cIdx].open, volumeRatio, deltaPrice, atrPct))
+                        }
                     }
                 }
 
                 if (candidates.isNotEmpty()) {
                     val sorted = candidates.sortedByDescending { it.score }
-                    val slotsAvailable = (remainingBudget / tradeCapital).toInt().coerceAtLeast(1)
+                    val slotsAvailable = Math.floor(remainingBudget / tradeCapital).toInt().coerceAtLeast(0)
                     val chosen = sorted.take(slotsAvailable)
 
                     for (coin in chosen) {

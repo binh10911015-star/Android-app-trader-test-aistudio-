@@ -311,25 +311,30 @@ fun BacktestScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(text = "Chế độ Slot Quét", color = TextMuted, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        listOf("DUAL" to "Dual (07h & 19h)", "PRIMARY_ONLY" to "Slot Chính (07h)", "SECONDARY_ONLY" to "Slot Phụ (19h)").forEach { (key, label) ->
-                            val isSel = slotScanMode == key
-                            Surface(
-                                modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable { slotScanMode = key },
-                                color = if (isSel) CryptoGold.copy(alpha = 0.2f) else DarkSurface,
-                                border = BorderStroke(1.dp, if (isSel) CryptoGold else DarkBorder)
-                            ) {
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(8.dp),
+                        color = CryptoGold.copy(alpha = 0.1f),
+                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
+                    ) {
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text(
-                                    text = label,
-                                    color = if (isSel) CryptoGold else TextSecondary,
-                                    fontSize = 10.sp,
-                                    fontWeight = if (isSel) FontWeight.Bold else FontWeight.Normal,
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                    text = "CHIẾN LƯỢC SINGLE POSITION MOMENTUM",
+                                    color = CryptoGold,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
                                 )
                             }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "• Quản lý từng lệnh độc lập (Single Trade Lifecycle)\n• Lịch quét: 07:00:00 AM & 19:00:00 PM UTC+7\n• Vốn vào: Cố định đúng 5.1 USDT/lệnh (Long Cross 1x)\n• Khống chế trần: Tổng margin < 60% Total Equity",
+                                color = TextSecondary,
+                                fontSize = 10.sp,
+                                lineHeight = 15.sp
+                            )
                         }
                     }
                 }
@@ -1164,7 +1169,7 @@ fun ExpandableBasketCycleCard(cycle: BasketCycleResult) {
                             color = if (cycle.slotId == BasketSlotId.PRIMARY) CryptoGold.copy(alpha = 0.2f) else Color(0xFF3861FB).copy(alpha = 0.2f)
                         ) {
                             Text(
-                                text = if (cycle.slotId == BasketSlotId.PRIMARY) "SLOT 1 • 07:00" else "SLOT 2 • 19:00",
+                                text = if (cycle.slotId == BasketSlotId.PRIMARY) "PHIÊN 07:00 (D1)" else "PHIÊN 19:00 (MỸ)",
                                 color = if (cycle.slotId == BasketSlotId.PRIMARY) CryptoGold else Color(0xFF6B8AFF),
                                 fontSize = 10.sp,
                                 fontWeight = FontWeight.Bold,

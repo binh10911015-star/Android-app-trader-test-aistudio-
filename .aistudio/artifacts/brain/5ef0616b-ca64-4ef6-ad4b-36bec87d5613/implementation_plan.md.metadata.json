@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch chuyển đổi toàn diện Thẻ Vị Thế sang Binance Futures Mainnet (tiền thật), kiểm tra và tối ưu hóa 100% logic vào lệnh chuẩn sàn Binance (Cross 1x, StepSize, MinNotional, Timestamp Offset) và đồng bộ trực tiếp dữ liệu ví/vị thế với Room Database.",
-  "updatedAt":  "2026-10-26T10:47:25.415522926Z",
+  "summary":  "Kế hoạch cập nhật toàn diện Chandelier Exit Engine theo giá tuyệt đối từ đỉnh D1, nguyên tắc Ratchet chặn lãi một chiều, bộ đệm Debounce 2 chu kỳ, cơ chế Crash Recovery phục hồi đỉnh nến 1H và thoát lệnh tuần tự 1.2s.",
+  "updatedAt":  "2026-10-26T15:32:27.995970630Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

@@ -103,7 +103,7 @@ fun MarketScreen(
             },
             text = {
                 Text(
-                    text = "Bot giao dịch tự động đang hoạt động theo cơ chế Dual Basket và phân bổ vốn động. Bạn không nên mở lệnh thủ công để tránh xung đột vốn và thoát lệnh của các giỏ.\n\nBạn có muốn tắt Bot để tiếp tục mở lệnh?",
+                    text = "Bot giao dịch tự động đang hoạt động theo cơ chế Single Position ATR Trailing và phân bổ vốn cuốn chiếu (5.1 USDT/vị thế, tối đa 60% Equity). Bạn không nên mở lệnh thủ công để tránh xung đột vốn.\n\nBạn có muốn tắt Bot để tiếp tục mở lệnh?",
                     color = TextSecondary,
                     fontSize = 13.sp
                 )

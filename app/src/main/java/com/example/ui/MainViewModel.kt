@@ -132,6 +132,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private var lastWsFlushTime: Long = 0L
     private var lastPositionsUpdateTime: Long = 0L
     private val liveBasketAssignments = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val markPricesCache = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    private val trailingActiveMap = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+    private val peakRoiMap = java.util.concurrent.ConcurrentHashMap<String, Double>()
+    private val debounceCounterMap = java.util.concurrent.ConcurrentHashMap<String, Int>()
+    private val isExitingMap = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
 
     private val _searchQueryFlow = MutableStateFlow("")
 
@@ -229,11 +234,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         setupDebouncedSearch()
         loadInitialData()
         initWebSocket()
-        startTickerPolling()
         startKlinePolling()
         startScanScheduler()
         fetchPublicIpAddress()
         autoLoginMainnet()
+
+        viewModelScope.launch {
+            // Phục hồi dữ liệu đỉnh cao nhất từ nến 1H (Crash Recovery) trước khi bắt đầu polling
+            withContext(Dispatchers.IO) {
+                val recovered = repository.recoverOpenPositionsChandelierState()
+                if (recovered.isNotEmpty()) {
+                    val activeCount = recovered.count { it.isTrailingActive }
+                    triggerAlert(
+                        TradeAlert(
+                            symbol = "CRASH_RECOVERY",
+                            title = "ĐÃ PHỤC HỒI ĐỈNH CHANDELIER (1H)",
+                            message = "Đã quét nến 1H và phục hồi đỉnh cho ${recovered.size} vị thế mở ($activeCount vị thế đang kích hoạt Chandelier Stop).",
+                            type = AlertType.INFO
+                        )
+                    )
+                }
+            }
+            startTickerPolling()
+        }
 
         viewModelScope.launch {
             openPositions.collect { list ->
@@ -795,6 +818,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     openingPositionsProgress = ""
                 )
 
+                val atrPct = _uiState.value.tickers.find { it.symbol == cleanSymbol }?.atrPercent ?: 0.05
+                val coinAtr14D1 = price * atrPct
+
                 if (orderResult.success) {
                     val alert = repository.executeSimulatedBuy(
                         symbol = cleanSymbol,
@@ -809,7 +835,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         exactAmount = if (orderResult.executedQty > 0.0) orderResult.executedQty else null,
                         exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
                         autoFixNote = orderResult.autoFixApplied,
-                        basketSlot = basketSlot
+                        basketSlot = basketSlot,
+                        atr14D1 = coinAtr14D1
                     )
 
                     if (alert != null) triggerAlert(alert)
@@ -828,6 +855,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 return@launch
             }
 
+            val atrPct = _uiState.value.tickers.find { it.symbol == symbol }?.atrPercent ?: 0.05
+            val coinAtr14D1 = price * atrPct
+
             val alert = repository.executeSimulatedBuy(
                 symbol = symbol,
                 currentPrice = price,
@@ -838,7 +868,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 binanceClientOrderId = null,
                 isLiveBinanceOrder = false,
                 binanceStatus = null,
-                basketSlot = basketSlot
+                basketSlot = basketSlot,
+                atr14D1 = coinAtr14D1
             )
 
             if (alert != null) {
@@ -1217,6 +1248,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
 
+                val isLive = _apiConfig.value.isConnected
+                val totalWallet = if (isLive) {
+                    val tw = _binancePortfolio.value.totalWalletBalance
+                    if (tw > 0.0) tw else _uiState.value.settings.simulatedBalanceUsdt
+                } else {
+                    _uiState.value.settings.simulatedBalanceUsdt
+                }
+                val maxPortfolioCap = totalWallet * 0.60 // Khống chế trần < 60% Total Equity
+                val volume = 5.1 // Vốn cố định đúng 5.1 USDT / vị thế (Long Cross 1x)
+
                 var newlyOpened = 0
                 var totalInvested = 0.0
 
@@ -1224,8 +1265,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     if (!isActive) break
                     if (isAuto && !_uiState.value.settings.autoTradeEnabled) break
 
-                    val isLive = _apiConfig.value.isConnected
-                    // Vốn động: luôn kiểm tra số dư khả dụng thực tế còn lại tại thời điểm mở từng lệnh
                     val availableBal = if (isLive) {
                         val b = _binancePortfolio.value.availableBalance
                         if (b > 0.0) b else _binancePortfolio.value.totalWalletBalance
@@ -1234,20 +1273,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         maxOf(0.0, _uiState.value.settings.simulatedBalanceUsdt - used)
                     }
 
-                    val totalWallet = if (isLive) {
-                        val tw = _binancePortfolio.value.totalWalletBalance
-                        if (tw > 0.0) tw else _uiState.value.settings.simulatedBalanceUsdt
-                    } else {
-                        _uiState.value.settings.simulatedBalanceUsdt
-                    }
-                    val maxPortfolioCap = totalWallet * _uiState.value.settings.maxPortfolioAllocation
                     val currentlyAllocated = openPositions.value.sumOf { it.investedUsdt } + totalInvested
+                    if (currentlyAllocated + volume > maxPortfolioCap) {
+                        break // Dừng khi chạm trần 60% Total Equity
+                    }
+                    if (availableBal < volume) break
 
-                    val volume = _uiState.value.settings.calculateDynamicVolume(availableBal)
-                    if (availableBal < volume || volume <= 0.0) break
-                    // Dừng mở thêm lệnh khi chạm trần danh mục quy định (mặc định 60% Equity)
-                    if (currentlyAllocated + volume > maxPortfolioCap) break
-                    
                     val tickerPrice = currentTickers.find { it.symbol == symbol }?.lastPrice
                     val klinePrice = if (symbol == _uiState.value.selectedSymbol) _uiState.value.klineData.lastOrNull()?.candle?.close else null
                     val price = tickerPrice ?: klinePrice ?: continue
@@ -1258,15 +1289,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     if (newlyOpened > 0) {
                         _uiState.value = _uiState.value.copy(
-                            openingPositionsProgress = "Đã mở $newlyOpened vị thế ($targetBasketSlot). Chuẩn bị mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
+                            openingPositionsProgress = "Đã mở $newlyOpened vị thế. Giãn cách an toàn 5.000ms trước khi mở $cleanSymbol (${index + 1}/${symbolsToOpen.size})..."
                         )
-                        delay(1200L)
+                        delay(5000L) // Throttling vào lệnh đúng 5.000ms (5 giây) giữa mỗi lệnh mua liên tiếp
                     }
                     if (!isActive || (isAuto && !_uiState.value.settings.autoTradeEnabled)) break
 
                     _uiState.value = _uiState.value.copy(
-                        openingPositionsProgress = "Đang mở vị thế Cross 1x $cleanSymbol [$targetBasketSlot] (${index + 1}/${symbolsToOpen.size})..."
+                        openingPositionsProgress = "Đang mở vị thế Long Cross 1x $cleanSymbol (5.1 USDT) (${index + 1}/${symbolsToOpen.size})..."
                     )
+
+                    val atrPct = currentTickers.find { it.symbol == cleanSymbol }?.atrPercent ?: 0.05
+                    val coinAtr14D1 = price * atrPct
 
                     if (isLive) {
                         val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
@@ -1305,7 +1339,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 exactAmount = if (orderResult.executedQty > 0.0) orderResult.executedQty else null,
                                 exactEntryPrice = if (orderResult.avgPrice > 0.0) orderResult.avgPrice else null,
                                 autoFixNote = orderResult.autoFixApplied,
-                                basketSlot = targetBasketSlot
+                                basketSlot = targetBasketSlot,
+                                atr14D1 = coinAtr14D1
                             )
                             if (alert != null) {
                                 newlyOpened++
@@ -1320,7 +1355,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             settings = _uiState.value.settings.copy(leverage = 1),
                             investedUsdt = volume,
                             isAutoTriggered = isAuto,
-                            basketSlot = targetBasketSlot
+                            basketSlot = targetBasketSlot,
+                            atr14D1 = coinAtr14D1
                         )
 
                         if (alert != null) {
@@ -1461,28 +1497,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                     val d1Res = d1Results[sym]
                     if (d1Res != null && d1Res.isSuccess) {
-                        val candles = d1Res.getOrNull() ?: emptyList()
-                        if (candles.size >= 21) {
-                            val currentCandle = candles.last()
-                            val previous20 = candles.dropLast(1).takeLast(20)
+                        val indList = d1Res.getOrNull() ?: emptyList()
+                        val rawCandles = indList.map { it.candle }
+                        val quoteVol = ticker?.quoteVolume ?: 0.0
 
-                            val currentPrice = currentCandle.candle.close
-                            val currentVolD1 = currentCandle.candle.volume
-                            val sma20OpenD1 = previous20.map { it.candle.open }.average()
-                            val avgVol20D1 = previous20.map { it.candle.volume }.average()
-
-                            val threshold = _uiState.value.settings.volumeMultiplierThreshold
-                            val volRatio = if (avgVol20D1 > 0.0) currentVolD1 / avgVol20D1 else 0.0
-
-                            if (currentPrice >= sma20OpenD1 && volRatio >= threshold && ticker != null) {
-                                d1Matches.add(ticker)
-                            }
+                        val eval = repository.evaluateD1MomentumCandidate(rawCandles, quoteVol)
+                        if (eval.isQualified && ticker != null) {
+                            d1Matches.add(
+                                ticker.copy(
+                                    score = eval.score,
+                                    atrPercent = eval.atrPercent
+                                )
+                            )
                         }
                     }
                 }
 
+                d1Matches.sortByDescending { it.score }
+
                 _uiState.value = _uiState.value.copy(
-                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (D1 Breakout: ${d1Matches.size})",
+                    scanProgress = "Đã quét $scannedCount/$totalCoins coin (Đạt chuẩn Score & Breakout: ${d1Matches.size})",
                     scanPercent = scannedCount.toFloat() / totalCoins,
                     d1BullishCount = d1Matches.size,
                     scannedD1BreakoutTickers = d1Matches.toList(),
@@ -1543,32 +1577,198 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Vòng lặp giám sát vị thế và PnL danh mục mỗi 5s (tuân thủ nghiêm ngặt Rate Limit Binance)
-     * Kèm REST polling dự phòng mỗi 30s
+     * Hạ tầng feed giá Realtime REST API (3.5s/lần) gọi duy nhất GET /fapi/v1/premiumIndex
+     * và Vòng lặp giám sát ATR Trailing Stop + Debounce 2 chu kỳ + Timeout 7 ngày
      */
     private fun startTickerPolling() {
         tickerPollJob?.cancel()
         tickerPollJob = viewModelScope.launch {
             var restBackupCounter = 0
             while (isActive) {
-                delay(5000L) // Kiểm tra vị thế lệnh & PnL danh mục mỗi 5 giây
+                delay(3500L) // 3.5s mỗi chu kỳ (trong khoảng 3s – 5s theo đặc tả)
                 
-                // Đồng bộ số dư ví và vị thế lệnh Binance Live mỗi 5s
-                if (_apiConfig.value.isConnected) {
+                // 1. Hạ tầng feed giá Realtime (REST API tối ưu, gọi 1 request duy nhất lấy toàn bộ Mark Price)
+                withContext(Dispatchers.IO) {
+                    val markMap = BinanceClient.fetchMarkPricesWithFallback()
+                    if (markMap.isNotEmpty()) {
+                        markPricesCache.putAll(markMap)
+                    }
+                }
+
+                // 2. Máy trạng thái thoát lệnh độc lập từng coin (Single Position ATR Trailing Engine)
+                evaluateSinglePositionExits()
+
+                // 3. Đồng bộ số dư ví và vị thế lệnh Binance Live mỗi 2 chu kỳ (~7s)
+                restBackupCounter++
+                if (restBackupCounter % 2 == 0 && _apiConfig.value.isConnected) {
                     refreshBinancePortfolio()
                 }
 
-                // Kiểm tra mục tiêu chốt lời toàn danh mục (Portfolio TP)
-                checkPortfolioTakeProfit()
-
-                // REST ticker polling làm backup định kỳ mỗi 30 giây (6 chu kỳ x 5s)
-                restBackupCounter++
-                if (restBackupCounter >= 6) {
+                // 4. REST ticker polling làm backup định kỳ mỗi 8 chu kỳ (~28s)
+                if (restBackupCounter >= 8) {
                     refreshTickers()
                     restBackupCounter = 0
                 }
             }
         }
+    }
+
+    private suspend fun evaluateSinglePositionExits() = withContext(Dispatchers.IO) {
+        val openList = repository.getOpenPositionsList()
+        if (openList.isEmpty()) return@withContext
+
+        val now = System.currentTimeMillis()
+        val exitQueue = mutableListOf<Pair<TradePosition, String>>()
+
+        for (pos in openList) {
+            if (isExitingMap[pos.symbol] == true) continue
+
+            val markPrice = markPricesCache[pos.symbol] 
+                ?: _uiState.value.tickers.find { it.symbol == pos.symbol }?.lastPrice 
+                ?: pos.currentPrice
+
+            if (markPrice <= 0.0 || pos.entryPrice <= 0.0) continue
+
+            val atrVal = if (pos.atr14D1 > 0.0) pos.atr14D1 else (pos.entryPrice * 0.05)
+
+            // 1. CẬP NHẬT ĐỈNH CAO NHẤT KỂ TỪ KHI MỞ LỆNH
+            var currentHighest = maxOf(pos.highestHighPrice, pos.entryPrice)
+            if (markPrice > currentHighest) {
+                currentHighest = markPrice
+            }
+
+            // 2. ĐIỀU KIỆN KÍCH HOẠT TRAILING (MỐC A: entryPrice + 1.5 * atr14D1)
+            val activationPrice = pos.entryPrice + (1.5 * atrVal)
+            var isTrailing = pos.isTrailingActive
+            if (!isTrailing && markPrice >= activationPrice) {
+                isTrailing = true
+            }
+
+            // 3. TÍNH TOÁN VÀ NEO MỨC GIÁ TRAILING STOP (CHANDELIER FORMULA)
+            var currentStop = pos.trailingStopPrice
+            if (isTrailing) {
+                val floorLockPrice = pos.entryPrice * 1.005 // Sàn khóa lãi net +0.5%
+                val calculatedStopPrice = currentHighest - (2.0 * atrVal) // Mức dừng lỗ trượt Chandelier (k=2.0)
+                val newStopPrice = maxOf(floorLockPrice, calculatedStopPrice)
+
+                // Nguyên tắc Ratchet: Chỉ tiến lên theo đỉnh, tuyệt đối không lùi xuống
+                if (newStopPrice > currentStop) {
+                    currentStop = newStopPrice
+                }
+            }
+
+            // 4. BỘ ĐỆM DEBOUNCE CHỐNG QUÉT RÂU NẾN ẢO (6 - 10 GIÂY)
+            var debounceCount = pos.debounceCounter
+            var triggeredExitReason: String? = null
+
+            if (isTrailing && currentStop > 0.0 && markPrice <= currentStop) {
+                debounceCount++
+                if (debounceCount >= 2) {
+                    // Xác nhận đóng vị thế -> Đưa vào hàng đợi xả lệnh Market tuần tự
+                    triggeredExitReason = "CHANDELIER_TRAILING_HIT"
+                }
+            } else {
+                debounceCount = 0 // Giá rút râu hồi phục trên Stop trước 2 chu kỳ -> Reset
+            }
+
+            // 5. SMART TIMEOUT 7 NGÀY (168 GIỜ)
+            val holdingTimeMs = now - pos.entryTime
+            val maxHoldingMs = 7L * 24 * 3600 * 1000L
+            if (holdingTimeMs >= maxHoldingMs && triggeredExitReason == null) {
+                if (markPrice < pos.entryPrice) { // ROI < 0% danh nghĩa (lỗ)
+                    triggeredExitReason = "TIMEOUT_7D_LOSS_CUT"
+                }
+                // Nếu markPrice >= entryPrice: Giữ lệnh, để Chandelier Exit tiếp tục gồng lãi
+            }
+
+            // Cập nhật trạng thái vào Room DB nếu có thay đổi
+            if (currentHighest != pos.highestHighPrice || 
+                isTrailing != pos.isTrailingActive || 
+                currentStop != pos.trailingStopPrice || 
+                debounceCount != pos.debounceCounter || 
+                markPrice != pos.currentPrice ||
+                pos.atr14D1 != atrVal) {
+                repository.updatePosition(
+                    pos.copy(
+                        currentPrice = markPrice,
+                        atr14D1 = atrVal,
+                        highestHighPrice = currentHighest,
+                        trailingStopPrice = currentStop,
+                        isTrailingActive = isTrailing,
+                        debounceCounter = debounceCount
+                    )
+                )
+            }
+
+            if (triggeredExitReason != null) {
+                isExitingMap[pos.symbol] = true
+                exitQueue.add(pos to triggeredExitReason)
+            }
+        }
+
+        // Thực thi thoát lệnh tuần tự nếu có vị thế kích hoạt đóng
+        if (exitQueue.isNotEmpty()) {
+            executeSequentialExits(exitQueue)
+        }
+    }
+
+    private suspend fun executeSequentialExits(queue: List<Pair<TradePosition, String>>) {
+        val isLive = _apiConfig.value.isConnected
+        val (apiKey, apiSecret, isTestnet) = if (isLive) getEffectiveApiCredentials() else Triple("", "", false)
+
+        for ((index, item) in queue.withIndex()) {
+            val (pos, reason) = item
+            val currentPrice = markPricesCache[pos.symbol] ?: pos.currentPrice
+
+            if (index > 0) {
+                delay(1200L) // Giãn cách trễ đúng 1.200 ms giữa mỗi lệnh đóng vị thế để an toàn Rate Limit
+            }
+
+            if (pos.isLiveBinanceOrder && isLive) {
+                BinanceFuturesApiVerifier.postMarketCloseOrder(
+                    symbol = pos.symbol,
+                    amount = pos.amount,
+                    approxPrice = currentPrice,
+                    apiKey = apiKey,
+                    apiSecret = apiSecret,
+                    isTestnet = isTestnet,
+                    side = "SELL"
+                )
+            }
+
+            val pnl = (currentPrice - pos.entryPrice) * pos.amount
+            val pnlPct = if (pos.entryPrice > 0) ((currentPrice - pos.entryPrice) / pos.entryPrice) * 100.0 else 0.0
+
+            val closedPos = pos.copy(
+                currentPrice = currentPrice,
+                status = TradePosition.STATUS_CLOSED,
+                exitPrice = currentPrice,
+                exitTime = System.currentTimeMillis(),
+                pnlUsdt = pnl,
+                pnlPercent = pnlPct,
+                closeReason = reason
+            )
+            repository.updatePosition(closedPos)
+
+            val reasonTitle = if (reason == "CHANDELIER_TRAILING_HIT") {
+                "CHỐT LÃI CHANDELIER EXIT: ${pos.symbol}"
+            } else {
+                "CẮT LỖ TIMEOUT 7 NGÀY: ${pos.symbol}"
+            }
+
+            triggerAlert(
+                TradeAlert(
+                    symbol = pos.symbol,
+                    title = reasonTitle,
+                    message = "$reason. Thoát tại $${CryptoRepository.formatPrice(currentPrice)} (Đỉnh: $${CryptoRepository.formatPrice(pos.highestHighPrice)}, Stop: $${CryptoRepository.formatPrice(pos.trailingStopPrice)}) | PnL: ${if (pnl >= 0) "+" else ""}${String.format(Locale.US, "%.2f", pnl)} USDT (${String.format(Locale.US, "%.2f%%", pnlPct)})",
+                    type = if (pnl >= 0) AlertType.TAKE_PROFIT else AlertType.STOP_LOSS
+                )
+            )
+
+            isExitingMap.remove(pos.symbol)
+        }
+
+        if (isLive) refreshBinancePortfolio()
     }
 
     /**

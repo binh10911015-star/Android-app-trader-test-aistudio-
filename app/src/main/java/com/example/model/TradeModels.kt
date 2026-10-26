@@ -21,10 +21,13 @@ data class BinanceTicker(
     val lastPrice: Double = 0.0,
     val priceChangePercent: Double = 0.0,
     val volume: Double = 0.0,
+    val quoteVolume: Double = volume * lastPrice,
     val highPrice: Double = 0.0,
     val lowPrice: Double = 0.0,
     val sma20OpenD1: Double = lastPrice * 0.99,
-    val volumeRatioD1: Double = 1.0
+    val volumeRatioD1: Double = 1.0,
+    val score: Double = 0.0,
+    val atrPercent: Double = 0.05
 )
 
 data class SuperTrendPoint(
@@ -124,7 +127,12 @@ data class TradePosition(
     val markPrice: Double = currentPrice,
     val tpOrderId: Long? = null,
     val slOrderId: Long? = null,
-    val basketSlot: String = "PRIMARY"
+    val basketSlot: String = "PRIMARY",
+    val atr14D1: Double = 0.0,
+    val highestHighPrice: Double = entryPrice,
+    val trailingStopPrice: Double = 0.0,
+    val isTrailingActive: Boolean = false,
+    val debounceCounter: Int = 0
 ) {
     companion object {
         const val STATUS_OPEN = "OPEN"

@@ -228,46 +228,30 @@ fun AnalyticsScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    Text(text = "Chế độ slot quét (Execution Slots)", color = TextMuted, fontSize = 11.sp)
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Row(
+                    Surface(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        shape = RoundedCornerShape(8.dp),
+                        color = CryptoGold.copy(alpha = 0.1f),
+                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
                     ) {
-                        listOf(
-                            Triple("DUAL", "Dual (07h + 19h)", Icons.Default.Layers),
-                            Triple("PRIMARY_ONLY", "Chỉ Primary (07h)", Icons.Default.WbSunny),
-                            Triple("SECONDARY_ONLY", "Chỉ Secondary (19h)", Icons.Default.NightsStay)
-                        ).forEach { (mode, label, icon) ->
-                            val isSelected = slotScanMode == mode
-                            Surface(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { slotScanMode = mode },
-                                color = if (isSelected) CryptoGold.copy(alpha = 0.2f) else DarkSurfaceHighlight,
-                                border = BorderStroke(1.dp, if (isSelected) CryptoGold else DarkBorder)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.Center
-                                ) {
-                                    Icon(
-                                        imageVector = icon,
-                                        contentDescription = null,
-                                        tint = if (isSelected) CryptoGold else TextMuted,
-                                        modifier = Modifier.size(13.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(3.dp))
-                                    Text(
-                                        text = label,
-                                        color = if (isSelected) CryptoGold else TextSecondary,
-                                        fontSize = 10.sp,
-                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                    )
-                                }
+                        Column(modifier = Modifier.padding(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(14.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "SINGLE POSITION MOMENTUM ARCHITECTURE",
+                                    color = CryptoGold,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                             }
+                            Spacer(modifier = Modifier.height(4.dp))
+                            Text(
+                                text = "• Quản lý từng vị thế độc lập • 5.1 USDT/lệnh\n• 2 phiên quét: 07:00 & 19:00 UTC+7 • Khống chế trần 60% Equity",
+                                color = TextSecondary,
+                                fontSize = 10.sp,
+                                lineHeight = 15.sp
+                            )
                         }
                     }
                 }
@@ -1039,7 +1023,7 @@ fun BasketCycleItemCard(cycle: BasketCycleResult) {
     val openDateStr = sdf.format(Date(cycle.openTime))
     val closeDateStr = sdf.format(Date(cycle.closeTime))
 
-    val slotBadge = if (cycle.slotId == BasketSlotId.PRIMARY) "PRIMARY (07h)" else "SECONDARY (19h)"
+    val slotBadge = if (cycle.slotId == BasketSlotId.PRIMARY) "PHIÊN 07:00 (D1)" else "PHIÊN 19:00 (MỸ)"
     val slotColor = if (cycle.slotId == BasketSlotId.PRIMARY) CryptoGold else Color(0xFF64B5F6)
 
     Card(
