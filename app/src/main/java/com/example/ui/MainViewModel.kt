@@ -44,6 +44,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
@@ -100,6 +101,10 @@ data class UiState(
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
+    companion object {
+        private const val KEY_AUTO_TRADE_ENABLED = "auto_trade_enabled"
+    }
+
     private val db = AppDatabase.getInstance(application)
     val repository = CryptoRepository(db.tradeDao())
 
@@ -107,6 +112,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val uiState: StateFlow<UiState> = _uiState.asStateFlow()
 
     private val secureApiStorage = SecureApiKeyStorage(application)
+    private val botStatePrefs = application.getSharedPreferences("bot_state", android.content.Context.MODE_PRIVATE)
     private val _apiConfig = MutableStateFlow(secureApiStorage.loadConfig())
     val apiConfig: StateFlow<BinanceApiConfig> = _apiConfig.asStateFlow()
 
@@ -116,11 +122,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _coinStateList = MutableStateFlow<List<BinanceTicker>>(com.example.data.DefaultCoinData.getSeedTickers())
     val coinStateList: StateFlow<List<BinanceTicker>> = _coinStateList.asStateFlow()
 
+    // Eagerly: bot chạy ngầm không có màn hình nào subscribe, WhileSubscribed sẽ làm danh sách
+    // này về rỗng sau 5s và bot tính sai trần vốn 60% / số dư khả dụng.
     val openPositions: StateFlow<List<TradePosition>> = repository.getOpenPositions()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val closedPositions: StateFlow<List<TradePosition>> = repository.getClosedPositions()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     private var autoTradeJob: Job? = null
     private var openPositionsJob: Job? = null
@@ -222,7 +230,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         val loadedConfig = secureApiStorage.loadConfig()
-        BinanceClient.isTestnet = false
+        BinanceClient.isTestnet = loadedConfig.isTestnet
 
         if (loadedConfig.isProxyEnabled) {
             BinanceClient.updateProxy(
@@ -231,13 +239,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 loadedConfig.proxyType.equals("SOCKS", ignoreCase = true)
             )
         }
+        restoreAutoTradeAfterRestart()
+        persistAutoTradeFlag()
         setupDebouncedSearch()
         loadInitialData()
         initWebSocket()
         startKlinePolling()
         startScanScheduler()
         fetchPublicIpAddress()
-        autoLoginMainnet()
+        autoLogin(loadedConfig.isTestnet)
 
         viewModelScope.launch {
             // Phục hồi dữ liệu đỉnh cao nhất từ nến 1H (Crash Recovery) trước khi bắt đầu polling
@@ -303,6 +313,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     _secondaryBasket.value = null
                 }
             }
+        }
+    }
+
+    /** Bot đang bật trước khi tiến trình bị giết -> bật lại im lặng (không mở lệnh ngay, chờ mốc quét kế tiếp). */
+    private fun restoreAutoTradeAfterRestart() {
+        if (!botStatePrefs.getBoolean(KEY_AUTO_TRADE_ENABLED, false)) return
+        _uiState.update {
+            it.copy(
+                settings = it.settings.copy(autoTradeEnabled = true, leverage = 1),
+                nextScanTimestamp = ScanScheduler.getNextScanTimestamp()
+            )
+        }
+        try {
+            com.example.TradingForegroundService.startService(getApplication<Application>().applicationContext)
+        } catch (_: Exception) {
+            // Android 12+ chặn startForegroundService từ nền; khi khôi phục do chính service START_STICKY
+            // khởi động lại thì service đã chạy sẵn nên bỏ qua lỗi này là an toàn.
+        }
+        startAutoTradeLoop()
+    }
+
+    /** Ghi lại trạng thái bật/tắt bot mỗi khi thay đổi để khôi phục sau khi app/tiến trình khởi động lại. */
+    private fun persistAutoTradeFlag() {
+        viewModelScope.launch {
+            _uiState.map { it.settings.autoTradeEnabled }
+                .distinctUntilChanged()
+                .collect { enabled ->
+                    botStatePrefs.edit().putBoolean(KEY_AUTO_TRADE_ENABLED, enabled).apply()
+                }
         }
     }
 
@@ -435,7 +474,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun initWebSocket() {
         webSocketClient?.stop()
-        val isTestnet = _apiConfig.value.isTestnet
+        // Dữ liệu thị trường (giá, quét tín hiệu) luôn lấy từ Mainnet để tín hiệu sát thực tế.
+        // Chỉ lệnh/tài khoản/mark price thoát lệnh mới đi theo Testnet khi bật Testnet.
+        val isTestnet = false
         webSocketClient = com.example.network.BinanceWebSocketClient { updates ->
             handleWebSocketTickers(updates)
         }
@@ -778,7 +819,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             if (isLive) {
                 val (apiKey, apiSecret, isTestnet) = getEffectiveApiCredentials()
-                val netLabel = "Binance Mainnet"
+                val netLabel = if (isTestnet) "Binance Testnet" else "Binance Mainnet"
                 val cleanSymbol = symbol.trim().uppercase()
 
                 // Lưu ánh xạ giỏ cho vị thế Binance Live
@@ -956,21 +997,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggleTradingMode(toLiveMainnet: Boolean) {
-        val current = _apiConfig.value
-        BinanceClient.isTestnet = false
-
-        val (apiKey, apiSecret) = secureApiStorage.getMainnetCredentials()
-
-        secureApiStorage.saveCredentials(
-            apiKey = apiKey,
-            apiSecret = apiSecret,
-            accessPin = current.accessPin.ifBlank { "1234" },
-            isTestnet = false,
-            liveTradingEnabled = true
-        )
-        _apiConfig.value = secureApiStorage.loadConfig()
-        webSocketClient?.start(isTestnet = false)
-        autoLoginMainnet()
+        val useTestnet = !toLiveMainnet
+        BinanceClient.isTestnet = useTestnet
+        autoLogin(useTestnet)
     }
 
     fun setPositionTpSl(
@@ -2089,19 +2118,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun getEffectiveApiCredentials(): Triple<String, String, Boolean> {
         val config = _apiConfig.value
-        val isTestnet = false
-        val defaultKey = SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY
-        val defaultSecret = SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET
+        val isTestnet = config.isTestnet
+        val defaultKey = if (isTestnet) SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_KEY else SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_KEY
+        val defaultSecret = if (isTestnet) SecureApiKeyStorage.PRECONFIGURED_TESTNET_API_SECRET else SecureApiKeyStorage.PRECONFIGURED_MAINNET_API_SECRET
         val apiKey = config.apiKey.ifBlank { defaultKey }
         val apiSecret = config.apiSecret.ifBlank { defaultSecret }
         return Triple(apiKey, apiSecret, isTestnet)
     }
 
-    fun autoLoginMainnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
+    fun autoLoginMainnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) =
+        autoLogin(isTestnet = false, onResult = onResult)
+
+    fun autoLoginTestnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) =
+        autoLogin(isTestnet = true, onResult = onResult)
+
+    /** Đăng nhập lại bằng bộ key đã lưu của đúng mạng (Mainnet hoặc Testnet). */
+    fun autoLogin(isTestnet: Boolean, onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
         viewModelScope.launch {
-            val (apiKey, apiSecret) = secureApiStorage.getMainnetCredentials()
-            val isTestnet = false
-            BinanceClient.isTestnet = false
+            val (apiKey, apiSecret) = if (isTestnet) secureApiStorage.getTestnetCredentials() else secureApiStorage.getMainnetCredentials()
+            BinanceClient.isTestnet = isTestnet
+            if (apiKey.isBlank() || apiSecret.isBlank()) {
+                secureApiStorage.saveCredentials(apiKey, apiSecret, _apiConfig.value.accessPin.ifBlank { "1234" }, isTestnet, _apiConfig.value.liveTradingEnabled)
+                _apiConfig.value = secureApiStorage.loadConfig().copy(isConnected = false)
+                refreshTickers()
+                onResult?.invoke(BinanceAccountVerificationResult(isSuccess = false, errorMessage = "Chưa có API Key cho ${if (isTestnet) "Testnet" else "Mainnet"}."))
+                return@launch
+            }
 
             _isVerifyingApi.value = true
             val result = BinanceFuturesApiVerifier.verifyAccount(apiKey, apiSecret, isTestnet)
@@ -2115,29 +2157,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             secureApiStorage.updateVerificationResult(result)
             val updated = secureApiStorage.loadConfig()
-            _apiConfig.value = updated
+            _apiConfig.value = updated.copy(
+                lastErrorMessage = if (result.isSuccess) "" else result.errorMessage
+            )
             _isVerifyingApi.value = false
 
             refreshTickers()
 
             if (result.isSuccess) {
                 refreshBinancePortfolio()
+                val net = if (isTestnet) "TESTNET (TIỀN ẢO)" else "MAINNET THỰC TẾ"
                 triggerAlert(
                     TradeAlert(
-                        symbol = "BINANCE_MAINNET",
-                        title = "ĐÃ KẾT NỐI BINANCE MAINNET THỰC TẾ",
-                        message = "Đã kết nối tài khoản Binance Futures Mainnet thực tế! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
+                        symbol = if (isTestnet) "BINANCE_TESTNET" else "BINANCE_MAINNET",
+                        title = "ĐÃ KẾT NỐI BINANCE $net",
+                        message = "Đã kết nối tài khoản Binance Futures $net! Số dư ví: $${String.format(Locale.US, "%,.2f", result.totalWalletBalance)} USDT.",
                         type = AlertType.INFO
                     )
                 )
             }
             onResult?.invoke(result)
         }
-    }
-
-    fun autoLoginTestnet(onResult: ((BinanceAccountVerificationResult) -> Unit)? = null) {
-        // Chuyển toàn bộ sang Mainnet theo yêu cầu loại bỏ Testnet
-        autoLoginMainnet(onResult)
     }
 
     fun saveAndVerifyApiCredentials(
