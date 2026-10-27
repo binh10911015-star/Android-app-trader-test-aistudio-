@@ -544,10 +544,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isRefreshing = true)
             repository.getTickers().onSuccess { list ->
-                _uiState.value = _uiState.value.copy(tickers = list, isRefreshing = false)
+                val tickersToSet = if (list.size > 52) list else {
+                    withContext(Dispatchers.IO) { BinanceClient.fetchTickersWithFallback() }
+                }
+                _uiState.value = _uiState.value.copy(tickers = tickersToSet, isRefreshing = false)
                 applyFilters()
 
-                val priceMap = list.associate { it.symbol to it.lastPrice }
+                val priceMap = tickersToSet.associate { it.symbol to it.lastPrice }
                 val updateResult = repository.updatePositionsWithPrices(priceMap)
                 for (alert in updateResult.alerts) {
                     triggerAlert(alert)
@@ -1399,24 +1402,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(
                 isScanning = true,
-                scanProgress = "Đang quét danh sách USDT-M Perpetual từ Binance...",
+                scanProgress = "Đang tải toàn bộ danh sách USDT-M Perpetual từ Binance Futures...",
                 scanPercent = 0f
             )
 
-            BinanceClient.refreshValidPerpetualSymbols()
+            val validPerps = withContext(Dispatchers.IO) {
+                BinanceClient.refreshValidPerpetualSymbols(forceRefresh = true)
+            }
 
-            var currentTickers = _uiState.value.tickers
-            if (currentTickers.isEmpty()) {
-                val tickersResult = repository.getTickers()
-                currentTickers = tickersResult.getOrDefault(emptyList())
-                if (currentTickers.isNotEmpty()) {
-                    _uiState.value = _uiState.value.copy(tickers = currentTickers)
+            var fetchedTickers = withContext(Dispatchers.IO) {
+                repository.getTickers().getOrDefault(emptyList())
+            }
+            if (fetchedTickers.size <= 52) {
+                val direct = withContext(Dispatchers.IO) {
+                    BinanceClient.fetchTickersWithFallback()
+                }
+                if (direct.size > fetchedTickers.size) {
+                    fetchedTickers = direct
                 }
             }
 
-            // Lọc danh sách: Chỉ lấy USDT-M perpetuals, loại trừ BTC và stablecoins theo Mục 3 của đặc tả
-            val allSymbols = currentTickers.map { it.symbol }
-            val eligibleSymbols = allSymbols.filter { !repository.isExcludedPerpetualSymbol(it) }
+            if (fetchedTickers.size > 52) {
+                _uiState.value = _uiState.value.copy(tickers = fetchedTickers)
+                applyFilters()
+            }
+
+            // Tập hợp toàn bộ danh sách hơn 500 coin USDT-M Perpetual trên sàn Binance
+            val tickerMap = fetchedTickers.associateBy { it.symbol }
+            val rawSymbolSet = mutableSetOf<String>()
+            rawSymbolSet.addAll(validPerps)
+            rawSymbolSet.addAll(fetchedTickers.map { it.symbol })
+
+            // Lọc danh sách: Chỉ lấy USDT-M perpetuals, loại trừ BTC và stablecoins
+            val eligibleSymbols = rawSymbolSet.filter { sym ->
+                sym.endsWith("USDT") && !sym.contains("_") && !repository.isExcludedPerpetualSymbol(sym)
+            }.sorted()
 
             if (eligibleSymbols.isEmpty()) {
                 _uiState.value = _uiState.value.copy(isScanning = false, scanProgress = "", scanPercent = 0f)
@@ -1429,7 +1449,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
             val d1Matches = mutableListOf<BinanceTicker>()
 
-            val chunkSize = 8
+            val chunkSize = 12
             val chunks = eligibleSymbols.chunked(chunkSize)
 
             for (chunk in chunks) {
@@ -1443,7 +1463,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 for (sym in chunk) {
                     scannedCount++
-                    val ticker = currentTickers.find { it.symbol == sym }
+                    val ticker = tickerMap[sym] ?: _uiState.value.tickers.find { it.symbol == sym } ?: BinanceTicker(
+                        symbol = sym,
+                        lastPrice = 1.0,
+                        priceChangePercent = 0.0,
+                        volume = 1000000.0,
+                        highPrice = 1.0,
+                        lowPrice = 1.0,
+                        sma20OpenD1 = 1.0,
+                        volumeRatioD1 = 1.0
+                    )
 
                     val d1Res = d1Results[sym]
                     if (d1Res != null && d1Res.isSuccess) {

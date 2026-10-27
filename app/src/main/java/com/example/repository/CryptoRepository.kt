@@ -696,13 +696,17 @@ class CryptoRepository(private val tradeDao: TradeDao) {
     // ==========================================
 
     private fun fetchHighLiquiditySymbolsFromMainnet(config: BacktestConfig): List<String> {
+        val validPerps = BinanceClient.refreshValidPerpetualSymbols()
         val tickers = BinanceClient.fetchTickersWithFallback()
-        val list = tickers.filter {
-            val volumeUsdt = it.volume * it.lastPrice
-            it.symbol.endsWith("USDT") && !it.symbol.contains("_") && (config.minQuoteVolume24h <= 0.0 || volumeUsdt >= config.minQuoteVolume24h)
-        }.map { it.symbol }
+        val symbolsSet = mutableSetOf<String>()
+        symbolsSet.addAll(validPerps)
+        symbolsSet.addAll(tickers.map { it.symbol })
 
-        return if (list.isNotEmpty()) list else tickers.map { it.symbol }.filter { it.endsWith("USDT") && !it.contains("_") }
+        val allPerpSymbols = symbolsSet.filter { sym ->
+            sym.endsWith("USDT") && !sym.contains("_") && !isExcludedPerpetualSymbol(sym)
+        }.sorted()
+
+        return if (allPerpSymbols.isNotEmpty()) allPerpSymbols else tickers.map { it.symbol }.filter { it.endsWith("USDT") && !it.contains("_") && !isExcludedPerpetualSymbol(it) }
     }
 
     data class CandidateEvaluation(

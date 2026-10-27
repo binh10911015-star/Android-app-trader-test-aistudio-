@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch cập nhật quy tắc ưu tiên coin vào lệnh cho Chiến lược SMA20 D1: Ưu tiên coin có % thay đổi nến t-1 nhỏ nhất vào trước, và bổ sung quy tắc kiểm thử thận trọng: nếu trong ngày cùng chạm cả TP và SL thì ghi nhận lệnh đó là SL.",
-  "updatedAt":  "2026-10-27T17:44:19.314214731Z",
+  "summary":  "Kế hoạch nâng cấp và sửa đổi hàm gọi API Binance Futures: Tải và quét toàn bộ hơn 500 coin USDT-M Perpetual thực tế trên sàn (thay vì 50 coin mẫu), tối ưu hóa luồng tải danh sách và tăng tốc quét song song.",
+  "updatedAt":  "2026-10-27T17:58:50.031337989Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
