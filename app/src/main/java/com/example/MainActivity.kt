@@ -8,6 +8,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
@@ -133,7 +134,8 @@ enum class NavScreen {
 
 class MainActivity : ComponentActivity() {
 
-    private val viewModel: MainViewModel by viewModels()
+    // Dùng chung instance bộ máy giao dịch ở phạm vi tiến trình (xem TradingApp)
+    private val viewModel: MainViewModel by lazy { (application as TradingApp).tradingViewModel }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -1229,8 +1231,12 @@ class TradingForegroundService : Service() {
             "CryptoTrader::BotWakeLock"
         ).apply {
             setReferenceCounted(false)
-            acquire(24 * 60 * 60 * 1000L) // Giữ wake lock 24 giờ
+            // Không đặt hạn 24h: giữ CPU suốt thời gian service chạy, nhả ở onDestroy()
+            acquire()
         }
+        // Đảm bảo bộ máy giao dịch tồn tại kể cả khi hệ thống tự khởi động lại service
+        // (START_STICKY sau khi tiến trình bị giết) mà không có Activity nào được mở.
+        (application as TradingApp).tradingViewModel
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -1245,8 +1251,12 @@ class TradingForegroundService : Service() {
                 stopSelf()
             }
             else -> {
-                val notification = buildNotification("Bot đang chạy ngầm • Giám sát PnL 1s & quét 7h00")
-                startForeground(NOTIFICATION_ID, notification)
+                val notification = buildNotification("Bot đang chạy ngầm • Giám sát Trailing Stop & quét 07:00 / 19:00")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                    startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
             }
         }
         return START_STICKY // Tự động hồi sinh nếu hệ thống ép tắt do thiếu RAM
