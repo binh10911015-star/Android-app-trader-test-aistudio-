@@ -1,6 +1,6 @@
 {
-  "summary":  "Kế hoạch cập nhật toàn diện Chandelier Exit Engine theo giá tuyệt đối từ đỉnh D1, nguyên tắc Ratchet chặn lãi một chiều, bộ đệm Debounce 2 chu kỳ, cơ chế Crash Recovery phục hồi đỉnh nến 1H và thoát lệnh tuần tự 1.2s.",
-  "updatedAt":  "2026-10-26T15:32:27.995970630Z",
+  "summary":  "Kế hoạch cập nhật quy tắc ưu tiên coin vào lệnh cho Chiến lược SMA20 D1: Ưu tiên coin có % thay đổi nến t-1 nhỏ nhất vào trước, và bổ sung quy tắc kiểm thử thận trọng: nếu trong ngày cùng chạm cả TP và SL thì ghi nhận lệnh đó là SL.",
+  "updatedAt":  "2026-10-27T17:44:19.314214731Z",
   "requestFeedback":  true,
   "userFacing":  true
 }

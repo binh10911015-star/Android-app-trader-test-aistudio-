@@ -104,6 +104,41 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         tradeDao.getOpenPositionsList().map { it.symbol }.toSet()
     }
 
+    fun isExcludedPerpetualSymbol(symbol: String): Boolean {
+        val upper = symbol.uppercase().trim()
+        if (!upper.endsWith("USDT")) return true
+        val base = upper.removeSuffix("USDT")
+        if (base == "BTC" || base.startsWith("BTC")) return true
+        val stablecoins = setOf(
+            "USDC", "FDUSD", "TUSD", "USDP", "DAI", "USDE",
+            "USD1", "BUSD", "RLUSD", "PYUSD", "XUSD", "U"
+        )
+        if (base in stablecoins) return true
+        return false
+    }
+
+    suspend fun closeAllOpenPositionsForMigration(reason: String = "STRATEGY_MIGRATION"): List<TradePosition> = withContext(Dispatchers.IO) {
+        val openPositions = tradeDao.getOpenPositionsList()
+        val now = System.currentTimeMillis()
+        val closedList = mutableListOf<TradePosition>()
+        for (pos in openPositions) {
+            val exitP = if (pos.currentPrice > 0.0) pos.currentPrice else pos.entryPrice
+            val pnl = (exitP - pos.entryPrice) * pos.amount
+            val roi = if (pos.entryPrice > 0.0) ((exitP - pos.entryPrice) / pos.entryPrice) * 100.0 else 0.0
+            val closed = pos.copy(
+                status = TradePosition.STATUS_CLOSED,
+                exitPrice = exitP,
+                exitTime = now,
+                pnlUsdt = pnl,
+                pnlPercent = roi,
+                closeReason = reason
+            )
+            tradeDao.update(closed)
+            closedList.add(closed)
+        }
+        closedList
+    }
+
     suspend fun executeSimulatedBuy(
         symbol: String,
         currentPrice: Double,
@@ -118,7 +153,10 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         exactEntryPrice: Double? = null,
         autoFixNote: String? = null,
         basketSlot: String = "PRIMARY",
-        atr14D1: Double = 0.0
+        atr14D1: Double = 0.0,
+        signalLowD1: Double = 0.0,
+        customStopLoss: Double? = null,
+        customTakeProfit: Double? = null
     ): TradeAlert? = withContext(Dispatchers.IO) {
         val effectiveEntryPrice = if (exactEntryPrice != null && exactEntryPrice > 0.0) exactEntryPrice else currentPrice
         if (effectiveEntryPrice <= 0.0) return@withContext null
@@ -127,7 +165,11 @@ class CryptoRepository(private val tradeDao: TradeDao) {
 
         val invested = investedUsdt ?: settings.calculatePositionVolume()
         val amount = exactAmount ?: (invested / effectiveEntryPrice)
-        val tpPrice: Double? = null
+
+        // Tính SL cố định = Low(t-1), 1R = entry - SL, TP = entry + 3R (RR 1:3)
+        val slPrice = customStopLoss ?: if (signalLowD1 > 0.0) signalLowD1 else null
+        val rVal = if (slPrice != null && effectiveEntryPrice > slPrice) effectiveEntryPrice - slPrice else 0.0
+        val tpPrice = customTakeProfit ?: if (rVal > 0.0) effectiveEntryPrice + (3.0 * rVal) else null
 
         val position = TradePosition(
             symbol = symbol,
@@ -135,8 +177,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             currentPrice = currentPrice,
             amount = amount,
             investedUsdt = invested,
-            takeProfitPrice = null,
-            stopLossPrice = null,
+            takeProfitPrice = tpPrice,
+            stopLossPrice = slPrice,
             entryTime = System.currentTimeMillis(),
             status = TradePosition.STATUS_OPEN,
             timeframe = settings.timeframe,
@@ -150,13 +192,16 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             highestHighPrice = effectiveEntryPrice,
             trailingStopPrice = 0.0,
             isTrailingActive = false,
-            debounceCounter = 0
+            debounceCounter = 0,
+            signalLowD1 = signalLowD1,
+            riskR = rVal
         )
 
         tradeDao.insert(position)
 
         val priceStr = formatPrice(effectiveEntryPrice)
-        val tpStr = "Theo Trailing Stop ATR & FloorLock"
+        val tpStr = if (tpPrice != null) "$${formatPrice(tpPrice)} (RR 1:3)" else "Chưa đặt"
+        val slStr = if (slPrice != null) "$${formatPrice(slPrice)}" else "Chưa đặt"
 
         val volStr = if (invested % 1.0 == 0.0) "${invested.toInt()} USDT" else "${String.format(Locale.US, "%.1f", invested)} USDT"
         val fixPrefix = if (!autoFixNote.isNullOrBlank()) "[$autoFixNote] " else ""
@@ -168,9 +213,9 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         }
 
         val message = if (isLiveBinanceOrder) {
-            "${fixPrefix}Lệnh #$binanceOrderId đã khớp trực tiếp trên sàn Binance! Giá khớp: $$priceStr, KL: ${String.format(Locale.US, "%.4f", amount)} (Vốn: $volStr). TP: $tpStr"
+            "${fixPrefix}Lệnh #$binanceOrderId đã khớp trực tiếp trên Binance! Giá: $$priceStr | SL: $slStr | TP: $tpStr | Vốn: $volStr"
         } else {
-            "Đã mua $symbol tại $$priceStr (Vốn: $volStr). TP: $tpStr"
+            "Đã mở Long $symbol tại $$priceStr | SL: $slStr | TP: $tpStr (Vốn: $volStr)"
         }
 
         TradeAlert(
@@ -511,7 +556,7 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         takeProfitPercent: Double = 4.0,
         stopLossPercent: Double = 0.0,
         candleLimit: Int = 180,
-        volumeThreshold: Double = 2.0
+        volumeThreshold: Double = 1.0
     ): BacktestSummaryResult {
         val candles = BinanceClient.fetchKlinesWithFallback(symbol, interval = "1d", limit = candleLimit)
         if (candles.size < 25) {
@@ -530,47 +575,57 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         var totalProfit = 0.0
         var totalLoss = 0.0
 
-        var i = 20
-        while (i < candles.size - 1) {
-            val currentCandle = candles[i]
-            val previous20 = candles.subList(i - 20, i)
+        var i = 21
+        while (i < candles.size) {
+            val k1 = candles[i - 1] // nến t-1
+            val k0 = candles[i]     // nến t (entry)
+            val prev20 = candles.subList(i - 21, i - 1)
+            val sma20 = prev20.map { it.close }.average()
 
-            val currentPrice = currentCandle.close
-            val currentVol = currentCandle.volume
-            val sma20Open = previous20.map { it.open }.average()
-            val avgVol20 = previous20.map { it.volume }.average()
+            // 1. Nến t-1 là nến tăng: close[t-1] > open[t-1]
+            // 2. Giá đóng cửa trên SMA20: close[t-1] > SMA20[t-1]
+            // 3. SMA20 nằm trong range nến t-1: low[t-1] <= SMA20[t-1]
+            val cond1 = k1.close > k1.open
+            val cond2 = k1.close > sma20
+            val cond3 = k1.low <= sma20
+            val entryPrice = k0.open
+            val sl = k1.low
+            val riskR = entryPrice - sl
 
-            val volRatio = if (avgVol20 > 0.0) currentVol / avgVol20 else 0.0
-            val isSignal = currentPrice >= sma20Open && volRatio >= volumeThreshold
-
-            if (isSignal) {
-                val entryPrice = currentPrice
-                val investedAmount = balance * (riskPerTradePercent / 100.0).coerceAtLeast(0.005)
+            if (cond1 && cond2 && cond3 && riskR > 0.0) {
+                val tp = entryPrice + 3.0 * riskR
+                val investedAmount = 5.1 // 5.1 USD danh nghĩa mỗi lệnh
                 val coinQty = investedAmount / entryPrice
-                val entryTime = currentCandle.openTime
+                val entryTime = k0.openTime
 
                 var exitPrice = entryPrice
                 var exitTime = entryTime
                 var exitReason = "HẾT DỮ LIỆU"
                 var closed = false
 
-                for (j in (i + 1) until candles.size) {
+                for (j in i until candles.size) {
                     val futureCandle = candles[j]
-                    val highRoi = ((futureCandle.high - entryPrice) / entryPrice) * 100.0
-
-                    if (highRoi >= takeProfitPercent) {
-                        exitPrice = entryPrice * (1.0 + takeProfitPercent / 100.0)
+                    // Giả định bất lợi: Chạm cả SL và TP trong cùng ngày -> tính là SL
+                    if (futureCandle.low <= sl && futureCandle.high >= tp) {
+                        exitPrice = sl
                         exitTime = futureCandle.openTime
-                        exitReason = "TP (+${takeProfitPercent}%)"
+                        exitReason = "SL (Bất lợi cùng ngày)"
                         closed = true
                         i = j
                         break
                     }
-
-                    if (futureCandle.close < sma20Open && j > i + 2) {
-                        exitPrice = futureCandle.close
+                    if (futureCandle.low <= sl) {
+                        exitPrice = minOf(futureCandle.open, sl)
                         exitTime = futureCandle.openTime
-                        exitReason = "Gãy SMA20"
+                        exitReason = "SL (-1R)"
+                        closed = true
+                        i = j
+                        break
+                    }
+                    if (futureCandle.high >= tp) {
+                        exitPrice = maxOf(futureCandle.open, tp)
+                        exitTime = futureCandle.openTime
+                        exitReason = "TP (+3R)"
                         closed = true
                         i = j
                         break
@@ -584,8 +639,10 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                     i = candles.size
                 }
 
-                val pnl = (exitPrice - entryPrice) * coinQty
-                val roi = ((exitPrice - entryPrice) / entryPrice) * 100.0
+                val grossPnl = (exitPrice - entryPrice) * coinQty
+                val fee = investedAmount * 0.0010 // 0.05% mỗi chiều = 0.10% tổng phí taker
+                val pnl = grossPnl - fee
+                val roi = (pnl / investedAmount) * 100.0
                 val isWin = pnl > 0
 
                 if (isWin) totalProfit += pnl else totalLoss += Math.abs(pnl)
@@ -720,24 +777,19 @@ class CryptoRepository(private val tradeDao: TradeDao) {
         val entryPrice: Double,
         val margin: Double,
         val quantity: Double,
-        val atrPercent: Double,
+        val stopLoss: Double,
+        val takeProfit: Double,
         val openDayIdx: Int,
         val slotId: BasketSlotId = BasketSlotId.PRIMARY,
-        var isTrailingActive: Boolean = false,
-        var peakRoi: Double = 0.0,
-        var currentStopRoi: Double = -1.0
-    ) {
-        val activationRoi: Double = maxOf(0.015, 0.50 * atrPercent)
-        val trailStepRoi: Double = maxOf(0.008, 0.25 * atrPercent)
-        val floorLockRoi: Double = 0.005 // +0.5% net
-    }
+        val atrPercent: Double = 0.05
+    )
 
     suspend fun runBasketD1MomentumBacktest(
         daysToTest: Int = 180,
         config: BacktestConfig = BacktestConfig(),
         symbolsPool: List<String> = emptyList()
     ): BasketBacktestReport = withContext(Dispatchers.IO) {
-        // 1. Quét toàn bộ danh sách coin thanh khoản cao từ Binance Mainnet
+        // 1. Lấy danh sách altcoin USDT-M từ Binance Mainnet
         val activeSymbols = if (symbolsPool.isNotEmpty()) symbolsPool else fetchHighLiquiditySymbolsFromMainnet(config)
         if (activeSymbols.isEmpty()) {
             return@withContext BasketBacktestReport(errorMessage = "Không tải được danh sách cặp coin từ Binance Mainnet.")
@@ -750,13 +802,15 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             if (candles.size >= 30) klinesMap[sym] = candles
         }
 
-        val btcCandles = klinesMap["BTCUSDT"] ?: return@withContext BasketBacktestReport(errorMessage = "Thiếu dữ liệu nến BTCUSDT để kiểm tra Regime.")
+        val btcCandles = klinesMap["BTCUSDT"] ?: BinanceClient.fetchKlinesWithFallback("BTCUSDT", interval = "1d", limit = daysToTest + 30)
+        if (btcCandles.size < 25) {
+            return@withContext BasketBacktestReport(errorMessage = "Thiếu dữ liệu nến D1 để thực hiện mô phỏng.")
+        }
 
         var currentEquity = config.initialCapital
         var peakEquity = currentEquity
         var maxDrawdown = 0.0
 
-        // Single-Position ATR Engine: Quản lý từng coin riêng lẻ
         val openPositions = mutableListOf<SinglePositionSimulation>()
         val singleTradesHistory = mutableListOf<SingleTradeRecord>()
         val cyclesHistory = mutableListOf<BasketCycleResult>()
@@ -768,9 +822,8 @@ class CryptoRepository(private val tradeDao: TradeDao) {
 
         for (dayIdx in startIndex until btcCandles.size) {
             val currentTime = btcCandles[dayIdx].openTime
-            val currentBtc = btcCandles[dayIdx - 1] // Nến D1 hôm qua vừa đóng lúc 07:00 AM
 
-            // BƯỚC 1: ĐỊNH GIÁ & KIỂM TRA THOÁT LỆNH ĐỘC LẬP TỪNG COIN (SINGLE-POSITION ATR ENGINE)
+            // BƯỚC 1: KIỂM TRA THOÁT LỆNH CỐ ĐỊNH SL (low t-1) HOẶC TP (3R)
             val openPositionsCopy = openPositions.toList()
             for (pos in openPositionsCopy) {
                 val candleToday = klinesMap[pos.symbol]?.find { it.openTime == currentTime } ?: continue
@@ -778,56 +831,21 @@ class CryptoRepository(private val tradeDao: TradeDao) {
                 var exitReason: String? = null
                 var exitPrice = candleToday.close
 
-                // 1. Kiểm tra Smart Timeout 7 ngày (168 giờ):
-                // Nếu ROI < 0.0 (đang lỗ): Thoát lệnh cưỡng chế cắt lỗ giải phóng vốn.
-                // Nếu ROI >= 0.0 (hòa hoặc đang lãi): KHÔNG cắt lỗ, tiếp tục thả nổi để Trailing Stop bám đỉnh.
-                if (config.enableSmartTimeout && holdingDays >= config.timeoutDays) {
-                    val closeRoi = if (pos.entryPrice > 0.0) (candleToday.close - pos.entryPrice) / pos.entryPrice else 0.0
-                    if (closeRoi < 0.0) {
-                        exitReason = "TIMEOUT_7D_LOSS"
-                        exitPrice = candleToday.close
-                    }
-                } else if (config.enableTrailingStop) {
-                    // 2. Kiểm tra ATR Trailing Stop độc lập cho từng vị thế
-                    val highRoi = if (pos.entryPrice > 0.0) (candleToday.high - pos.entryPrice) / pos.entryPrice else 0.0
-                    val lowRoi = if (pos.entryPrice > 0.0) (candleToday.low - pos.entryPrice) / pos.entryPrice else 0.0
-
-                    if (!pos.isTrailingActive) {
-                        // Kích hoạt khi chạm Activation ROI
-                        if (highRoi >= pos.activationRoi) {
-                            pos.isTrailingActive = true
-                            pos.peakRoi = highRoi
-                            val floor = if (config.enableFloorLock) pos.floorLockRoi else -0.99
-                            pos.currentStopRoi = maxOf(floor, pos.peakRoi - pos.trailStepRoi)
-
-                            // Kiểm tra trong nến có chạm stop không
-                            if (lowRoi <= pos.currentStopRoi) {
-                                exitReason = "TRAILING_STOP_TP"
-                                exitPrice = maxOf(1e-8, pos.entryPrice * (1.0 + pos.currentStopRoi))
-                            }
-                        }
-                    } else {
-                        // Tịnh tiến trailing stop khi bám đỉnh cao mới
-                        if (highRoi > pos.peakRoi) {
-                            pos.peakRoi = highRoi
-                            val floor = if (config.enableFloorLock) pos.floorLockRoi else -0.99
-                            val newStop = maxOf(floor, pos.peakRoi - pos.trailStepRoi)
-                            if (newStop > pos.currentStopRoi) {
-                                pos.currentStopRoi = newStop
-                            }
-                        }
-
-                        // Thoát lệnh khi giá rơi chạm mức trailing stop
-                        if (lowRoi <= pos.currentStopRoi) {
-                            exitReason = "TRAILING_STOP_TP"
-                            exitPrice = maxOf(1e-8, pos.entryPrice * (1.0 + pos.currentStopRoi))
-                        }
-                    }
+                // Quy tắc thận trọng: Nếu trong ngày cùng chạm cả TP và SL -> bắt buộc ghi nhận lệnh đó là SL!
+                if (candleToday.low <= pos.stopLoss && candleToday.high >= pos.takeProfit) {
+                    exitReason = "SL (Cùng chạm TP & SL)"
+                    exitPrice = pos.stopLoss
+                } else if (candleToday.low <= pos.stopLoss) {
+                    exitReason = "SL (-1R)"
+                    exitPrice = minOf(candleToday.open, pos.stopLoss)
+                } else if (candleToday.high >= pos.takeProfit) {
+                    exitReason = "TP (+3R)"
+                    exitPrice = maxOf(candleToday.open, pos.takeProfit)
                 }
 
                 if (exitReason != null) {
                     val gross = (exitPrice - pos.entryPrice) * pos.quantity
-                    val takerFee = pos.margin * 0.0008 // Phí giao dịch 2 chiều 0.08%
+                    val takerFee = pos.margin * 0.0010 // Phí taker 0.05% mỗi chiều = 0.10% tổng
                     val net = gross - takerFee
                     val roi = if (pos.margin > 0.0) (net / pos.margin) * 100.0 else 0.0
 
@@ -894,112 +912,65 @@ class CryptoRepository(private val tradeDao: TradeDao) {
             val dd = if (peakEquity > 0) ((peakEquity - tempEquity) / peakEquity) * 100.0 else 0.0
             if (dd > maxDrawdown) maxDrawdown = dd
 
-            // BƯỚC 2: BỘ LỌC MACRO BTC REGIME V2.2 (EMA20/50 + Slope + Circuit Breaker)
-            var isBtcSafeToTrade = true
-
-            if (config.enableBtcMacroFilter) {
-                val btcCloses = btcCandles.subList(0, dayIdx).map { it.close }
-                val emaFastList = calculateEMA(btcCloses, config.btcEmaFastPeriod)
-                val emaSlowList = calculateEMA(btcCloses, config.btcEmaSlowPeriod)
-
-                if (emaFastList.size >= 2 && emaSlowList.isNotEmpty()) {
-                    val currentBtcClose = btcCloses.last()
-                    val currentEmaFast = emaFastList.last()
-                    val prevEmaFast = emaFastList[emaFastList.size - 2]
-                    val currentEmaSlow = emaSlowList.last()
-
-                    val isAboveEmas = currentBtcClose > currentEmaFast && currentBtcClose > currentEmaSlow
-                    val isEmaSlopePositive = (currentEmaFast - prevEmaFast) >= 0.0
-
-                    isBtcSafeToTrade = isAboveEmas && isEmaSlopePositive
-                } else {
-                    isBtcSafeToTrade = false
-                }
-            }
-
-            if (config.enableBtcCircuitBreaker && isBtcSafeToTrade) {
-                val btcChangePct = if (currentBtc.open > 0) ((currentBtc.close - currentBtc.open) / currentBtc.open) * 100.0 else 0.0
-                if (btcChangePct <= config.btcCircuitBreakerPct) {
-                    isBtcSafeToTrade = false
-                }
-            }
-
-            // BƯỚC 3: MỞ THÊM VỊ THẾ TỪ HẠN MỨC TRỐNG (XOAY VÒNG VỐN CUỐN CHIẾU, TRẦN 60%)
-            val currentAllocatedMargin = openPositions.sumOf { it.margin }
-            val maxExposure = currentEquity * config.maxPortfolioAllocation // 60% Equity
-            val remainingBudget = maxExposure - currentAllocatedMargin
-
+            // BƯỚC 2: QUÉT TÍN HIỆU VÀO LỆNH MỚI CHO TỪNG COIN THỎA ĐIỀU KIỆN SMA20 D1 (KHÔNG LỌC BTC)
             val tradeCapital = if (config.useFixedCapitalPerTrade && config.capitalPerTradeUsdt > 0.0) {
                 config.capitalPerTradeUsdt
             } else {
-                currentEquity * config.perTradePct
+                5.1
             }
 
-            if (remainingBudget >= tradeCapital && isBtcSafeToTrade) {
-                val candidates = mutableListOf<ScoredCoin>()
-                val runningSymbols = openPositions.map { it.symbol }.toSet()
+            val runningSymbols = openPositions.map { it.symbol }.toSet()
+            val candidatesToday = mutableListOf<SinglePositionSimulation>()
+            val candidatesMeta = mutableMapOf<String, Double>()
 
-                for ((sym, candles) in klinesMap) {
-                    if (sym in runningSymbols) continue // LỌC TRÙNG VỊ THẾ ĐANG MỞ
-                    val cIdx = candles.indexOfFirst { it.openTime == currentTime }
-                    if (cIdx < 22) continue // BỎ QUA HOÀN TOÀN nếu số lượng nến D1 < 22
+            for ((sym, candles) in klinesMap) {
+                if (sym in runningSymbols) continue // Không mở trùng coin đang có vị thế
+                if (isExcludedPerpetualSymbol(sym)) continue // Loại trừ BTC và stablecoins
 
-                    val k1 = candles[cIdx - 1]
-                    val k2 = candles[cIdx - 2]
-                    val prev20 = candles.subList(cIdx - 20, cIdx) // 20 nến D1 từ (t-20) đến (t-1)
-                    val sma20Volume = prev20.map { it.volume }.average()
-                    val sma20Close = prev20.map { it.close }.average()
-                    val deltaPrice = if (k1.open > 0) ((k1.close - k1.open) / k1.open) * 100.0 else 0.0
+                val cIdx = candles.indexOfFirst { it.openTime == currentTime }
+                if (cIdx < 21) continue
 
-                    // Tính biến động ATR(14)
-                    val atr14 = candles.subList(cIdx - 14, cIdx).map { maxOf(it.high - it.low, Math.abs(it.high - it.close), Math.abs(it.low - it.close)) }.average()
-                    val atrPct = if (k1.close > 0) atr14 / k1.close else 0.05
-                    val atrPct100 = atrPct * 100.0
+                val k1 = candles[cIdx - 1] // nến D1 t-1 vừa đóng lúc 00:00 UTC
+                val k0 = candles[cIdx]     // nến D1 t hiện tại
+                val prev20 = candles.subList(cIdx - 21, cIdx - 1)
+                val sma20 = prev20.map { it.close }.average()
 
-                    // 1. Close_{t-1} > SMA20(Close)
-                    // 2. Volume_{t-1} >= 2.0 * sma20Volume
-                    // 3. Delta Price D1 in [2.0%, 17.5%]
-                    // 4. %ATR(14) <= 12.0%
-                    val isTrendUp = k1.close > sma20Close
-                    val isVolSpike = sma20Volume > 0 && k1.volume >= 2.0 * sma20Volume
-                    val isDeltaOk = deltaPrice in 2.0..17.5
-                    val isAtrOk = atrPct100 <= 12.0
+                // Quy tắc chiến lược SMA20 D1 (RR 1:3):
+                // 1. Nến t-1 là nến tăng: close[t-1] > open[t-1]
+                // 2. Giá đóng cửa trên SMA20: close[t-1] > SMA20[t-1]
+                // 3. SMA20 nằm trong range nến t-1: low[t-1] <= SMA20[t-1]
+                val cond1 = k1.close > k1.open
+                val cond2 = k1.close > sma20
+                val cond3 = k1.low <= sma20
+                val entryPrice = maxOf(1e-8, k0.open)
+                val sl = k1.low
+                val riskR = entryPrice - sl
 
-                    if (isTrendUp && isVolSpike && isDeltaOk && isAtrOk) {
-                        val epsilon = 1e-6
-                        val volumeRatio = k1.volume / (sma20Volume + epsilon)
-                        val clv = ((k1.close - k1.low) / (k1.high - k1.low + epsilon)).coerceIn(0.0, 1.0)
-                        val sign = if (k1.close > k1.open && k1.close > k2.close) 1.0 else 0.0
-                        val score = volumeRatio * clv * sign
-
-                        if (score > 0.0) {
-                            candidates.add(ScoredCoin(sym, score, candles[cIdx].open, volumeRatio, deltaPrice, atrPct))
-                        }
-                    }
-                }
-
-                if (candidates.isNotEmpty()) {
-                    val sorted = candidates.sortedByDescending { it.score }
-                    val slotsAvailable = Math.floor(remainingBudget / tradeCapital).toInt().coerceAtLeast(0)
-                    val chosen = sorted.take(slotsAvailable)
-
-                    for (coin in chosen) {
-                        val entryPrice = maxOf(1e-8, coin.entryPrice)
-                        openPositions.add(
-                            SinglePositionSimulation(
-                                symbol = coin.symbol,
-                                entryTime = currentTime,
-                                entryPrice = entryPrice,
-                                margin = tradeCapital,
-                                quantity = tradeCapital / entryPrice,
-                                atrPercent = coin.atrPercent,
-                                openDayIdx = dayIdx,
-                                slotId = BasketSlotId.PRIMARY
-                            )
+                if (cond1 && cond2 && cond3 && riskR > 0.0) {
+                    val tp = entryPrice + (3.0 * riskR)
+                    // % thay đổi nến t-1 từ Open đến Close
+                    val changePctT1 = ((k1.close - k1.open) / k1.open) * 100.0
+                    candidatesMeta[sym] = changePctT1
+                    candidatesToday.add(
+                        SinglePositionSimulation(
+                            symbol = sym,
+                            entryTime = currentTime,
+                            entryPrice = entryPrice,
+                            margin = tradeCapital,
+                            quantity = tradeCapital / entryPrice,
+                            stopLoss = sl,
+                            takeProfit = tp,
+                            openDayIdx = dayIdx,
+                            slotId = BasketSlotId.PRIMARY
                         )
-                    }
+                    )
                 }
             }
+
+            // Quy tắc ưu tiên: coin nào có % thay đổi nến t-1 nhỏ nhất vào trước
+            candidatesToday.sortBy { candidatesMeta[it.symbol] ?: Double.MAX_VALUE }
+            openPositions.addAll(candidatesToday)
+
             equityCurve.add(Pair(currentTime, currentEquity))
         }
 

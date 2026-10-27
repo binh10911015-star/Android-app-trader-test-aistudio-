@@ -8,8 +8,8 @@ import java.util.concurrent.TimeUnit
 object ScanScheduler {
 
     val TIMEZONE_UTC7: TimeZone = TimeZone.getTimeZone("GMT+7")
-    // Hai khung giờ quét chuẩn của chiến lược 2 giỏ (07:00 UTC+7 và 19:00 UTC+7)
-    val SCAN_HOURS = listOf(7, 19)
+    // Giờ quét hàng ngày lúc 07:00 AM UTC+7 (00:00 UTC - thời điểm nến D1 đóng)
+    val SCAN_HOURS = listOf(7)
 
     fun getNextScanTimestamp(fromMillis: Long = System.currentTimeMillis()): Long {
         val now = Calendar.getInstance(TIMEZONE_UTC7).apply { timeInMillis = fromMillis }
@@ -26,7 +26,7 @@ object ScanScheduler {
             }
         }
 
-        // Nếu cả 2 mốc hôm nay đã qua, mốc tiếp theo là 07:00 sáng mai
+        // Mốc tiếp theo là 07:00 sáng ngày mai
         val tomorrow = Calendar.getInstance(TIMEZONE_UTC7).apply {
             timeInMillis = fromMillis
             add(Calendar.DAY_OF_YEAR, 1)
@@ -39,15 +39,11 @@ object ScanScheduler {
     }
 
     fun getNextScanSlot(targetTimestamp: Long): String {
-        val cal = Calendar.getInstance(TIMEZONE_UTC7).apply { timeInMillis = targetTimestamp }
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
-        return if (hour == 7) "SESSION_07AM" else "SESSION_19PM"
+        return "SESSION_D1_07AM"
     }
 
     fun getNextScanHourText(targetTimestamp: Long): String {
-        val cal = Calendar.getInstance(TIMEZONE_UTC7).apply { timeInMillis = targetTimestamp }
-        val hour = cal.get(Calendar.HOUR_OF_DAY)
-        return if (hour == 7) "07:00 UTC+7 (Đóng nến D1)" else "19:00 UTC+7 (Đầu phiên Mỹ)"
+        return "07:00 AM UTC+7 (Đóng nến D1)"
     }
 
     fun formatCountdown(targetTimestamp: Long, currentTimestamp: Long = System.currentTimeMillis()): String {

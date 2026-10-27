@@ -1,129 +1,103 @@
-# Kế Hoạch Triển Khai: Chandelier Exit Engine Theo Giá Tuyệt Đối Từ Đỉnh D1 & Cơ Chế Crash Recovery
+# Kế Hoạch Triển Khai: Ưu Tiên Coin Có % Thay Đổi Nến t-1 Nhỏ Nhất & Quy Tắc Khớp Lệnh Thận Trọng Cho Chiến Lược SMA20 D1
 
-Triển khai chuyển đổi toàn diện logic Trailing Stop sang **Chandelier Exit Engine theo đơn vị giá tuyệt đối** cho từng vị thế riêng lẻ (`Single Position`), áp dụng nguyên tắc **Ratchet (chỉ tiến lên theo đỉnh, không bao giờ lùi)**, bộ đệm Debounce 2 chu kỳ chống râu nến, và module **Crash Recovery** tự động dựng lại đỉnh lịch sử từ nến 1H khi khởi động lại ứng dụng.
-
----
-
-## User Review & Critical Decisions
-
-> [!IMPORTANT]
-> **Các nguyên tắc cốt lõi đã được chuẩn hóa theo đặc tả kỹ thuật:**
-> 1. **Giá trị ATR(14) D1 cố định**: Lưu trữ trường `atr14D1` trực tiếp vào bảng `trade_positions` của Room DB khi mở vị thế. Giá trị này được giữ nguyên suốt vòng đời của lệnh để làm mốc biên độ tuyệt đối.
-> 2. **Chuyển đổi hoàn toàn sang Giá Tuyệt Đối**: Thay thế công thức tính theo % ROI trước đây bằng công thức giá đô-la tuyệt đối:
->    - Ngưỡng kích hoạt: $\text{activationPrice} = \text{entryPrice} + 1.5 \times \text{atr14D1}$
->    - Sàn khóa lãi net: $\text{floorLockPrice} = \text{entryPrice} \times 1.005$ (+0.5% net)
->    - Mức Stop Chandelier ($k=2.0$): $\text{calculatedStopPrice} = \text{highestHighPrice} - 2.0 \times \text{atr14D1}$
->    - Nguyên tắc Ratchet: $\text{trailingStopPrice} = \max(\text{trailingStopPrice},\; \max(\text{floorLockPrice}, \text{calculatedStopPrice}))$
-> 3. **Crash Recovery an toàn**: Khởi động lại hệ thống sẽ tự động quét nến 1H (`1h`) từ `entryTime`, cập nhật `highestHighPrice`, tính sẵn `trailingStopPrice` và lưu Room DB trước khi bật luồng Realtime Polling.
-> 4. **Debounce 2 chu kỳ (6 – 10s)**: Chỉ đóng lệnh khi giá duy trì $\le \text{trailingStopPrice}$ qua 2 chu kỳ liên tiếp; nếu giá giật rút chân lên trên Stop, reset `debounceCounter = 0`.
-> 5. **Thoát lệnh tuần tự**: Giãn cách 1.200 ms giữa các lệnh `ORDER_TYPE_MARKET` (`side = "SELL"`, `reduceOnly = true`).
+Tài liệu này xác định chi tiết các quy tắc sắp xếp ưu tiên vào lệnh và quy tắc tất toán lệnh trong backtest cho Chiến lược SMA20 D1 (RR 1:3), áp dụng thống nhất cho cả **hệ thống quét & mở vị thế thực tế** lẫn **công cụ kiểm thử lịch sử (Backtest)**.
 
 ---
 
-## 1. Overview & Core Concept
+## 1. Quyết Định & Quy Tắc Cốt Lõi Đã Thống Nhất
 
-- **Mục tiêu**: Loại bỏ hoàn toàn sự phụ thuộc vào % ROI tương đối vốn dễ bị méo mó do biến động biên độ nến khác nhau giữa các coin; thay vào đó sử dụng biến động thực tế nến ngày $ATR(14)_{D1}$ của chính coin đó để tính toán mức chặn dừng lỗ trượt (Chandelier Exit).
-- **Vòng đời vị thế (Single Position Lifecycle)**:
-  - Khởi tạo: Mở lệnh 5.1 USDT (Long Cross 1x) $\to$ Lưu `entryPrice`, `atr14D1`, `highestHighPrice = entryPrice`, `trailingStopPrice = 0.0`, `isTrailingActive = false`, `debounceCounter = 0`.
-  - Giám sát thời gian thực: Cập nhật đỉnh cao nhất theo Mark Price từ `GET /fapi/v1/premiumIndex`.
-  - Kích hoạt Trailing: Khi `markPrice >= entryPrice + 1.5 * atr14D1`.
-  - Neo Stop một chiều: Khi đỉnh lập mức cao mới, đường Stop tự động kéo lên theo mốc $\text{highestHighPrice} - 2.0 \times \text{atr14D1}$ (nhưng không thấp hơn $\text{entryPrice} \times 1.005$).
-  - Thoát lệnh an toàn: Debounce 2 chu kỳ hoặc Smart Timeout 7 ngày (168 giờ) nếu vị thế đang lỗ.
+1. **Công thức tính % thay đổi nến $t-1$**:
+   $$\text{changePct}_{t-1} = \frac{\text{Close}_{t-1} - \text{Open}_{t-1}}{\text{Open}_{t-1}} \times 100\%$$
+   - Đo lường mức độ biến động thực tế từ lúc mở nến đến lúc đóng nến của nến ngày $D1$ liền trước ($t-1$, nến đóng lúc 00:00 UTC / 07:00 AM UTC+7).
+   - Vì điều kiện chiến lược yêu cầu nến $t-1$ là nến tăng ($\text{Close}_{t-1} > \text{Open}_{t-1}$), nên $\text{changePct}_{t-1} > 0$.
 
----
+2. **Tiêu chí ưu tiên coin vào lệnh**:
+   - **Tăng dần (Ascending Sort)**: Coin nào có $\text{changePct}_{t-1}$ **nhỏ nhất** sẽ đứng đầu danh sách và được mở lệnh trước tiên.
+   - **Mục tiêu chiến lược**: Ưu tiên những coin vừa mới bứt phá nhẹ nhàng qua SMA20 (nến tăng vừa phải, ít bị overextended / quá mua) so với những coin đã pump nến quá dài, qua đó khoảng cách cắt lỗ $R = \text{Entry} - \text{Low}_{t-1}$ hợp lý hơn và xác suất chạm TP $3R$ cao hơn.
 
-## 2. User Experience & Visual Design
+3. **Phạm vi áp dụng đồng bộ**:
+   - **Quét tín hiệu & Mở vị thế thực tế** (`MainViewModel.kt` & `MarketScreen.kt`): Sắp xếp danh sách tín hiệu theo thứ tự ưu tiên tăng dần của $\text{changePct}_{t-1}$, hiển thị số thứ tự ưu tiên trên giao diện, và gửi lệnh theo đúng thứ tự này.
+   - **Hệ thống Backtest** (`CryptoRepository.kt`): Tại mỗi ngày nến $D1$, các coin thỏa mãn điều kiện SMA20 D1 sẽ được gom và sắp xếp theo $\text{changePct}_{t-1}$ tăng dần trước khi mở vị thế mô phỏng.
 
-- **Màn hình Danh sách Vị Thế (`PositionsScreen.kt`)**:
-  - **Mức đỉnh cao nhất**: Hiển thị rõ giá trị đỉnh đã đạt được (`Đỉnh: $X.XXXX`).
-  - **Trạng thái Chandelier Exit**:
-    - Khi chưa kích hoạt: Hiển thị mốc cần chạm để kích hoạt (`Kích hoạt tại: $X.XXXX`).
-    - Khi đã kích hoạt (`isTrailingActive == true`): Hiển thị huy hiệu `CHANDELIER ACTIVE` kèm mức giá dừng lãi hiện tại (`Stop: $X.XXXX`).
-  - **Chỉ báo Debounce lọc râu nến**: Khi giá chạm ngưỡng Stop ở chu kỳ 1, hiển thị cảnh báo `Đang lọc râu ảo (1/2)`.
-- **Cập nhật Cài đặt & Thông báo**:
-  - Thông báo Alert rõ ràng lý do thoát: `CHANDELIER_TRAILING_HIT` hoặc `TIMEOUT_7D_LOSS_CUT`.
+4. **Quy tắc khớp lệnh kiểm thử thận trọng (Backtest Worst-Case Rule)**:
+   - **Nếu trong cùng một ngày nến D1 mà giá vừa chạm TP vừa chạm SL**: Hệ thống backtest **bắt buộc ghi nhận lệnh đó là SL (Cắt lỗ)**.
+   - Cơ chế này mô phỏng kịch bản bất lợi thực tế trong ngày khi thị trường biến động mạnh: giá có thể sụt giảm quét SL trước khi hồi phục lên TP. Giá thoát lệnh được tính bằng chính xác mức Stop Loss (`pos.stopLoss`).
 
 ---
 
-## 3. Key Product Decisions & Trade-Offs
-
-- **Quyết định 1: Cấu trúc thực thể Room DB**:
-  - Bổ sung 5 trường vào `@Entity data class TradePosition`: `atr14D1`, `highestHighPrice`, `trailingStopPrice`, `isTrailingActive`, `debounceCounter`.
-  - Nâng `AppDatabase` lên `version = 4` với `fallbackToDestructiveMigration()`.
-- **Quyết định 2: Điểm neo Chandelier tính theo giá tuyệt đối**:
-  - *Ưu điểm*: Chính xác tuyệt đối theo biên độ dao động thị trường của từng coin, không bị phụ thuộc vào đòn bẩy hay vốn mở lệnh.
-- **Quyết định 3: Nguyên tắc Ratchet**:
-  - Giá trailing stop chỉ tăng, không bao giờ giảm kể cả khi giá coin điều chỉnh giảm mạnh sau khi lập đỉnh.
-
----
-
-## 4. Technical Architecture & Data Strategy
+## 2. Kiến Trúc & Luồng Xử Lý
 
 ```
-┌────────────────────────────────────────────────────────┐
-│            REALTIME REST POLLING (3.5s/lần)            │
-│            GET /fapi/v1/premiumIndex                   │
-└──────────────────────────┬─────────────────────────────┘
-                           │ Lấy markPrice từng coin
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ 1. Cập nhật Đỉnh cao nhất:                             │
-│    markPrice > highestHighPrice                        │
-│    -> highestHighPrice = markPrice                     │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ 2. Kiểm tra Kích hoạt Trailing (Mốc A):                │
-│    activationPrice = entryPrice + (1.5 * atr14D1)      │
-│    markPrice >= activationPrice -> isTrailingActive=true│
-└──────────────────────────┬─────────────────────────────┘
-                           │ Khi isTrailingActive == true
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ 3. Tính mức Chandelier Stop & Nguyên tắc Ratchet:      │
-│    floorLockPrice = entryPrice * 1.005                 │
-│    calculatedStop = highestHighPrice - (2.0 * atr14D1) │
-│    newStop = max(floorLockPrice, calculatedStop)       │
-│    if (newStop > trailingStopPrice)                    │
-│        trailingStopPrice = newStop                     │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ 4. Bộ đệm Debounce chống râu ảo (6 - 10s):             │
-│    markPrice <= trailingStopPrice:                     │
-│      - Chu kỳ 1: debounceCounter = 1 (Chờ)             │
-│      - Chu kỳ 2: debounceCounter = 2                   │
-│        -> enqueueExitOrder("CHANDELIER_TRAILING_HIT")  │
-│    markPrice > trailingStopPrice:                      │
-│      - debounceCounter = 0 (Reset)                     │
-└──────────────────────────┬─────────────────────────────┘
-                           │
-                           ▼
-┌────────────────────────────────────────────────────────┐
-│ 5. Thoát lệnh tuần tự (Sequential Market Exit):        │
-│    • Lệnh POST /fapi/v1/order: type=MARKET, side=SELL, │
-│      reduceOnly=true                                   │
-│    • Giãn cách an toàn 1.2s giữa các lệnh              │
-│    • Cập nhật Room DB status = "CLOSED"                │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    QUÉT TÍN HIỆU SMA20 D1 (LÚC 07:00 AM UTC+7)              │
+│       Điều kiện: Close[t-1] > Open[t-1] & Close[t-1] > SMA20 & Low[t-1] <= SMA20     │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│             TÍNH % THAY ĐỔI NẾN t-1: (Close[t-1] - Open[t-1]) / Open[t-1]   │
+└──────────────────────────────────────┬──────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────┐
+│         SẮP XẾP TĂNG DẦN (ASCENDING): Coin có % nhỏ nhất lên đầu tiên        │
+└──────────────────┬───────────────────────────────────────┬──────────────────┘
+                   │                                       │
+                   ▼                                       ▼
+┌──────────────────────────────────────┐┌──────────────────────────────────────┐
+│  QUÉT & MỞ VỊ THẾ THỰC TẾ (LIVE/BOT) ││      BACKTEST LỊCH SỬ (SIMULATION)   │
+├──────────────────────────────────────┤├──────────────────────────────────────┤
+│ 1. `d1Matches.sortBy { it.score }`   ││ 1. Gom candidate tín hiệu trong ngày │
+│ 2. `openAllScannedPositions` duyệt   ││ 2. `candidatesToday.sortBy { ... }`  │
+│    tuần tự từ index 0 (ưu tiên nhất) ││ 3. Vào lệnh lần lượt theo thứ tự nhỏ │
+│ 3. UI Market: hiển thị badge thứ hạng││    nhất vào trước                    │
+│    và % thay đổi nến t-1             ││ 4. KIỂM THỬ: Nếu cùng chạm cả TP & SL│
+│                                      ││    -> BẮT BUỘC TÍNH LÀ CHẠM SL!      │
+└──────────────────────────────────────┘└──────────────────────────────────────┘
 ```
 
-### Các bước chỉnh sửa mã nguồn cụ thể:
+---
 
-1. **`TradeModels.kt` & `AppDatabase.kt`**:
-   - Thêm `atr14D1: Double = 0.0`, `highestHighPrice: Double = entryPrice`, `trailingStopPrice: Double = 0.0`, `isTrailingActive: Boolean = false`, `debounceCounter: Int = 0` vào `TradePosition`.
-   - Nâng cấp `AppDatabase` version = 4.
-2. **`BinanceClient.kt`**:
-   - Thêm hỗ trợ tham số `startTime: Long? = null` vào hàm `fetchKlinesWithFallback(symbol, interval, limit, startTime)`.
-3. **`CryptoRepository.kt`**:
-   - Trong `executeSimulatedBuy`: Nhận và lưu `atr14D1` thực tế của coin.
-   - Thêm hàm `recoverOpenPositionsChandelierState()`: Duyệt qua các vị thế `OPEN`, fetch nến 1H từ `entryTime`, tính `highestHighPrice = maxOf(highestHighPrice, maxHistoricalHigh)`, tính `trailingStopPrice` theo Chandelier Stop, và lưu vào Room DB.
-4. **`MainViewModel.kt`**:
-   - Khi khởi động (`init`), gọi `recoverOpenPositionsChandelierState()` để phục hồi đỉnh trước khi polling.
-   - Viết lại hàm `evaluateSinglePositionExits()` tuân thủ 100% công thức Chandelier Exit theo giá tuyệt đối từ đỉnh, Ratchet rule, Debounce 2 chu kỳ, và Smart Timeout 7 ngày.
-   - Viết hàm `executeSequentialExits()` với độ trễ 1.200 ms an toàn.
-5. **`PositionsScreen.kt`**:
-   - Cập nhật giao diện thẻ vị thế hiển thị đầy đủ: `highestHighPrice`, `trailingStopPrice`, nhãn `CHANDELIER ACTIVE` và trạng thái `Debounce (1/2)`.
-6. **Biên dịch & Xác minh**: Chạy `compile_applet` để đảm bảo 0 lỗi biên dịch.
+## 3. Các Bước Triển Khai Chi Tiết
+
+### Bước 1: Cập nhật Logic Quét và Mở Lệnh (`MainViewModel.kt`)
+1. **Trong hàm `scanAllFuturesCoins`**:
+   - Tính toán $\text{changePct}_{t-1} = \frac{\text{Close}_{t-1} - \text{Open}_{t-1}}{\text{Open}_{t-1}} \times 100.0$.
+   - Gán `score = changePctT1` cho `BinanceTicker`.
+   - Sắp xếp danh sách `d1Matches.sortBy { it.score }` (ưu tiên % nhỏ nhất trước).
+2. **Trong hàm `applyFilters`**:
+   - Khi bộ lọc là `MarketFilter.BULLISH_SIGNAL`, sắp xếp danh sách hiển thị theo `score` tăng dần để người dùng dễ dàng theo dõi coin nào có độ ưu tiên cao nhất.
+3. **Trong hàm `openAllScannedPositions`**:
+   - Đảm bảo danh sách `symbolsToOpen` luôn giữ trật tự tăng dần theo `score` (`.sortedBy { it.score }`), đảm bảo coin có % thay đổi nhỏ nhất được gửi lệnh trước.
+
+### Bước 2: Cập nhật Trình Mô Phỏng Backtest (`CryptoRepository.kt`)
+1. **Ưu tiên tín hiệu vào lệnh**:
+   - Tại mỗi bước nến ngày $D1$ (`dayIdx`), khởi tạo danh sách tạm `candidatesToday`.
+   - Khi một coin thỏa mãn cả 3 điều kiện SMA20 D1, tính `changePctT1 = ((k1.close - k1.open) / k1.open) * 100.0`.
+   - Sắp xếp `candidatesToday.sortBy { it.changePctT1 }` trước khi đưa vào danh sách `openPositions`.
+2. **Quy tắc thoát lệnh kiểm thử**:
+   - Kiểm tra điều kiện:
+     ```kotlin
+     if (candleToday.low <= pos.stopLoss && candleToday.high >= pos.takeProfit) {
+         // CÙNG CHẠM CẢ TP VÀ SL TRONG NGÀY -> GHI NHẬN LÀ SL (CẮT LỖ)
+         exitReason = "SL (Cùng chạm TP & SL)"
+         exitPrice = pos.stopLoss
+     } else if (candleToday.low <= pos.stopLoss) {
+         exitReason = "SL (-1R)"
+         exitPrice = minOf(candleToday.open, pos.stopLoss)
+     } else if (candleToday.high >= pos.takeProfit) {
+         exitReason = "TP (+3R)"
+         exitPrice = maxOf(candleToday.open, pos.takeProfit)
+     }
+     ```
+   - Đảm bảo giá trị `exitPrice` khi chạm SL luôn được ghi nhận chính xác ở mức `pos.stopLoss` (hoặc thấp hơn nếu nến mở cửa Gap Down dưới SL).
+
+### Bước 3: Cập nhật Giao Diện Danh Sách Tín Hiệu (`MarketScreen.kt`)
+1. **Thẻ mô tả chiến lược SMA20 D1**:
+   - Bổ sung chú thích rõ ràng: *"Quy tắc ưu tiên: Coin có % thay đổi nến t-1 nhỏ nhất vào trước"*.
+2. **Thẻ coin tín hiệu (`CoinItemCard`)**:
+   - Khi đang ở tab tín hiệu `BULLISH_SIGNAL`, hiển thị nhãn `% nến t-1` và thứ tự ưu tiên (ví dụ: `#1 - Nến t-1: +0.85%`, `#2 - Nến t-1: +1.20%`).
+
+### Bước 4: Biên Dịch & Xác Nhận Kiểm Thử
+- Chạy `compile_applet` để xác minh dự án không có lỗi cú pháp hoặc tương thích.
+- Kiểm tra tính nhất quán giữa UI, Live Bot và Backtest Engine.

@@ -132,7 +132,9 @@ data class TradePosition(
     val highestHighPrice: Double = entryPrice,
     val trailingStopPrice: Double = 0.0,
     val isTrailingActive: Boolean = false,
-    val debounceCounter: Int = 0
+    val debounceCounter: Int = 0,
+    val signalLowD1: Double = 0.0,
+    val riskR: Double = 0.0
 ) {
     companion object {
         const val STATUS_OPEN = "OPEN"
@@ -281,55 +283,61 @@ enum class VolumeType {
 }
 
 enum class TradingStrategyType(val displayName: String, val description: String) {
+    SMA20_D1_RR3(
+        "Chiến lược SMA20 D1 (RR 1:3)",
+        "Nến D1, mua altcoin khi nến t-1 tăng (Close > Open), Close > SMA20 và Low <= SMA20. SL = Low(t-1), TP = 3R cố định (Không trailing stop, không timeout)."
+    ),
     D1_SMA20_VOLUME(
         "Chiến lược D1 SMA20 Breakout & Bùng Nổ Khối Lượng (Volume >= 2x)",
         "Nến D1, đường SMA20 tính theo Giá Mở Cửa (Open). Mua khi Giá >= SMA20(D1) và Volume D1 >= 2x ngày hôm trước."
     ),
     DUAL_BASKET_MOMENTUM_V2(
-        "Chiến lược Dual Basket Momentum v2.0 (Khuyến nghị)",
-        "Quản lý 2 giỏ lệnh Primary (07:00) & Secondary (19:00 UTC+7). Lọc BTC Regime + RVol >= 2.0x, ATR trailing take-profit, timeout 72h."
+        "Chiến lược Dual Basket Momentum v2.0",
+        "Quản lý 2 giỏ lệnh Primary (07:00) & Secondary (19:00 UTC+7)."
     )
 }
 
 data class TradeSettings(
     val autoTradeEnabled: Boolean = false,
-    val selectedStrategy: TradingStrategyType = TradingStrategyType.DUAL_BASKET_MOMENTUM_V2,
-    val simulatedBalanceUsdt: Double = 10000.0,
+    val selectedStrategy: TradingStrategyType = TradingStrategyType.SMA20_D1_RR3,
+    val simulatedBalanceUsdt: Double = 1000.0,
     val leverage: Int = 1,
-    // Thông số chiến lược toàn diện (đồng bộ 2 chiều với BacktestConfig, không có SL/TP/Timeout)
+    // Thông số chiến lược SMA20 D1 (RR 1:3)
     val capitalPerTradeUsdt: Double = 5.1,
-    val perTradePct: Double = 0.015,
-    val maxPortfolioAllocation: Double = 0.60,
-    val minQuoteVolume24h: Double = 5_000_000.0,
-    val minVolRatio: Double = 2.0,
-    val minD1ChangePct: Double = 2.0,
-    val maxD1ChangePct: Double = 17.5,
-    val maxAtrPercent: Double = 0.12,
-    val slotScanMode: String = "DUAL",
-    val kTrail: Double = 0.25,
-    val enableTrailingStop: Boolean = true,
-    val enableFloorLock: Boolean = true,
-    val floorLockMinRoi: Double = 0.005,
-    // V2.2: BỘ LỌC THỊ TRƯỜNG BTC DÀI HẠN (BTC REGIME)
-    val enableBtcMacroFilter: Boolean = true,
+    val perTradePct: Double = 0.0051,
+    val maxPortfolioAllocation: Double = 1.0, // Không giới hạn số lượng vị thế mở đồng thời
+    val minQuoteVolume24h: Double = 0.0, // Quét toàn bộ altcoin USDT-M perpetual thỏa điều kiện
+    val rrRatio: Double = 3.0, // Tỷ lệ R:R cố định 1:3
+    val smaPeriod: Int = 20, // Đường trung bình SMA20
+    val minVolRatio: Double = 1.0,
+    val minD1ChangePct: Double = 0.0,
+    val maxD1ChangePct: Double = 100.0,
+    val maxAtrPercent: Double = 1.0,
+    val slotScanMode: String = "DAILY_07AM",
+    val kTrail: Double = 0.0,
+    val enableTrailingStop: Boolean = false, // Tắt Trailing Stop
+    val enableFloorLock: Boolean = false, // Tắt FloorLock
+    val floorLockMinRoi: Double = 0.0,
+    // BỘ LỌC BTC ĐÃ ĐƯỢC TẮT THEO YÊU CẦU CỦA NGƯỜI DÙNG ("bỏ bộ lọc btc")
+    val enableBtcMacroFilter: Boolean = false,
     val btcEmaFastPeriod: Int = 20,
     val btcEmaSlowPeriod: Int = 50,
-    val enableBtcCircuitBreaker: Boolean = true,
-    val btcCircuitBreakerPct: Double = -3.5,
-    // V2.2: CƠ CHẾ SMART TIMEOUT LINH HOẠT
-    val enableSmartTimeout: Boolean = true,
-    val timeoutDays: Int = 7,
-    val disableTimeoutWhenTrailing: Boolean = true,
-    val timeoutLossFloorPct: Double = -0.025,
-    val kTpAtr: Double = 0.50,
-    val minActivationRoi: Double = 0.015,
+    val enableBtcCircuitBreaker: Boolean = false,
+    val btcCircuitBreakerPct: Double = -100.0,
+    // THOÁT LỆNH THEO THỜI GIAN ĐÃ ĐƯỢC TẮT THEO ĐẶC TẢ CHIẾN LƯỢC MỚI (chỉ thoát khi chạm SL hoặc TP)
+    val enableSmartTimeout: Boolean = false,
+    val timeoutDays: Int = 0,
+    val disableTimeoutWhenTrailing: Boolean = false,
+    val timeoutLossFloorPct: Double = 0.0,
+    val kTpAtr: Double = 0.0,
+    val minActivationRoi: Double = 0.0,
     // Trường tương thích phụ
-    val volumeMultiplierThreshold: Double = 2.0,
-    val portfolioTakeProfitPercent: Double = 4.0,
+    val volumeMultiplierThreshold: Double = 1.0,
+    val portfolioTakeProfitPercent: Double = 0.0,
     val volumeType: VolumeType = VolumeType.FIXED_AMOUNT,
-    val volumePercentOfBalance: Double = 1.5,
+    val volumePercentOfBalance: Double = 0.51,
     val fixedVolumeUsdt: Double = 5.1,
-    val enableDualBasket: Boolean = true,
+    val enableDualBasket: Boolean = false,
     val timeframe: String = "1d"
 ) {
     fun toBacktestConfig(): BacktestConfig {
@@ -359,7 +367,9 @@ data class TradeSettings(
             kTpAtr = kTpAtr,
             minActivationRoi = minActivationRoi,
             capitalPerTradeUsdt = capitalPerTradeUsdt,
-            useFixedCapitalPerTrade = true
+            useFixedCapitalPerTrade = true,
+            rrRatio = rrRatio,
+            smaPeriod = smaPeriod
         )
     }
 
@@ -391,7 +401,9 @@ data class TradeSettings(
             minActivationRoi = config.minActivationRoi,
             capitalPerTradeUsdt = if (config.capitalPerTradeUsdt > 0.0) config.capitalPerTradeUsdt else 5.1,
             fixedVolumeUsdt = if (config.capitalPerTradeUsdt > 0.0) config.capitalPerTradeUsdt else 5.1,
-            volumeMultiplierThreshold = config.minVolRatio
+            volumeMultiplierThreshold = config.minVolRatio,
+            rrRatio = config.rrRatio,
+            smaPeriod = config.smaPeriod
         )
     }
 
@@ -403,7 +415,7 @@ data class TradeSettings(
                 if (calculated > 0.0) calculated else 5.1
             }
             VolumeType.FIXED_AMOUNT -> {
-                val target = if (capitalPerTradeUsdt > 0.0) capitalPerTradeUsdt else fixedVolumeUsdt
+                val target = if (fixedVolumeUsdt > 0.0 && fixedVolumeUsdt != 5.1) fixedVolumeUsdt else capitalPerTradeUsdt
                 if (target > 0.0) target else 5.1
             }
         }
@@ -535,7 +547,9 @@ data class BacktestConfig(
     val kTpAtr: Double = 0.50,                      // Hệ số kích hoạt Trailing TP
     val minActivationRoi: Double = 0.015,           // Mức kích hoạt sàn (+1.5%)
     val capitalPerTradeUsdt: Double = 5.1,          // Vốn vào lệnh cố định (mặc định 5.1 USDT)
-    val useFixedCapitalPerTrade: Boolean = true     // Ưu tiên vốn cố định USDT
+    val useFixedCapitalPerTrade: Boolean = true,    // Ưu tiên vốn cố định USDT
+    val rrRatio: Double = 3.0,                      // Tỷ lệ R:R cố định 1:3
+    val smaPeriod: Int = 20                         // Chu kỳ SMA (mặc định 20)
 ) {
     companion object {
         const val BASE_MAINNET_URL = "https://fapi.binance.com"

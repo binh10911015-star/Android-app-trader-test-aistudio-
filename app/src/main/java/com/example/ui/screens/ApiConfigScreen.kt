@@ -86,6 +86,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.model.BinanceAccountVerificationResult
 import com.example.model.TradeSettings
+import com.example.model.TradingStrategyType
 import com.example.ui.MainViewModel
 import com.example.ui.theme.CryptoGold
 import com.example.ui.theme.CryptoGreen
@@ -247,8 +248,8 @@ fun ApiConfigScreen(
 
 /**
  * Tab Cài Đặt Chiến Lược Giao Dịch
- * Đầy đủ bộ thông số tương tự Backtest, loại bỏ hoàn toàn SL, Fixed TP, Timeout, BTC Breaker.
- * Đồng bộ 2 chiều tự động với Backtest.
+ * Tab Cài Đặt Chiến Lược Giao Dịch
+ * Tham số chuẩn của Chiến Lược SMA20 D1 (RR 1:3), đồng bộ tự động 2 chiều với Backtest.
  */
 @Composable
 private fun StrategySettingsContent(
@@ -262,42 +263,11 @@ private fun StrategySettingsContent(
     var capitalPerTradeUsdtText by remember(currentSettings.capitalPerTradeUsdt) {
         mutableStateOf(if (currentSettings.capitalPerTradeUsdt > 0.0) currentSettings.capitalPerTradeUsdt.toString() else "5.1")
     }
-    var maxAllocationPctText by remember(currentSettings.maxPortfolioAllocation) {
-        mutableStateOf((currentSettings.maxPortfolioAllocation * 100.0).toString())
+    var smaPeriodText by remember(currentSettings.smaPeriod) {
+        mutableStateOf(currentSettings.smaPeriod.toString())
     }
-
-    var minQuoteVolumeText by remember(currentSettings.minQuoteVolume24h) {
-        mutableStateOf(currentSettings.minQuoteVolume24h.toLong().toString())
-    }
-    var minVolRatioText by remember(currentSettings.minVolRatio) {
-        mutableStateOf(currentSettings.minVolRatio.toString())
-    }
-    var minD1ChangePctText by remember(currentSettings.minD1ChangePct) {
-        mutableStateOf(currentSettings.minD1ChangePct.toString())
-    }
-    var maxD1ChangePctText by remember(currentSettings.maxD1ChangePct) {
-        mutableStateOf(currentSettings.maxD1ChangePct.toString())
-    }
-    var maxAtrPctText by remember(currentSettings.maxAtrPercent) {
-        mutableStateOf((currentSettings.maxAtrPercent * 100.0).toString())
-    }
-
-    var slotScanMode by remember(currentSettings.slotScanMode) {
-        mutableStateOf(currentSettings.slotScanMode)
-    }
-
-    // Pure Trailing Stop & FloorLock (KHÔNG CÒN STOP LOSS, TIMEOUT, TP CỐ ĐỊNH)
-    var enableTrailingStop by remember(currentSettings.enableTrailingStop) {
-        mutableStateOf(currentSettings.enableTrailingStop)
-    }
-    var enableFloorLock by remember(currentSettings.enableFloorLock) {
-        mutableStateOf(currentSettings.enableFloorLock)
-    }
-    var kTrailText by remember(currentSettings.kTrail) {
-        mutableStateOf(currentSettings.kTrail.toString())
-    }
-    var floorLockMinRoiText by remember(currentSettings.floorLockMinRoi) {
-        mutableStateOf((currentSettings.floorLockMinRoi * 100.0).toString())
+    var rrRatioText by remember(currentSettings.rrRatio) {
+        mutableStateOf(currentSettings.rrRatio.toString())
     }
 
     var saveSuccessMsg by remember { mutableStateOf<String?>(null) }
@@ -329,13 +299,13 @@ private fun StrategySettingsContent(
                 Spacer(modifier = Modifier.width(10.dp))
                 Column {
                     Text(
-                        text = "Đồng Bộ 2 Chiều Tự Động Với Backtest",
+                        text = "Đồng Bộ Tự Động Với Backtest",
                         color = CryptoGold,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "Mọi thay đổi lưu tại đây tự động cập nhật sang Thẻ Backtest. Thoát lệnh đơn nhất: FloorLock (+0.5%) & ATR Trailing Stop.",
+                        text = "Mọi thay đổi lưu tại đây tự động cập nhật sang Thẻ Backtest. Chiến lược: SMA20 D1 (RR 1:3), SL Đáy t-1, TP 3R.",
                         color = Color.White.copy(alpha = 0.85f),
                         fontSize = 10.5.sp,
                         lineHeight = 14.sp
@@ -345,7 +315,7 @@ private fun StrategySettingsContent(
         }
 
         // ==========================================
-        // NHÓM 1: KHUNG THỜI GIAN & SLOT QUÉT
+        // NHÓM 1: THÔNG TIN CHIẾN LƯỢC SMA20 D1
         // ==========================================
         Card(
             modifier = Modifier.fillMaxWidth().testTag("strategy_group_1_card"),
@@ -357,7 +327,7 @@ private fun StrategySettingsContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.Schedule, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "1. Kiến Trúc Vị Thế Độc Lập (Single Position)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "1. Chiến Lược SMA20 D1 (RR 1:3)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -370,10 +340,10 @@ private fun StrategySettingsContent(
                 ) {
                     Column(modifier = Modifier.padding(10.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, tint = CryptoGreen, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = "CHẾ ĐỘ QUẢN LÝ TỪNG LỆNH ĐỘC LẬP",
+                                text = "NGUYÊN TẮC HOẠT ĐỘNG",
                                 color = CryptoGold,
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -381,7 +351,7 @@ private fun StrategySettingsContent(
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         Text(
-                            text = "• Vốn cố định: Đúng 5.1 USDT / vị thế (Long Cross 1x)\n• Khống chế trần: Tổng margin < 60% Total Equity\n• Lịch quét: 07:00:00 AM (nến D1 đóng) & 19:00:00 PM UTC+7\n• Thoát lệnh độc lập: ATR Trailing + Debounce 2 chu kỳ (6-10s) + Timeout 7 ngày (168h) chỉ khi lỗ",
+                            text = "• Quét nến D1: 07:00 AM UTC+7 (00:00 UTC) hàng ngày\n• Điều kiện vào lệnh: Nến t-1 tăng (Close > Open), Close > SMA20 và Low <= SMA20\n• Stop Loss (SL): Đáy nến tín hiệu t-1 (Low[t-1])\n• Take Profit (TP): Cố định 3R (Entry + 3R)\n• Danh mục: Mở tất cả coin đạt chuẩn, không giới hạn trần. Bỏ bộ lọc BTC.",
                             color = TextSecondary,
                             fontSize = 11.sp,
                             lineHeight = 16.sp
@@ -392,7 +362,7 @@ private fun StrategySettingsContent(
         }
 
         // ==========================================
-        // NHÓM 2: QUẢN TRỊ VỐN & PHÂN BỔ (MAX 60% ALLOCATION)
+        // NHÓM 2: QUẢN TRỊ VỐN & THAM SỐ
         // ==========================================
         Card(
             modifier = Modifier.fillMaxWidth().testTag("strategy_group_2_card"),
@@ -404,7 +374,7 @@ private fun StrategySettingsContent(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(imageVector = Icons.Default.AccountBalanceWallet, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "2. Quản Trị Vốn & Phân Bổ (Spot / Cross 1x)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(text = "2. Quản Trị Vốn & Tham Số (Long Cross 1x)", color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
 
                 Spacer(modifier = Modifier.height(8.dp))
@@ -420,8 +390,8 @@ private fun StrategySettingsContent(
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CryptoGold,
                         unfocusedBorderColor = DarkBorder,
-                        focusedTextColor = Color.White,
-                        unfocusedTextColor = Color.White
+                        focusedTextColor = TextPrimary,
+                        unfocusedTextColor = TextPrimary
                     )
                 )
 
@@ -440,26 +410,26 @@ private fun StrategySettingsContent(
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = CryptoGold,
                                 unfocusedBorderColor = DarkBorder,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
                             )
                         )
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Trần danh mục (%) (Tối đa 60%)", color = TextMuted, fontSize = 11.sp)
+                        Text(text = "Chu kỳ SMA (Nến D1)", color = TextMuted, fontSize = 11.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
-                            value = maxAllocationPctText,
-                            onValueChange = { maxAllocationPctText = it },
+                            value = smaPeriodText,
+                            onValueChange = { smaPeriodText = it },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedBorderColor = CryptoGold,
                                 unfocusedBorderColor = DarkBorder,
-                                focusedTextColor = Color.White,
-                                unfocusedTextColor = Color.White
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
                             )
                         )
                     }
@@ -490,200 +460,41 @@ private fun StrategySettingsContent(
                         }
                     }
                 }
-            }
-        }
-
-        // ==========================================
-        // NHÓM 3: BỘ LỌC MACRO & CHỌN COIN
-        // ==========================================
-        Card(
-            modifier = Modifier.fillMaxWidth().testTag("strategy_group_3_card"),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-            border = BorderStroke(1.dp, DarkBorder)
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.FilterAlt, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "3. Bộ Lọc Macro & Dòng Tiền", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Min Vol 24h (USDT)", color = TextMuted, fontSize = 11.sp)
+                        Text(text = "Tỷ lệ Chốt Lời RR", color = TextMuted, fontSize = 11.sp)
                         Spacer(modifier = Modifier.height(4.dp))
                         OutlinedTextField(
-                            value = minQuoteVolumeText,
-                            onValueChange = { minQuoteVolumeText = it },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Ngưỡng RVol(20) tối thiểu", color = TextMuted, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = minVolRatioText,
-                            onValueChange = { minVolRatioText = it },
+                            value = rrRatioText,
+                            onValueChange = { rrRatioText = it },
                             modifier = Modifier.fillMaxWidth().height(48.dp),
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Biên độ D1 min (%)", color = TextMuted, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = minD1ChangePctText,
-                            onValueChange = { minD1ChangePctText = it },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Biên độ D1 max (%)", color = TextMuted, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = maxD1ChangePctText,
-                            onValueChange = { maxD1ChangePctText = it },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                Text(text = "Trần biến động ATR% D1", color = TextMuted, fontSize = 11.sp)
-                Spacer(modifier = Modifier.height(4.dp))
-                OutlinedTextField(
-                    value = maxAtrPctText,
-                    onValueChange = { maxAtrPctText = it },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    singleLine = true,
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                )
-            }
-        }
-
-        // ==========================================
-        // NHÓM 4: CƠ CHẾ THOÁT LỆNH PURE TRAILING & FLOORLOCK
-        // (ĐÃ XÓA SL, TP CỐ ĐỊNH, TIMEOUT)
-        // ==========================================
-        Card(
-            modifier = Modifier.fillMaxWidth().testTag("strategy_group_4_card"),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-            border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.4f))
-        ) {
-            Column(modifier = Modifier.padding(12.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(imageVector = Icons.Default.TrendingUp, contentDescription = null, tint = CryptoGold, modifier = Modifier.size(16.dp))
-                    Spacer(modifier = Modifier.width(6.dp))
-                    Text(text = "4. Cơ Chế Thoát Lệnh (Pure Trailing Stop)", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    color = DarkSurface,
-                    border = BorderStroke(1.dp, DarkBorder)
-                ) {
-                    Column(modifier = Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(
-                            text = "BẬT / TẮT CƠ CHẾ THOÁT LỆNH:",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = CryptoGold
-                        )
-
-                        // Toggle 1: Trailing Stop ATR
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("1. Trailing Stop ATR", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableTrailingStop) CryptoGreen else TextMuted)
-                                Text("Bám đỉnh theo bước đệm ATR giỏ để chốt trọn sóng", fontSize = 10.sp, color = TextMuted)
-                            }
-                            Switch(
-                                checked = enableTrailingStop,
-                                onCheckedChange = { enableTrailingStop = it },
-                                modifier = Modifier.scale(0.72f).testTag("strategy_toggle_trailing_stop"),
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = CryptoGold,
+                                unfocusedBorderColor = DarkBorder,
+                                focusedTextColor = TextPrimary,
+                                unfocusedTextColor = TextPrimary
                             )
-                        }
+                        )
+                    }
 
-                        HorizontalDivider(color = DarkBorder.copy(alpha = 0.5f), thickness = 0.5.dp)
-
-                        // Toggle 2: Sàn khóa lãi FloorLock
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(text = "Cắt lỗ Stop Loss (SL)", color = TextMuted, fontSize = 11.sp)
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Surface(
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(4.dp),
+                            color = DarkSurface,
+                            border = BorderStroke(1.dp, DarkBorder)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("2. Sàn khóa lãi FloorLock", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = if (enableFloorLock) CryptoGreen else TextMuted)
-                                Text("Khóa ngưỡng bảo toàn lãi net tối thiểu khi đã trailing", fontSize = 10.sp, color = TextMuted)
+                            Box(modifier = Modifier.fillMaxSize().padding(horizontal = 10.dp), contentAlignment = Alignment.CenterStart) {
+                                Text("Đáy nến t-1", color = CryptoRed, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                             }
-                            Switch(
-                                checked = enableFloorLock,
-                                onCheckedChange = { enableFloorLock = it },
-                                modifier = Modifier.scale(0.72f).testTag("strategy_toggle_floor_lock"),
-                                colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = CryptoGreen)
-                            )
                         }
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(10.dp))
-
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Hệ số Trượt Trailing (K_Trail)", color = TextMuted, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = kTrailText,
-                            onValueChange = { kTrailText = it },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text(text = "Sàn khóa lãi tối thiểu (%)", color = TextMuted, fontSize = 11.sp)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        OutlinedTextField(
-                            value = floorLockMinRoiText,
-                            onValueChange = { floorLockMinRoiText = it },
-                            modifier = Modifier.fillMaxWidth().height(48.dp),
-                            singleLine = true,
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            colors = OutlinedTextFieldDefaults.colors(focusedBorderColor = CryptoGold, unfocusedBorderColor = DarkBorder, focusedTextColor = Color.White, unfocusedTextColor = Color.White)
-                        )
                     }
                 }
             }
@@ -715,36 +526,28 @@ private fun StrategySettingsContent(
             onClick = {
                 val parsedBalance = simulatedBalanceText.toDoubleOrNull() ?: currentSettings.simulatedBalanceUsdt
                 val parsedCapitalPerTrade = capitalPerTradeUsdtText.toDoubleOrNull() ?: 5.1
-                val parsedMaxAlloc = (maxAllocationPctText.toDoubleOrNull() ?: 60.0) / 100.0
-                val parsedMinQuote = minQuoteVolumeText.toDoubleOrNull() ?: currentSettings.minQuoteVolume24h
-                val parsedMinVolRatio = minVolRatioText.toDoubleOrNull() ?: currentSettings.minVolRatio
-                val parsedMinD1 = minD1ChangePctText.toDoubleOrNull() ?: currentSettings.minD1ChangePct
-                val parsedMaxD1 = maxD1ChangePctText.toDoubleOrNull() ?: currentSettings.maxD1ChangePct
-                val parsedMaxAtr = (maxAtrPctText.toDoubleOrNull() ?: 12.0) / 100.0
-                val parsedKTrail = kTrailText.toDoubleOrNull() ?: currentSettings.kTrail
-                val parsedFloorRoi = (floorLockMinRoiText.toDoubleOrNull() ?: 0.5) / 100.0
+                val parsedSmaPeriod = smaPeriodText.toIntOrNull() ?: 20
+                val parsedRrRatio = rrRatioText.toDoubleOrNull() ?: 3.0
 
                 val newSettings = currentSettings.copy(
+                    selectedStrategy = TradingStrategyType.SMA20_D1_RR3,
                     simulatedBalanceUsdt = parsedBalance,
                     capitalPerTradeUsdt = parsedCapitalPerTrade,
                     fixedVolumeUsdt = parsedCapitalPerTrade,
                     volumeType = com.example.model.VolumeType.FIXED_AMOUNT,
-                    perTradePct = if (parsedBalance > 0) (parsedCapitalPerTrade / parsedBalance) else 0.015,
-                    maxPortfolioAllocation = parsedMaxAlloc,
-                    minQuoteVolume24h = parsedMinQuote,
-                    minVolRatio = parsedMinVolRatio,
-                    minD1ChangePct = parsedMinD1,
-                    maxD1ChangePct = parsedMaxD1,
-                    maxAtrPercent = parsedMaxAtr,
-                    slotScanMode = slotScanMode,
-                    enableTrailingStop = enableTrailingStop,
-                    enableFloorLock = enableFloorLock,
-                    kTrail = parsedKTrail,
-                    floorLockMinRoi = parsedFloorRoi
+                    perTradePct = if (parsedBalance > 0) (parsedCapitalPerTrade / parsedBalance) else 0.0051,
+                    maxPortfolioAllocation = 1.0,
+                    smaPeriod = parsedSmaPeriod,
+                    rrRatio = parsedRrRatio,
+                    enableTrailingStop = false,
+                    enableFloorLock = false,
+                    enableBtcMacroFilter = false,
+                    enableBtcCircuitBreaker = false,
+                    enableSmartTimeout = false
                 )
 
                 viewModel.updateStrategySettingsAndSyncWithBacktest(newSettings)
-                saveSuccessMsg = "✓ Đã lưu cài đặt chiến lược & tự động đồng bộ sang thẻ Backtest!"
+                saveSuccessMsg = "✓ Đã lưu cài đặt chiến lược SMA20 D1 & tự động đồng bộ sang thẻ Backtest!"
             },
             modifier = Modifier
                 .fillMaxWidth()
@@ -784,7 +587,7 @@ private fun StrategySettingsContent(
                 onClick = {
                     val defaultSettings = TradeSettings()
                     viewModel.updateStrategySettingsAndSyncWithBacktest(defaultSettings)
-                    saveSuccessMsg = "✓ Đã khôi phục bộ thông số Dual Basket v2.0 mặc định!"
+                    saveSuccessMsg = "✓ Đã khôi phục bộ thông số SMA20 D1 mặc định!"
                 },
                 modifier = Modifier
                     .weight(1f)

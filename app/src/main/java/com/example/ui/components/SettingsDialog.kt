@@ -78,11 +78,7 @@ fun SettingsDialog(
     onOpenApiConfig: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    var selectedStrategy by remember { mutableStateOf(currentSettings.selectedStrategy) }
-    var volumeMultiplier by remember { mutableStateOf(currentSettings.volumeMultiplierThreshold) }
-    var portfolioTpText by remember { mutableStateOf(currentSettings.portfolioTakeProfitPercent.toString()) }
-    var volumePercent by remember { mutableStateOf(currentSettings.volumePercentOfBalance.toString()) }
-    var fixedVolume by remember { mutableStateOf(currentSettings.fixedVolumeUsdt.toString()) }
+    var fixedVolume by remember { mutableStateOf(if (currentSettings.capitalPerTradeUsdt > 0.0) currentSettings.capitalPerTradeUsdt.toString() else "5.1") }
     var apiKey by remember { mutableStateOf(apiConfig.apiKey) }
     var apiSecret by remember { mutableStateOf(apiConfig.apiSecret) }
     var accessPin by remember { mutableStateOf(apiConfig.accessPin) }
@@ -103,7 +99,7 @@ fun SettingsDialog(
                 )
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    text = "Cài Đặt Chiến Lược Giao Dịch",
+                    text = "Cài Đặt Bot SMA20 D1 (RR 1:3)",
                     fontSize = 17.sp,
                     fontWeight = FontWeight.Bold,
                     color = TextPrimary
@@ -116,7 +112,7 @@ fun SettingsDialog(
                     .fillMaxWidth()
                     .verticalScroll(scrollState)
             ) {
-                // SECTION 1: LỰA CHỌN CHIẾN LƯỢC
+                // SECTION 1: THÔNG TIN CHIẾN LƯỢC
                 Text(
                     text = "1. CHIẾN LƯỢC HOẠT ĐỘNG (AUTO-TRADE)",
                     color = CryptoGold,
@@ -125,14 +121,13 @@ fun SettingsDialog(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Chiến lược mặc định: D1 SMA20 Breakout & Volume 2x
                 Surface(
                     shape = RoundedCornerShape(10.dp),
                     color = DarkSurfaceHighlight,
                     border = BorderStroke(1.dp, CryptoGold),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.padding(10.dp)) {
+                    Column(modifier = Modifier.padding(12.dp)) {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.SpaceBetween,
@@ -141,11 +136,11 @@ fun SettingsDialog(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(
                                     selected = true,
-                                    onClick = { selectedStrategy = TradingStrategyType.D1_SMA20_VOLUME },
+                                    onClick = { },
                                     colors = RadioButtonDefaults.colors(selectedColor = CryptoGold)
                                 )
                                 Text(
-                                    text = "D1 SMA20 Breakout & Vol >= 2x",
+                                    text = "SMA20 D1 (RR 1:3)",
                                     color = TextPrimary,
                                     fontSize = 13.sp,
                                     fontWeight = FontWeight.Bold
@@ -156,171 +151,79 @@ fun SettingsDialog(
                                 color = CryptoGreen.copy(alpha = 0.2f)
                             ) {
                                 Text(
-                                    text = "HOẠT ĐỘNG",
+                                    text = "ĐANG CHẠY",
                                     color = CryptoGreen,
                                     fontSize = 9.sp,
                                     fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
                         }
+                        Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = "Khung thời gian D1 (1 Ngày). Đường SMA20 tính căn cứ theo Giá Mở Cửa (Open). Mua khi Giá >= SMA20(D1) và Khối lượng nến D1 >= 2x hôm trước.",
+                            text = "• Quét tự động: 07:00 AM UTC+7 (Đóng nến D1 lúc 00:00 UTC)\n• Điều kiện vào: Nến t-1 tăng (Close > Open), Close > SMA20 và Low <= SMA20\n• Stop Loss: Đáy nến t-1 (Low[t-1])\n• Take Profit: Cố định 3R (Entry + 3R)\n• Danh mục: Mở tất cả tín hiệu, không giới hạn trần danh mục. Loại trừ BTC & Stablecoins.",
                             color = TextSecondary,
                             fontSize = 11.sp,
-                            modifier = Modifier.padding(start = 8.dp, end = 8.dp, bottom = 4.dp)
+                            lineHeight = 16.sp,
+                            modifier = Modifier.padding(start = 6.dp, end = 6.dp, bottom = 4.dp)
                         )
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // SECTION 2: HỆ SỐ BÙNG NỔ KHỐI LƯỢNG (D1)
+                // SECTION 2: QUẢN LÝ VỐN VỊ THẾ
                 Text(
-                    text = "2. HỆ SỐ BÙNG NỔ KHỐI LƯỢNG TỐI THIỂU",
-                    color = CryptoGold,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    listOf(1.5, 2.0, 2.5, 3.0).forEach { mult ->
-                        val isMultSelected = volumeMultiplier == mult
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = if (isMultSelected) CryptoGold else DarkSurfaceElevated,
-                            border = BorderStroke(1.dp, if (isMultSelected) CryptoGold else DarkBorder),
-                            modifier = Modifier
-                                .weight(1f)
-                                .clickable { volumeMultiplier = mult }
-                        ) {
-                            Box(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "${mult}x",
-                                    color = if (isMultSelected) DarkBg else TextPrimary,
-                                    fontSize = 12.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                    }
-                }
-                Text(
-                    text = "Khối lượng nến D1 hiện tại phải đạt tối thiểu ${volumeMultiplier}x so với nến D1 hôm qua.",
-                    color = TextMuted,
-                    fontSize = 10.sp,
-                    modifier = Modifier.padding(top = 4.dp)
-                )
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // SECTION 3: CHỐT LỜI TOÀN DANH MỤC
-                Text(
-                    text = "3. MỤC TIÊU CHỐT LỜI TOÀN DANH MỤC (%)",
+                    text = "2. QUẢN LÝ VỐN MỖI LỆNH (LONG CROSS 1X)",
                     color = CryptoGold,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
-                    value = portfolioTpText,
-                    onValueChange = { portfolioTpText = it },
-                    label = { Text("Mục tiêu ROI danh mục (%)") },
-                    trailingIcon = { Text("%", color = CryptoGold, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 12.dp)) },
+                    value = fixedVolume,
+                    onValueChange = { fixedVolume = it },
+                    label = { Text("Vốn danh nghĩa mỗi lệnh (USDT)") },
+                    trailingIcon = { Text("USDT", color = CryptoGold, fontWeight = FontWeight.Bold, modifier = Modifier.padding(end = 8.dp)) },
                     singleLine = true,
                     colors = OutlinedTextFieldDefaults.colors(
                         focusedBorderColor = CryptoGold,
                         unfocusedBorderColor = DarkBorder,
                         focusedTextColor = TextPrimary,
-                        unfocusedTextColor = TextPrimary,
-                        focusedContainerColor = DarkSurface,
-                        unfocusedContainerColor = DarkSurface
+                        unfocusedTextColor = TextPrimary
                     ),
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                // Warning / Guidance Note Box
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = CryptoGold.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.35f)),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 6.dp)
-                ) {
-                    Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.Top) {
-                        Icon(
-                            imageVector = Icons.Default.Info,
-                            contentDescription = null,
-                            tint = CryptoGold,
-                            modifier = Modifier.size(14.dp).padding(top = 2.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = "Lưu ý: Chốt lời trên toàn danh mục (không chốt lời theo từng vị thế đơn lẻ). Bot tự động đóng đồng loạt toàn bộ vị thế khi tổng ROI đạt ngưỡng.",
-                            color = CryptoGold,
-                            fontSize = 10.sp,
-                            lineHeight = 14.sp,
-                            fontWeight = FontWeight.Medium
-                        )
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(5.1 to "5.1$ (Chuẩn)", 10.0 to "10$", 20.0 to "20$", 50.0 to "50$").forEach { (amt, label) ->
+                        val isSelected = fixedVolume == amt.toString()
+                        Surface(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { fixedVolume = amt.toString() },
+                            color = if (isSelected) CryptoGold.copy(alpha = 0.25f) else DarkSurfaceElevated,
+                            border = BorderStroke(0.5.dp, if (isSelected) CryptoGold else DarkBorder)
+                        ) {
+                            Text(
+                                text = label,
+                                color = if (isSelected) CryptoGold else TextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                modifier = Modifier.padding(vertical = 6.dp),
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            )
+                        }
                     }
                 }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // SECTION 4: QUẢN LÝ VỐN VỊ THẾ
+                // SECTION 3: PIN TRUY CẬP & MÔI TRƯỜNG BINANCE
                 Text(
-                    text = "4. QUẢN LÝ VỐN & VOLUME MỖI LỆNH",
-                    color = CryptoGold,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    OutlinedTextField(
-                        value = volumePercent,
-                        onValueChange = { volumePercent = it },
-                        label = { Text("Tỷ lệ % số dư") },
-                        trailingIcon = { Text("%", color = TextSecondary, modifier = Modifier.padding(end = 8.dp)) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CryptoGold,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                    OutlinedTextField(
-                        value = fixedVolume,
-                        onValueChange = { fixedVolume = it },
-                        label = { Text("Hoặc USDT cố định") },
-                        trailingIcon = { Text("$", color = TextSecondary, modifier = Modifier.padding(end = 8.dp)) },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = CryptoGold,
-                            unfocusedBorderColor = DarkBorder,
-                            focusedTextColor = TextPrimary,
-                            unfocusedTextColor = TextPrimary
-                        ),
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(14.dp))
-
-                // SECTION 5: PIN TRUY CẬP & MÔI TRƯỜNG BINANCE
-                Text(
-                    text = "5. BẢO MẬT PIN & MÔI TRƯỜNG BINANCE",
+                    text = "3. BẢO MẬT PIN & MÔI TRƯỜNG BINANCE",
                     color = CryptoGold,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold
@@ -359,16 +262,18 @@ fun SettingsDialog(
         confirmButton = {
             Button(
                 onClick = {
-                    val portTp = portfolioTpText.toDoubleOrNull() ?: currentSettings.portfolioTakeProfitPercent
-                    val volPct = volumePercent.toDoubleOrNull() ?: currentSettings.volumePercentOfBalance
-                    val fixedVol = fixedVolume.toDoubleOrNull() ?: currentSettings.fixedVolumeUsdt
-
+                    val fixedVol = fixedVolume.toDoubleOrNull() ?: 5.1
                     val updatedSettings = currentSettings.copy(
-                        selectedStrategy = selectedStrategy,
-                        volumeMultiplierThreshold = volumeMultiplier,
-                        portfolioTakeProfitPercent = portTp,
-                        volumePercentOfBalance = volPct,
-                        fixedVolumeUsdt = fixedVol
+                        selectedStrategy = TradingStrategyType.SMA20_D1_RR3,
+                        capitalPerTradeUsdt = fixedVol,
+                        fixedVolumeUsdt = fixedVol,
+                        rrRatio = 3.0,
+                        smaPeriod = 20,
+                        maxPortfolioAllocation = 1.0,
+                        enableTrailingStop = false,
+                        enableFloorLock = false,
+                        enableBtcMacroFilter = false,
+                        enableSmartTimeout = false
                     )
                     onSave(updatedSettings)
                     onSaveApiCredentials(apiKey, apiSecret, accessPin, isTestnet, liveTrading) { }

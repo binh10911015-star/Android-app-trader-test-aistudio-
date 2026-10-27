@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -186,23 +187,30 @@ fun MarketScreen(
                     }
                 }
                 Text(
-                    text = "Chiến lược: D1 SMA20 Breakout & Vol >= 2x",
+                    text = "Chiến lược: SMA20 D1 (RR 1:3)",
                     color = CryptoGold,
-                    fontSize = 11.sp
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
 
-            Surface(
-                modifier = Modifier.clip(CircleShape).clickable { viewModel.refreshTickers() },
-                color = DarkSurfaceElevated,
-                border = BorderStroke(1.dp, DarkBorder)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Làm mới",
-                    tint = TextSecondary,
-                    modifier = Modifier.padding(8.dp).size(16.dp)
-                )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Button(
+                    onClick = { viewModel.scanAllFuturesCoins() },
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoGold),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    modifier = Modifier.height(32.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Quét thủ công",
+                        tint = Color.White,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text("Quét", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
             }
         }
 
@@ -361,7 +369,7 @@ fun MarketScreen(
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "TÍN HIỆU D1 BREAKOUT & VOL 2X",
+                            text = "TÍN HIỆU SMA20 D1 (RR 1:3)",
                             fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL)
@@ -369,7 +377,7 @@ fun MarketScreen(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = "(Nến ngày 07:00 AM)",
+                            text = "(07:00 AM UTC+7)",
                             fontSize = 10.sp,
                             color = TextMuted
                         )
@@ -388,7 +396,7 @@ fun MarketScreen(
                     }
                 }
                 Text(
-                    text = "Điều kiện: Giá >= SMA20 (Open) & Khối lượng D1 >= 2x trung bình 20 ngày",
+                    text = "Điều kiện: Nến t-1 tăng (Close > Open), Close > SMA20 và Low <= SMA20. SL = Đáy t-1, TP = 3R (5.1 USDT/lệnh). Ưu tiên: Coin có % thay đổi nến t-1 nhỏ nhất vào trước.",
                     fontSize = 9.sp,
                     color = TextMuted,
                     modifier = Modifier.padding(top = 2.dp)
@@ -442,9 +450,11 @@ fun MarketScreen(
             verticalArrangement = Arrangement.spacedBy(6.dp),
             contentPadding = PaddingValues(bottom = 16.dp)
         ) {
-            items(uiState.filteredTickers, key = { it.symbol }) { ticker ->
+            itemsIndexed(uiState.filteredTickers, key = { _, it -> it.symbol }) { index, ticker ->
+                val priorityIndex = if (uiState.filterMode == MarketFilter.BULLISH_SIGNAL) index + 1 else null
                 CoinItemCard(
                     ticker = ticker,
+                    priorityIndex = priorityIndex,
                     onSelect = { onSelectCoin(ticker.symbol) },
                     onBuyClick = {
                         if (uiState.settings.autoTradeEnabled) {
@@ -465,6 +475,7 @@ fun MarketScreen(
 @Composable
 fun CoinItemCard(
     ticker: BinanceTicker,
+    priorityIndex: Int? = null,
     onSelect: () -> Unit,
     onBuyClick: () -> Unit
 ) {
@@ -474,7 +485,10 @@ fun CoinItemCard(
         modifier = Modifier.fillMaxWidth().clickable { onSelect() },
         shape = RoundedCornerShape(10.dp),
         colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-        border = BorderStroke(1.dp, DarkBorder)
+        border = BorderStroke(
+            1.dp,
+            if (priorityIndex == 1) CryptoGold.copy(alpha = 0.8f) else DarkBorder
+        )
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -482,13 +496,39 @@ fun CoinItemCard(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column {
-                Text(text = ticker.symbol, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (priorityIndex != null) {
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = if (priorityIndex == 1) CryptoGold.copy(alpha = 0.25f) else DarkSurfaceHighlight,
+                            border = BorderStroke(1.dp, if (priorityIndex == 1) CryptoGold else DarkBorder),
+                            modifier = Modifier.padding(end = 6.dp)
+                        ) {
+                            Text(
+                                text = "#$priorityIndex",
+                                color = if (priorityIndex == 1) CryptoGold else TextSecondary,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                            )
+                        }
+                    }
+                    Text(text = ticker.symbol, color = TextPrimary, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
                 Text(
                     text = "$${CryptoRepository.formatPrice(ticker.lastPrice)}",
                     color = TextPrimary,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace
                 )
+                if (priorityIndex != null) {
+                    Text(
+                        text = "Nến t-1: +${String.format(Locale.US, "%.2f", ticker.score)}%",
+                        color = CryptoGold,
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
             }
 
             Surface(

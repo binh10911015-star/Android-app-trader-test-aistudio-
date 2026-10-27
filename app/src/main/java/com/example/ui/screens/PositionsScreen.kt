@@ -101,6 +101,7 @@ fun PositionsScreen(
 
     // Dialog state for Live Binance TP/SL
     var liveTpSlTarget by remember { mutableStateOf<BinanceLivePosition?>(null) }
+    var editingTpSlPosition by remember { mutableStateOf<TradePosition?>(null) }
 
     val livePositions = binancePortfolio?.positions ?: emptyList()
     val totalLivePnl = livePositions.sumOf { it.unrealizedProfit }
@@ -135,6 +136,7 @@ fun PositionsScreen(
                     onClick = {
                         showCloseAllDialog = false
                         viewModel.closeAllLiveBinancePositions()
+                        viewModel.closeAllPositions()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = CryptoRed)
                 ) {
@@ -150,7 +152,27 @@ fun PositionsScreen(
         )
     }
 
-    // TP/SL Edit Dialog for Live Position
+    // TP/SL Edit Dialog for TradePosition
+    editingTpSlPosition?.let { pos ->
+        val savedTpSl = livePositionsTpSl[pos.symbol]
+        val currentMark = viewModel.getRealtimeMarkPrice(pos.symbol) ?: pos.markPrice
+        TpSlDialog(
+            symbol = pos.symbol,
+            isLong = pos.positionSide.uppercase() == "LONG",
+            entryPrice = pos.entryPrice,
+            markPrice = currentMark,
+            leverage = pos.leverage,
+            initialTpPrice = savedTpSl?.first ?: pos.takeProfitPrice,
+            initialSlPrice = savedTpSl?.second ?: pos.stopLossPrice,
+            onDismiss = { editingTpSlPosition = null },
+            onConfirm = { tp, sl ->
+                editingTpSlPosition = null
+                onEditTpSlTarget(pos.symbol, pos.positionSide.uppercase() == "LONG", tp, sl, if (pos.id > 0L) pos.id else null)
+            }
+        )
+    }
+
+    // TP/SL Edit Dialog for Live Position (Fallback)
     liveTpSlTarget?.let { pos ->
         val savedTpSl = livePositionsTpSl[pos.symbol]
         TpSlDialog(
@@ -286,7 +308,7 @@ fun PositionsScreen(
                     HorizontalDivider(color = DarkBorder, thickness = 0.5.dp)
                     Spacer(modifier = Modifier.height(8.dp))
 
-                    // Row: Available Balance + Allocated Margin + Portfolio Cap 60%
+                    // Row: Available Balance + Allocated Margin + Fixed Capital 5.1 USDT
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -314,9 +336,9 @@ fun PositionsScreen(
                         }
 
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("Trần Danh Mục (60%)", color = TextMuted, fontSize = 10.sp)
+                            Text("Quy mô lệnh", color = TextMuted, fontSize = 10.sp)
                             Text(
-                                text = "$${String.format(Locale.US, "%,.2f", maxPortfolioCap)} USDT",
+                                text = "5.1 USDT / lệnh",
                                 color = TextSecondary,
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium,
@@ -325,26 +347,36 @@ fun PositionsScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.height(6.dp))
-                    // Exposure progress bar
-                    Column {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Surface(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(6.dp),
+                        color = CryptoGold.copy(alpha = 0.08f),
+                        border = BorderStroke(0.5.dp, CryptoGold.copy(alpha = 0.25f))
+                    ) {
                         Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Tỷ lệ giải ngân / Trần 60%", color = TextMuted, fontSize = 9.sp)
-                            Text("${(portfolioExposureRatio * 100).toInt()}%", color = if (portfolioExposureRatio > 0.9) CryptoRed else CryptoGold, fontSize = 9.sp, fontWeight = FontWeight.Bold)
-                        }
-                        Spacer(modifier = Modifier.height(3.dp))
-                        LinearProgressIndicator(
-                            progress = { portfolioExposureRatio.toFloat() },
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(4.dp)
-                                .clip(RoundedCornerShape(2.dp)),
-                            color = if (portfolioExposureRatio > 0.9) CryptoRed else CryptoGold,
-                            trackColor = DarkSurfaceHighlight
-                        )
+                                .padding(horizontal = 10.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Chiến lược: SMA20 D1 (RR 1:3) • Không giới hạn trần",
+                                fontSize = 10.sp,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Medium
+                            )
+                            if (livePositions.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { viewModel.migrateToSma20Strategy() },
+                                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                                    modifier = Modifier.height(24.dp)
+                                ) {
+                                    Text("Đồng bộ mới", color = CryptoGold, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                     }
                 } else {
                     // Not connected message
@@ -390,8 +422,9 @@ fun PositionsScreen(
                 selected = selectedTab == 0,
                 onClick = { selectedTab = 0 },
                 text = {
+                    val count = if (openPositions.isNotEmpty()) openPositions.size else livePositions.size
                     Text(
-                        text = "Vị Thế Mainnet (${livePositions.size})",
+                        text = "Vị Thế Mainnet ($count)",
                         fontSize = 13.sp,
                         fontWeight = if (selectedTab == 0) FontWeight.Bold else FontWeight.Medium,
                         color = if (selectedTab == 0) CryptoGold else TextSecondary
@@ -418,7 +451,25 @@ fun PositionsScreen(
         when (selectedTab) {
             0 -> {
                 // TAB VỊ THẾ MAINNET ĐANG MỞ
-                if (!apiConfig.isConnected) {
+                val positionsToShow: List<TradePosition> = if (openPositions.isNotEmpty()) {
+                    openPositions
+                } else {
+                    livePositions.map { live ->
+                        TradePosition(
+                            symbol = live.symbol,
+                            entryPrice = live.entryPrice,
+                            currentPrice = live.markPrice,
+                            amount = live.absAmount,
+                            investedUsdt = live.initialMargin,
+                            positionSide = live.positionSide,
+                            leverage = live.leverage,
+                            markPrice = live.markPrice,
+                            isLiveBinanceOrder = true
+                        )
+                    }
+                }
+
+                if (!apiConfig.isConnected && positionsToShow.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -448,7 +499,7 @@ fun PositionsScreen(
                             )
                         }
                     }
-                } else if (livePositions.isEmpty()) {
+                } else if (positionsToShow.isEmpty()) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -500,7 +551,7 @@ fun PositionsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = "DANH SÁCH VỊ THẾ LIVE (${livePositions.size})",
+                                    text = "DANH SÁCH VỊ THẾ LIVE (${positionsToShow.size})",
                                     color = CryptoGold,
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -513,14 +564,27 @@ fun PositionsScreen(
                             }
                         }
 
-                        items(livePositions, key = { "live_${it.symbol}_${it.positionSide}" }) { livePos ->
+                        items(positionsToShow, key = { "pos_${it.id}_${it.symbol}_${it.positionSide}" }) { pos ->
+                            val currentMarkPrice = viewModel.getRealtimeMarkPrice(pos.symbol)
+                                ?: livePositions.find { it.symbol == pos.symbol }?.markPrice
+                                ?: pos.currentPrice
+
                             LivePositionItem(
-                                position = livePos,
-                                savedTpSl = livePositionsTpSl[livePos.symbol],
+                                position = pos,
+                                realtimeMarkPrice = currentMarkPrice,
                                 onSelectCoin = onSelectCoin,
-                                onEditTpSl = { liveTpSlTarget = livePos },
-                                onClosePosition = {
-                                    viewModel.closeLiveBinancePosition(livePos)
+                                onManualClose = {
+                                    if (pos.id > 0L) {
+                                        viewModel.manualClosePosition(pos.id)
+                                    } else {
+                                        val liveMatch = livePositions.find { it.symbol == pos.symbol }
+                                        if (liveMatch != null) {
+                                            viewModel.closeLiveBinancePosition(liveMatch)
+                                        }
+                                    }
+                                },
+                                onEditTpSl = { _, _ ->
+                                    editingTpSlPosition = pos
                                 }
                             )
                         }
@@ -582,17 +646,28 @@ fun PositionsScreen(
 }
 
 @Composable
-private fun LivePositionItem(
-    position: BinanceLivePosition,
-    savedTpSl: Pair<Double?, Double?>?,
+fun LivePositionItem(
+    position: TradePosition,
+    realtimeMarkPrice: Double,
     onSelectCoin: (String) -> Unit,
-    onEditTpSl: () -> Unit,
-    onClosePosition: () -> Unit
+    onManualClose: () -> Unit,
+    onEditTpSl: (Double?, Double?) -> Unit
 ) {
-    val isLong = position.isLong
-    val pnl = position.unrealizedProfit
-    val roi = position.roiPercent
+    val isLong = position.positionSide.uppercase() == "LONG"
+    val pnl = position.unrealizedPnlUsdt
     val isProfit = pnl >= 0
+
+    val slPrice = position.stopLossPrice ?: (position.entryPrice * 0.95)
+    val rVal = if (position.riskR > 0.0) position.riskR else (position.entryPrice - slPrice).coerceAtLeast(0.0)
+    val tpPrice = position.takeProfitPrice ?: (position.entryPrice + 3.0 * rVal)
+
+    // Tính % tiến độ từ SL (0%) đến TP (100%)
+    val progressRatio = if (tpPrice > slPrice) {
+        ((realtimeMarkPrice - slPrice) / (tpPrice - slPrice)).coerceIn(0.0, 1.0)
+    } else 0.5
+
+    val slPct = if (position.entryPrice > 0.0) ((slPrice - position.entryPrice) / position.entryPrice) * 100.0 else 0.0
+    val tpPct = if (position.entryPrice > 0.0) ((tpPrice - position.entryPrice) / position.entryPrice) * 100.0 else 0.0
 
     Card(
         modifier = Modifier
@@ -601,10 +676,10 @@ private fun LivePositionItem(
             .testTag("live_position_${position.symbol}"),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
-        border = BorderStroke(1.dp, if (isProfit) CryptoGreen.copy(alpha = 0.35f) else CryptoRed.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, if (isProfit) CryptoGreen.copy(alpha = 0.4f) else CryptoRed.copy(alpha = 0.3f))
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
-            // Header Row: Symbol, Badges, PnL
+            // Hàng 1: Header symbol, nhãn chiến lược và nút đóng
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -613,19 +688,19 @@ private fun LivePositionItem(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
                         text = position.symbol,
-                        color = Color.White,
+                        color = TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = if (isLong) CryptoGreen.copy(alpha = 0.2f) else CryptoRed.copy(alpha = 0.2f),
-                        border = BorderStroke(0.5.dp, if (isLong) CryptoGreen.copy(alpha = 0.6f) else CryptoRed.copy(alpha = 0.6f))
+                        color = CryptoGreen.copy(alpha = 0.15f),
+                        border = BorderStroke(0.5.dp, CryptoGreen.copy(alpha = 0.5f))
                     ) {
                         Text(
-                            text = if (isLong) "LONG ${position.leverage}X" else "SHORT ${position.leverage}X",
-                            color = if (isLong) CryptoGreen else CryptoRed,
+                            text = "LONG 1X",
+                            color = CryptoGreen,
                             fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
@@ -634,33 +709,73 @@ private fun LivePositionItem(
                     Spacer(modifier = Modifier.width(4.dp))
                     Surface(
                         shape = RoundedCornerShape(4.dp),
-                        color = CryptoGold.copy(alpha = 0.2f),
-                        border = BorderStroke(0.5.dp, CryptoGold.copy(alpha = 0.5f))
+                        color = CryptoGold.copy(alpha = 0.12f),
+                        border = BorderStroke(0.5.dp, CryptoGold.copy(alpha = 0.4f))
                     ) {
                         Text(
-                            text = "MAINNET",
+                            text = "SMA20 D1 (1:3)",
                             color = CryptoGold,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            modifier = Modifier.padding(horizontal = 4.dp, vertical = 2.dp)
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
                         )
                     }
                 }
 
-                // PnL & ROI
+                Button(
+                    onClick = onManualClose,
+                    colors = ButtonDefaults.buttonColors(containerColor = CryptoRed),
+                    shape = RoundedCornerShape(6.dp),
+                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                    modifier = Modifier
+                        .height(28.dp)
+                        .testTag("close_pos_${position.symbol}")
+                ) {
+                    Text("Đóng", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            // Hàng 2: Giá vào, Giá Mark & Lãi lỗ PnL
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text("Giá vào", color = TextMuted, fontSize = 10.sp)
+                    Text(
+                        text = "$${CryptoRepository.formatPrice(position.entryPrice)}",
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text("Giá Mark", color = TextMuted, fontSize = 10.sp)
+                    Text(
+                        text = "$${CryptoRepository.formatPrice(realtimeMarkPrice)}",
+                        color = TextPrimary,
+                        fontSize = 12.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
                 Column(horizontalAlignment = Alignment.End) {
                     val sign = if (isProfit) "+" else ""
                     Text(
                         text = "$sign$${String.format(Locale.US, "%.2f", pnl)} USDT",
                         color = if (isProfit) CryptoGreen else CryptoRed,
-                        fontSize = 15.sp,
+                        fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
                     Text(
-                        text = "$sign${String.format(Locale.US, "%.2f", roi)}%",
+                        text = position.roiFormatted,
                         color = if (isProfit) CryptoGreen else CryptoRed,
-                        fontSize = 12.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         fontFamily = FontFamily.Monospace
                     )
@@ -669,128 +784,68 @@ private fun LivePositionItem(
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Pricing & Margin Details
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+            // Hàng 3: Hộp hiển thị SL cố định, TP 3R và Tiến độ
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = DarkSurfaceHighlight.copy(alpha = 0.5f),
+                border = BorderStroke(0.5.dp, DarkBorder),
+                modifier = Modifier.fillMaxWidth()
             ) {
-                Column {
-                    Text("Giá vào (Entry)", color = TextMuted, fontSize = 10.sp)
-                    Text(
-                        text = "$${CryptoRepository.formatPrice(position.entryPrice)}",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("Giá Mark (Sàn)", color = TextMuted, fontSize = 10.sp)
-                    Text(
-                        text = "$${CryptoRepository.formatPrice(position.markPrice)}",
-                        color = TextPrimary,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-                Column(horizontalAlignment = Alignment.End) {
-                    Text("Ký Quỹ (Margin)", color = TextMuted, fontSize = 10.sp)
-                    Text(
-                        text = "$${String.format(Locale.US, "%.2f", position.initialMargin)} USDT",
-                        color = CryptoGold,
-                        fontSize = 12.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
+                Column(modifier = Modifier.padding(10.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("Cắt lỗ SL (Đáy t-1)", color = CryptoRed, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "$${CryptoRepository.formatPrice(slPrice)} (${String.format(Locale.US, "%.1f", slPct)}%)",
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("Chốt lời TP (3R)", color = CryptoGreen, fontSize = 9.sp, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = "$${CryptoRepository.formatPrice(tpPrice)} (+${String.format(Locale.US, "%.1f", tpPct)}%)",
+                                color = TextPrimary,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
 
-            Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(6.dp))
 
-            // Liquidation & Quantity Info
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Khối lượng: ", color = TextMuted, fontSize = 10.sp)
-                    Text(
-                        text = "${String.format(Locale.US, "%.4f", position.absAmount)} ${position.symbol.removeSuffix("USDT")}",
-                        color = TextSecondary,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
+                    // Progress bar từ SL đến TP
+                    LinearProgressIndicator(
+                        progress = { progressRatio.toFloat() },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(5.dp)
+                            .clip(RoundedCornerShape(3.dp)),
+                        color = if (progressRatio >= 0.5f) CryptoGreen else CryptoRed,
+                        trackColor = DarkBorder
                     )
-                }
 
-                if (position.liquidationPrice > 0.0) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Giá Thanh Lý: ", color = TextMuted, fontSize = 10.sp)
+                    Spacer(modifier = Modifier.height(4.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
                         Text(
-                            text = "$${CryptoRepository.formatPrice(position.liquidationPrice)}",
-                            color = CryptoRed,
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace
+                            text = "Rủi ro 1R: $${CryptoRepository.formatPrice(rVal)}",
+                            color = TextMuted,
+                            fontSize = 9.sp
                         )
-                    }
-                } else {
-                    Text("Cross 1x: Thanh lý an toàn", color = CryptoGreen, fontSize = 10.sp)
-                }
-            }
-
-            Spacer(modifier = Modifier.height(8.dp))
-            HorizontalDivider(color = DarkBorder, thickness = 0.5.dp)
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Exit Engine Status & Action Buttons
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Exit rules status (ATR Trailing + 7D timeout)
-                Column(modifier = Modifier.weight(1f)) {
-                    val tp = savedTpSl?.first ?: position.takeProfitPrice
-                    val sl = savedTpSl?.second ?: position.stopLossPrice
-
-                    if (tp != null && tp > 0) {
-                        Text("TP: $${CryptoRepository.formatPrice(tp)}", color = CryptoGreen, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                    } else {
-                        Text("ATR Trailing: Kích hoạt khi ROI ≥ 1.5%", color = CryptoGold, fontSize = 9.sp)
-                    }
-
-                    if (sl != null && sl > 0) {
-                        Text("SL: $${CryptoRepository.formatPrice(sl)}", color = CryptoRed, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
-                    } else {
-                        Text("Khóa lãi: +0.5% | Timeout: 7 ngày", color = TextMuted, fontSize = 9.sp)
-                    }
-                }
-
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedButton(
-                        onClick = onEditTpSl,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = CryptoGold),
-                        border = BorderStroke(1.dp, CryptoGold.copy(alpha = 0.5f)),
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(3.dp))
-                        Text("TP/SL", fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                    }
-
-                    Spacer(modifier = Modifier.width(6.dp))
-
-                    Button(
-                        onClick = onClosePosition,
-                        colors = ButtonDefaults.buttonColors(containerColor = CryptoRed),
-                        shape = RoundedCornerShape(6.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
-                        modifier = Modifier.height(30.dp)
-                    ) {
-                        Text("Đóng Vị Thế", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = "Vốn: ${String.format(Locale.US, "%.1f", position.investedUsdt)} USDT",
+                            color = TextMuted,
+                            fontSize = 9.sp
+                        )
                     }
                 }
             }
