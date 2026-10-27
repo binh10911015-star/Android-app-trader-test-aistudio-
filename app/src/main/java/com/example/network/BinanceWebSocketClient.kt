@@ -31,7 +31,7 @@ class BinanceWebSocketClient(
     companion object {
         private const val TAG = "BinanceWebSocket"
         private const val MAINNET_WS_URL = "wss://fstream.binance.com/ws/!miniTicker@arr"
-        private const val TESTNET_WS_URL = "wss://stream.binancefuture.com/ws/!miniTicker@arr"
+        private const val TESTNET_WS_URL = "wss://fstream.binancefuture.com/ws/!miniTicker@arr"
     }
 
     fun start(isTestnet: Boolean = false) {

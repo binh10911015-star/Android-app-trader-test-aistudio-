@@ -26,7 +26,7 @@ import javax.crypto.spec.SecretKeySpec
 object BinanceFuturesApiVerifier {
 
     private const val MAINNET_BASE_URL = "https://fapi.binance.com"
-    private const val TESTNET_BASE_URL = "https://fapi.binance.com"
+    private const val TESTNET_BASE_URL = BinanceClient.TESTNET_FAPI_URL
 
     private var serverTimeOffset: Long = 0L
     private var lastTimeSync: Long = 0L

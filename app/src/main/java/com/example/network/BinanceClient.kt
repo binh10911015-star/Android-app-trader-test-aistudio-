@@ -36,7 +36,12 @@ object BinanceClient {
         "https://fapi3.binance.com"
     )
 
-    fun getTradeBaseUrl(): String = "https://fapi.binance.com"
+    const val MAINNET_FAPI_URL = "https://fapi.binance.com"
+    // Binance USDⓈ-M Futures Testnet (tài khoản demo, tiền ảo)
+    const val TESTNET_FAPI_URL = "https://testnet.binancefuture.com"
+
+    fun getTradeBaseUrl(isTestnet: Boolean = this.isTestnet): String =
+        if (isTestnet) TESTNET_FAPI_URL else MAINNET_FAPI_URL
 
     @Volatile
     private var activeProxyHost: String = ""
@@ -69,7 +74,7 @@ object BinanceClient {
     }
 
     fun setCrossMarginAndLeverage1x(symbol: String, apiKey: String, apiSecret: String, isTestnet: Boolean = false): Boolean {
-        val baseUrl = "https://fapi.binance.com"
+        val baseUrl = getTradeBaseUrl(isTestnet)
         val emptyBody = "".toRequestBody("application/x-www-form-urlencoded".toMediaTypeOrNull())
 
         try {
@@ -202,7 +207,7 @@ object BinanceClient {
     }
 
     fun fetchMarkPricesWithFallback(): Map<String, Double> {
-        val urlsToTry = MAINNET_PUBLIC_URLS
+        val urlsToTry = if (isTestnet) listOf(TESTNET_FAPI_URL) + MAINNET_PUBLIC_URLS else MAINNET_PUBLIC_URLS
         for (baseUrl in urlsToTry) {
             try {
                 val request = Request.Builder().url("$baseUrl/fapi/v1/premiumIndex").build()
