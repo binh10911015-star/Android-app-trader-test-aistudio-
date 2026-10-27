@@ -10,10 +10,13 @@
     <!-- Quyền chạy ngầm Foreground Service và giữ kết nối CPU khi tắt màn hình -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- specialUse: không bị Android 15 giới hạn 6 giờ/ngày như dataSync -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
+        android:name=".TradingApp"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -31,7 +34,11 @@
             android:name=".TradingForegroundService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Bot giao dich tu dong: giam sat gia va Trailing Stop 24/7 theo yeu cau cua nguoi dung" />
+        </service>
 
         <activity
             android:name=".MainActivity"
