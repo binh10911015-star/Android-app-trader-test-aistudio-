@@ -824,7 +824,7 @@ private fun BinanceApiSettingsContent(
     var apiKey by remember(apiConfig) { mutableStateOf(defaultInitKey) }
     var apiSecret by remember(apiConfig) { mutableStateOf(defaultInitSecret) }
     var accessPin by remember(apiConfig) { mutableStateOf(apiConfig.accessPin.ifBlank { "1234" }) }
-    val isTestnet = false
+    var isTestnet by remember(apiConfig) { mutableStateOf(apiConfig.isTestnet) }
     var liveTradingEnabled by remember(apiConfig) { mutableStateOf(true) }
 
     var showSecret by remember { mutableStateOf(false) }
@@ -865,7 +865,7 @@ private fun BinanceApiSettingsContent(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column {
                         Text(
-                            text = "Tài Khoản Live Mainnet Binance (fapi.binance.com)",
+                            text = if (apiConfig.isTestnet) "Tài Khoản Binance Futures Testnet (testnet.binancefuture.com)" else "Tài Khoản Live Mainnet Binance (fapi.binance.com)",
                             color = CryptoGreen,
                             fontSize = 12.5.sp,
                             fontWeight = FontWeight.Bold
@@ -1132,6 +1132,43 @@ private fun BinanceApiSettingsContent(
                     shape = RoundedCornerShape(8.dp),
                     modifier = Modifier.fillMaxWidth().testTag("access_pin_input")
                 )
+
+                // Chọn mạng: Mainnet (tiền thật) hoặc Testnet (tiền ảo)
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(DarkSurfaceHighlight)
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "Dùng Binance Futures Testnet",
+                            color = TextPrimary,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (isTestnet) "Tiền ảo • nhập API Key tạo tại testnet.binancefuture.com" else "Đang dùng Mainnet (tiền thật)",
+                            color = if (isTestnet) CryptoGreen else TextMuted,
+                            fontSize = 9.5.sp
+                        )
+                    }
+                    Switch(
+                        checked = isTestnet,
+                        onCheckedChange = { isTestnet = it },
+                        modifier = Modifier.scale(0.75f).testTag("testnet_switch"),
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = DarkBg,
+                            checkedTrackColor = CryptoGreen,
+                            uncheckedThumbColor = TextMuted,
+                            uncheckedTrackColor = DarkSurface
+                        )
+                    )
+                }
 
                 if (!isTestnet) {
                     Spacer(modifier = Modifier.height(10.dp))
